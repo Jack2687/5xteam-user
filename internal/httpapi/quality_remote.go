@@ -81,6 +81,9 @@ func (s *Server) runRemoteQualityBatch(ctx context.Context, force bool, onlyID s
 	}
 	jobs := []model.FreeAccountProfile{}
 	for _, p := range profiles {
+		if !s.qualityTargetMatches(p, push) {
+			continue
+		}
 		if onlyID != "" && p.ID != onlyID {
 			continue
 		}

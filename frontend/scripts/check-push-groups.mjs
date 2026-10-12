@@ -8,7 +8,7 @@ const script = source.slice(source.indexOf('<script setup>') + '<script setup>'.
 const parsed = ts.createSourceFile('FreePipelineView.js', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
 const functionNames = new Set(['loadPushSettings', 'savePushSettings', 'loadActivePushGroups', 'loadCPAGroups',
   'selectedGroupNames', 'selectedCPAGroupNames', 'selectedModels', 'setMessage'])
-const variableNames = new Set(['sub2Form', 'cpaForm', 'cpaGroups', 'pushProvider', 'groups', 'message', 'busy', 'pushGroupsController'])
+const variableNames = new Set(['sub2Form', 'cpaForm', 'vmForm', 'providerLabel', 'cpaGroups', 'pushProvider', 'groups', 'message', 'busy', 'pushGroupsController'])
 const declarations = parsed.statements.filter(statement =>
   ts.isFunctionDeclaration(statement) && functionNames.has(statement.name?.text) ||
   ts.isVariableStatement(statement) && statement.declarationList.declarations.some(item => variableNames.has(item.name.getText(parsed))),

@@ -107,6 +107,8 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) initSchema() error {
 	_, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS vm2api_settings (id INTEGER PRIMARY KEY CHECK (id=1), profile TEXT NOT NULL, encrypted_key TEXT NOT NULL DEFAULT '');
+		CREATE TABLE IF NOT EXISTS downstream_connections (id TEXT PRIMARY KEY, encrypted_payload TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL
 		);

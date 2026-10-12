@@ -184,6 +184,9 @@ func (s *Server) performAdminMemberRemoval(requestCtx context.Context, adminID s
 	if linked {
 		progress("cost", "正在获取移出前最后一次消耗记录")
 		p = s.refreshSub2CostBeforeRemoval(ctx, p)
+		if err = s.drainVMAccount(ctx, p); err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err

@@ -40,7 +40,7 @@ func (s *Server) removeSchedulingPauseExpired(ctx context.Context, initial model
 		return initial, false, nil
 	}
 	guard := func(p model.FreeAccountProfile) error {
-		current, currentPassword, readErr := s.store.Sub2Settings()
+		current, currentPassword, readErr := s.freePushSettings(p)
 		if readErr != nil {
 			return fmt.Errorf("%w: %v", errSchedulingPauseChanged, readErr)
 		}

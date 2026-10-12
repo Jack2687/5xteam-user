@@ -253,7 +253,7 @@ func TestSub2CostsRefreshWithQuotaAndBeforeRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	server.refreshSub2CostBeforeRemoval(context.Background(), account)
-	if statsCalls.Load() != 4 {
-		t.Fatal("CPA removal requested Sub2 costs")
+	if statsCalls.Load() != 5 {
+		t.Fatal("switching the default must preserve the existing Sub2 binding")
 	}
 }

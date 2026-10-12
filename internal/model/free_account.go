@@ -91,6 +91,14 @@ type FreeAccountProfile struct {
 	Sub2AccountName          string             `json:"sub2_account_name,omitempty"`
 	CPAAuthFileName          string             `json:"cpa_auth_file_name,omitempty"`
 	PushProvider             string             `json:"push_provider,omitempty"`
+	DownstreamConnectionID   string             `json:"downstream_connection_id,omitempty"`
+	VM2SlotID                string             `json:"vm2_slot_id,omitempty"`
+	VM2AssignmentID          string             `json:"vm2_assignment_id,omitempty"`
+	VM2ContainerName         string             `json:"vm2_container_name,omitempty"`
+	VM2ContainerRunning      bool               `json:"vm2_container_running,omitempty"`
+	VM2Stage                 string             `json:"vm2_stage,omitempty"`
+	VM2Schedulable           bool               `json:"vm2_schedulable,omitempty"`
+	VM2SyncedAt              *time.Time         `json:"vm2_synced_at,omitempty"`
 	Sub2GroupID              int64              `json:"sub2_group_id,omitempty"`
 	Sub2GroupName            string             `json:"sub2_group_name,omitempty"`
 	Sub2GroupIDs             []int64            `json:"sub2_group_ids,omitempty"`

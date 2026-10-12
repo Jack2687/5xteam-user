@@ -19,6 +19,10 @@ type MailAccountsPageResult struct {
 }
 
 type FreeAccountsPageSummary struct {
+	MonitoringBindings    int                             `json:"monitoring_bindings"`
+	MonitoringAccountID   string                          `json:"-"`
+	Monitor401Enabled     *bool                           `json:"monitor_401_enabled,omitempty"`
+	MonitorQuotaEnabled   *bool                           `json:"monitor_quota_enabled,omitempty"`
 	All                   int                             `json:"all"`
 	Outside               int                             `json:"outside"`
 	Inside                int                             `json:"inside"`
@@ -335,9 +339,11 @@ func (s *Store) FreeAccountsPageContext(ctx context.Context, spaceState string, 
 		COALESCE(SUM(CASE WHEN json_extract(profile,'$.push_status')='completed' AND space_state='inside' AND NULLIF(json_extract(profile,'$.quota_checked_at'),'') IS NULL THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(space_state!='removed' AND json_extract(profile,'$.accept_status')!='completed'
 			AND json_extract(profile,'$.invite_status') IN ('pending','running','completed')
-			AND COALESCE(json_extract(profile,'$.admin_account_id'),'')!=''),0)
+			AND COALESCE(json_extract(profile,'$.admin_account_id'),'')!=''),0),
+		COUNT(DISTINCT CASE WHEN json_extract(profile,'$.push_status')='completed' AND space_state='inside' THEN COALESCE(NULLIF(json_extract(profile,'$.downstream_connection_id'),''),json_extract(profile,'$.push_provider'),'legacy') END),
+		COALESCE(MIN(CASE WHEN json_extract(profile,'$.push_status')='completed' AND space_state='inside' THEN id END),'')
 		FROM accounts`).Scan(&summary.All, &summary.Outside, &summary.Inside, &summary.Removed, &summary.Dead, &summary.OAuthReady, &summary.Monitoring,
-		&summary.InsidePremium, &summary.Quota7DRemainingTotal, &summary.Quota7DCount, &summary.OldestStatusCheckedAt, &summary.OldestQuotaCheckedAt, &summary.StatusUnchecked, &summary.QuotaUnchecked, &summary.InvitePending)
+		&summary.InsidePremium, &summary.Quota7DRemainingTotal, &summary.Quota7DCount, &summary.OldestStatusCheckedAt, &summary.OldestQuotaCheckedAt, &summary.StatusUnchecked, &summary.QuotaUnchecked, &summary.InvitePending, &summary.MonitoringBindings, &summary.MonitoringAccountID)
 	if err != nil {
 		return nil, 0, summary, err
 	}

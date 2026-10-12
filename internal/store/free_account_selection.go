@@ -19,6 +19,9 @@ type FreeAccountSelection struct {
 	Dead            bool   `json:"dead"`
 	Sub2AccountID   int64  `json:"sub2_account_id"`
 	CPAAuthFileName string `json:"cpa_auth_file_name"`
+	PushProvider    string `json:"push_provider"`
+	PushStatus      string `json:"push_status"`
+	VM2SlotID       string `json:"vm2_slot_id"`
 }
 
 func (s *Store) SelectFreeAccountsByAdmin(ctx context.Context, adminID string) ([]FreeAccountSelection, error) {
@@ -42,7 +45,10 @@ func (s *Store) SelectFreeAccountsByAdmin(ctx context.Context, adminID string) (
 		COALESCE(json_extract(profile,'$.remove_status'),''),
 		COALESCE(json_extract(profile,'$.dead'),0),
 		COALESCE(json_extract(profile,'$.sub2_account_id'),0),
-		COALESCE(json_extract(profile,'$.cpa_auth_file_name'),'')
+		COALESCE(json_extract(profile,'$.cpa_auth_file_name'),''),
+		COALESCE(json_extract(profile,'$.push_provider'),''),
+		COALESCE(json_extract(profile,'$.push_status'),''),
+		COALESCE(json_extract(profile,'$.vm2_slot_id'),'')
 		FROM free_accounts WHERE json_extract(profile,'$.admin_account_id')=?
 		ORDER BY updated_at DESC,id DESC`, adminID)
 	if err != nil {
@@ -54,7 +60,7 @@ func (s *Store) SelectFreeAccountsByAdmin(ctx context.Context, adminID string) (
 		var item FreeAccountSelection
 		if err := rows.Scan(&item.ID, &item.Email, &item.AdminAccountID, &item.TeamAccountID,
 			&item.InviteStatus, &item.AcceptStatus, &item.OAuthStatus, &item.RemoveStatus,
-			&item.Dead, &item.Sub2AccountID, &item.CPAAuthFileName); err != nil {
+			&item.Dead, &item.Sub2AccountID, &item.CPAAuthFileName, &item.PushProvider, &item.PushStatus, &item.VM2SlotID); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

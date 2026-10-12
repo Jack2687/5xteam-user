@@ -6,8 +6,8 @@ import { ref, computed, watch, nextTick } from 'vue'
 
 const source = readFileSync(new URL('../src/components/FreePipelineView.vue', import.meta.url), 'utf8')
 const parsed = ts.createSourceFile('Pipeline.js', source.split('<script setup>')[1].split('</script>')[0], ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
-const names = new Set(['clearPipelineSelection', 'syncPipelineSelection', 'selectMotherChildren', 'togglePipelineSelected', 'toggleAllDisplayed', 'setAccountPage', 'setAccountPageSize', 'setTeamSpaceFilter', 'runSelectedPipelineTask', 'removeSelectedRecords', 'hasDownstream'])
-const vars = new Set(['selectedAccountIDs', 'selectedAccountSnapshots', 'selectedMotherID', 'motherSelectionController', 'selectedPipelineAccounts', 'allDisplayedSelected', 'displayedAccounts', 'hasDownstream'])
+const names = new Set(['clearPipelineSelection', 'syncPipelineSelection', 'selectMotherChildren', 'togglePipelineSelected', 'toggleAllDisplayed', 'setAccountPage', 'setAccountPageSize', 'setTeamSpaceFilter', 'runSelectedPipelineTask', 'removeSelectedRecords', 'hasDownstream', 'boundProvider'])
+const vars = new Set(['selectedAccountIDs', 'selectedAccountSnapshots', 'selectedMotherID', 'motherSelectionController', 'selectedPipelineAccounts', 'allDisplayedSelected', 'displayedAccounts', 'hasDownstream', 'boundProvider'])
 const code = parsed.statements.filter(s => ts.isFunctionDeclaration(s) ? names.has(s.name?.text) : ts.isVariableStatement(s) && s.declarationList.declarations.some(d => vars.has(d.name.getText(parsed)))).map(s => s.getText(parsed)).join('\n')
 const children = Array.from({ length: 23 }, (_, i) => ({ id: 'a' + i, email: 'child' + i + '@example.com', admin_account_id: '8', team_account_id: 'ws8', accept_status: 'completed', remove_status: 'pending', oauth_status: 'completed', sub2_account_id: i + 1 }))
 let mode = 'success', deferred, calls = [], maxActive = 0, active = 0, confirmed = true

@@ -401,7 +401,7 @@ function pipelineStatusLabel(account) {
 	if (!pipeline) return account.seat_recovery_left_at ? "已使用过" : "未进入 Team";
   if (pipeline.dead) return pipeline.remove_status === "completed" ? "死号 · 已移出" : "死号";
   if (pipeline.remove_status === "completed") return "已移出空间";
-  if (pipeline.push_status === "completed") return "Sub2 运行中";
+  if (pipeline.push_status === "completed") return `${({ sub2: "Sub2", cpa: "CPA", vm2api: "vm2api" }[pipeline.push_provider] || "Sub2")} 运行中`;
   if (pipeline.oauth_status === "completed") return "OAuth 已就绪";
   if (pipeline.accept_status === "completed") return "已进入空间";
   if (pipeline.invite_status === "completed") return "已邀请";

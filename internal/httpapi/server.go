@@ -25,6 +25,7 @@ import (
 )
 
 type Server struct {
+	downstreamMu              sync.Mutex
 	recovery                  seatRecoveryRuntime
 	qualityRunMu              sync.Mutex
 	qualityModelRunMu         sync.Mutex
@@ -285,6 +286,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/push-settings", s.getPushSettings)
 	mux.HandleFunc("PUT /api/push-settings", s.savePushSettings)
 	mux.HandleFunc("POST /api/push-settings/cpa/test", s.testCPASettings)
+	mux.HandleFunc("POST /api/push-settings/vm2api/test", s.testVMSettings)
 	mux.HandleFunc("GET /api/push-settings/cpa/groups", s.getCPAGroups)
 	mux.HandleFunc("GET /api/mail/status", s.mailStatus)
 	mux.HandleFunc("GET /api/mail/accounts", s.listMailAccounts)

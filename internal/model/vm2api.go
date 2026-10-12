@@ -1,0 +1,32 @@
+package model
+
+// VM2APISettings is a template for new Team cycles. Credentials live encrypted in the store.
+type VM2APISettings struct {
+	URL                            string  `json:"url"`
+	KeyPresent                     bool    `json:"key_present"`
+	PoolID                         string  `json:"pool_id"`
+	Kernel                         string  `json:"kernel"`
+	Memory                         string  `json:"memory"`
+	Region                         string  `json:"region"`
+	Locale                         string  `json:"locale"`
+	Enable401Check                 bool    `json:"enable_401_check"`
+	StatusCheckIntervalSeconds     int     `json:"status_check_interval_seconds"`
+	ReloginFailureLimit            int     `json:"relogin_failure_limit"`
+	QuotaEnabled                   bool    `json:"quota_enabled"`
+	QuotaCheckIntervalSeconds      int     `json:"quota_check_interval_seconds"`
+	QuotaRemainingThresholdPercent float64 `json:"quota_remaining_threshold_percent"`
+}
+
+func DefaultVM2APISettings() VM2APISettings {
+	return VM2APISettings{Kernel: "ubuntu-24.04", Memory: "1g", Locale: "en_US.UTF-8", Enable401Check: true, StatusCheckIntervalSeconds: 120, ReloginFailureLimit: 2, QuotaEnabled: true, QuotaCheckIntervalSeconds: 120}
+}
+
+// DownstreamTarget is private storage, never an API response. A cycle pins its
+// connection and policy before the first network side effect.
+type DownstreamTarget struct {
+	Provider string         `json:"provider"`
+	Sub2     Sub2Settings   `json:"sub2"`
+	CPA      CPASettings    `json:"cpa"`
+	VM2API   VM2APISettings `json:"vm2api"`
+	Secret   string         `json:"secret"`
+}

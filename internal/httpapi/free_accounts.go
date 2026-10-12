@@ -19,6 +19,7 @@ import (
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/store"
 	"chapt-space-user/internal/sub2"
+	"chapt-space-user/internal/vm2api"
 	"chapt-space-user/internal/workflow"
 )
 
@@ -60,18 +61,32 @@ func (s *Server) decorateFreeAccountSummary(summary *store.FreeAccountsPageSumma
 	}
 	now := time.Now().UTC()
 	summary.ServerNow = now.Format(time.RFC3339Nano)
+	if summary.MonitoringBindings > 1 {
+		return
+	}
 	settings, _, err := s.store.Sub2Settings()
 	if err != nil {
 		return
 	}
-	statusInterval := time.Duration(settings.StatusCheckIntervalSeconds) * time.Second
-	quotaInterval := time.Duration(settings.QuotaCheckIntervalSeconds) * time.Second
-	if strings.EqualFold(settings.Provider, "cpa") {
+	if summary.MonitoringAccountID != "" {
+		if p, _, e := s.store.FreeAccountCredential(summary.MonitoringAccountID); e == nil {
+			settings, _, err = s.freePushSettings(p)
+			if err != nil {
+				return
+			}
+		}
+	} else if strings.EqualFold(settings.Provider, "cpa") {
 		if cpa, _, cpaErr := s.store.CPASettings(); cpaErr == nil {
-			statusInterval = time.Duration(cpa.StatusCheckIntervalSeconds) * time.Second
-			quotaInterval = time.Duration(cpa.QuotaCheckIntervalSeconds) * time.Second
+			settings.StatusCheckIntervalSeconds = cpa.StatusCheckIntervalSeconds
+			settings.QuotaCheckIntervalSeconds = cpa.QuotaCheckIntervalSeconds
+			settings.Enable401Check = cpa.Enable401Check
+			settings.QuotaEnabled = cpa.QuotaEnabled
 		}
 	}
+	summary.Monitor401Enabled = &settings.Enable401Check
+	summary.MonitorQuotaEnabled = &settings.QuotaEnabled
+	statusInterval := time.Duration(settings.StatusCheckIntervalSeconds) * time.Second
+	quotaInterval := time.Duration(settings.QuotaCheckIntervalSeconds) * time.Second
 	if statusInterval < 10*time.Second {
 		statusInterval = 120 * time.Second
 	}
@@ -220,6 +235,21 @@ func (s *Server) deleteFreeAccount(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	unlock := s.lockFreeAccount(id)
 	defer unlock()
+	profile, _, readErr := s.store.FreeAccountCredential(id)
+	if readErr != nil {
+		writeAPI(w, 404, nil, readErr.Error())
+		return
+	}
+	if profile.VM2AssignmentID != "" && !profile.DownstreamCleaned {
+		if profile.RemoteRemovedAt == nil && profile.AcceptStatus == "completed" {
+			writeAPI(w, 409, nil, "请先移出空间并清理 vm2api 槽位")
+			return
+		}
+		if err := s.deleteVMAccount(r.Context(), profile); err != nil {
+			writeAPI(w, 400, nil, err.Error())
+			return
+		}
+	}
 	if err := s.store.DeleteFreeAccount(id); err != nil {
 		writeAPI(w, http.StatusNotFound, nil, err.Error())
 		return
@@ -1357,6 +1387,8 @@ func (s *Server) pushFreeAccount(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	unlock := s.lockFreeAccount(id)
 	defer unlock()
+	unlockRemove := s.lockFreeAccountRemove(id)
+	defer unlockRemove()
 	profile, credentials, err := s.store.FreeAccountCredential(id)
 	if err != nil {
 		writeAPI(w, http.StatusNotFound, nil, err.Error())
@@ -1374,9 +1406,19 @@ func (s *Server) pushFreeAccount(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "账号已退出空间，请先完成下一轮进入及授权")
 		return
 	}
-	settings, password, err := s.store.Sub2Settings()
+	settings, password, err := s.bindPushSettings(profile, credentials)
 	if err != nil {
 		writeAPI(w, http.StatusInternalServerError, nil, err.Error())
+		return
+	}
+	if settings.Provider == "vm2api" {
+		updated, pushErr := s.pushVMAccount(r.Context(), profile, credentials)
+		if pushErr != nil {
+			s.failFreeAccount(profile.ID, "push", pushErr)
+			writeAPI(w, 400, nil, pushErr.Error())
+			return
+		}
+		writeAPI(w, 200, updated, "")
 		return
 	}
 	s.auditAccountEvent(r.Context(), profile.ID, "push", "push", "manual_single", providerForSettings(settings), "开始推送当前下游", map[string]any{"provider": providerForSettings(settings)})
@@ -1385,7 +1427,7 @@ func (s *Server) pushFreeAccount(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, http.StatusOK, profile, "")
 			return
 		}
-		cpaSettings, cpaKey, cpaErr := s.store.CPASettings()
+		cpaSettings, cpaKey, cpaErr := s.freeCPASettings(profile)
 		if cpaErr != nil {
 			writeAPI(w, http.StatusInternalServerError, nil, cpaErr.Error())
 			return
@@ -1525,7 +1567,7 @@ func (s *Server) reloginFreeAccount(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, http.StatusConflict, nil, "账号尚未进入空间，不能重登")
 		return
 	}
-	settings, _, settingsErr := s.store.Sub2Settings()
+	settings, _, settingsErr := s.freePushSettings(profile)
 	if settingsErr != nil {
 		writeAPI(w, http.StatusInternalServerError, nil, settingsErr.Error())
 		return
@@ -1533,6 +1575,11 @@ func (s *Server) reloginFreeAccount(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(settings.Provider, "cpa") {
 		if strings.TrimSpace(profile.CPAAuthFileName) == "" {
 			writeAPI(w, http.StatusConflict, nil, "账号尚未推送到当前 CPA")
+			return
+		}
+	} else if settings.Provider == "vm2api" {
+		if profile.VM2SlotID == "" {
+			writeAPI(w, 409, nil, "账号尚未绑定 vm2api")
 			return
 		}
 	} else if profile.Sub2AccountID < 1 {
@@ -1641,20 +1688,15 @@ func (s *Server) checkFreeAccountQuota(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) performFreeAccountQuota(ctx context.Context, id string, allowAutoRemove bool) (model.FreeAccountProfile, bool, error) {
-	settings, _, err := s.store.Sub2Settings()
+	profile, _, err := s.store.FreeAccountCredential(id)
 	if err != nil {
-		return model.FreeAccountProfile{}, false, err
+		return profile, false, err
 	}
-	requestedAutoRemove := allowAutoRemove
-	allowRelogin := settings.Enable401Check
-	allowAutoRemove = requestedAutoRemove && settings.QuotaEnabled
-	if strings.EqualFold(settings.Provider, "cpa") {
-		if cpaSettings, _, cpaErr := s.store.CPASettings(); cpaErr == nil {
-			allowRelogin = cpaSettings.Enable401Check
-			allowAutoRemove = requestedAutoRemove && cpaSettings.QuotaEnabled
-		}
+	settings, _, err := s.freePushSettings(profile)
+	if err != nil {
+		return profile, false, err
 	}
-	return s.performFreeAccountQuotaInternal(ctx, id, allowAutoRemove, allowRelogin)
+	return s.performFreeAccountQuotaInternal(ctx, id, allowAutoRemove && settings.QuotaEnabled, settings.Enable401Check)
 }
 
 func (s *Server) performFreeAccountQuotaInternal(ctx context.Context, id string, allowAutoRemove, allowRelogin bool) (model.FreeAccountProfile, bool, error) {
@@ -1668,13 +1710,17 @@ func (s *Server) performFreeAccountQuotaInternal(ctx context.Context, id string,
 	if profile.RemoveStatus == "completed" || profile.RemoteRemovedAt != nil {
 		return profile, true, errors.New("账号已退出空间")
 	}
-	settings, password, err := s.store.Sub2Settings()
+	settings, password, err := s.freePushSettings(profile)
 	if err != nil {
 		return profile, false, err
 	}
 	if strings.EqualFold(settings.Provider, "cpa") {
 		if strings.TrimSpace(profile.CPAAuthFileName) == "" {
 			return profile, false, errors.New("账号尚未推送到当前 CPA")
+		}
+	} else if settings.Provider == "vm2api" {
+		if profile.VM2SlotID == "" {
+			return profile, false, errors.New("账号尚未绑定 vm2api")
 		}
 	} else if profile.Sub2AccountID < 1 {
 		return profile, false, errors.New("账号尚未推送到当前 Sub2")
@@ -1694,7 +1740,7 @@ func (s *Server) performFreeAccountQuotaInternal(ctx context.Context, id string,
 	var costErr error
 	quotaRemovalThreshold := settings.QuotaRemainingThresholdPercent
 	if strings.EqualFold(settings.Provider, "cpa") {
-		cpaSettings, cpaKey, cpaErr := s.store.CPASettings()
+		cpaSettings, cpaKey, cpaErr := s.freeCPASettings(profile)
 		if cpaErr != nil {
 			err = cpaErr
 		} else {
@@ -1710,6 +1756,8 @@ func (s *Server) performFreeAccountQuotaInternal(ctx context.Context, id string,
 				}
 			}
 		}
+	} else if settings.Provider == "vm2api" {
+		window5H, window7D, err = s.vmQuota(ctx, profile)
 	} else {
 		var quota sub2.QuotaUsage
 		var quotaErr error
@@ -1750,7 +1798,7 @@ func (s *Server) performFreeAccountQuotaInternal(ctx context.Context, id string,
 		// endpoint itself) are not an OpenAI account 401. CPA relogin is only
 		// entered from the explicit upstream status returned by cpa.Status.
 		cpaDownstream := strings.EqualFold(settings.Provider, "cpa") || strings.EqualFold(profile.PushProvider, "cpa")
-		if !cpaDownstream && isSub2Unauthorized(err) {
+		if (!cpaDownstream && settings.Provider == "sub2" && isSub2Unauthorized(err)) || vm2api.UpstreamUnauthorized(err) {
 			// Record the probe time even on a 401 so a failed recovery does not
 			// hammer the same Sub2 account every monitor tick.
 			checkedAt := time.Now()
@@ -1758,9 +1806,9 @@ func (s *Server) performFreeAccountQuotaInternal(ctx context.Context, id string,
 				item.QuotaCheckedAt = &checkedAt
 			})
 		}
-		if !cpaDownstream && allowRelogin && isSub2Unauthorized(err) && profile.AcceptStatus == "completed" && profile.RemoveStatus != "completed" {
-			if s.reloginFailureLimit("sub2") == 0 {
-				removed, removeErr := s.removeFreeAccountWithoutRelogin(ctx, profile.ID, "sub2")
+		if allowRelogin && ((settings.Provider == "sub2" && isSub2Unauthorized(err)) || vm2api.UpstreamUnauthorized(err)) && profile.AcceptStatus == "completed" && profile.RemoveStatus != "completed" {
+			if settings.ReloginFailureLimit == 0 {
+				removed, removeErr := s.removeFreeAccountWithoutRelogin(ctx, profile.ID, settings.Provider)
 				return removed, removed.RemoveStatus == "completed", removeErr
 			}
 			if reloginErr := s.reloginAndRepush(ctx, profile.ID); reloginErr == nil {
@@ -1769,7 +1817,7 @@ func (s *Server) performFreeAccountQuotaInternal(ctx context.Context, id string,
 				updated, _, readErr := s.store.FreeAccountCredential(profile.ID)
 				return updated, updated.RemoveStatus == "completed", readErr
 			} else {
-				outcome, cleanupErr := s.record401ReloginFailure(ctx, profile.ID, "sub2", reloginErr)
+				outcome, cleanupErr := s.record401ReloginFailure(ctx, profile.ID, settings.Provider, reloginErr)
 				if outcome.Removed || outcome.RemovalPending {
 					return outcome.Profile, outcome.Removed, cleanupErr
 				}
@@ -1950,6 +1998,11 @@ func (s *Server) removeFreeAccountWithoutRelogin(ctx context.Context, accountID,
 // reaches the existing serialized Team-removal path at the configured limit.
 func (s *Server) record401ReloginFailure(ctx context.Context, accountID, provider string, reloginErr error) (reloginFailureOutcome, error) {
 	limit := s.reloginFailureLimit(provider)
+	if p, _, e := s.store.FreeAccountCredential(accountID); e == nil {
+		if cfg, _, e := s.freePushSettings(p); e == nil {
+			limit = cfg.ReloginFailureLimit
+		}
+	}
 	now := time.Now()
 	profile, err := s.store.UpdateFreeAccount(accountID, func(item *model.FreeAccountProfile) {
 		item.ReloginFailureCount++
@@ -2020,9 +2073,17 @@ func (s *Server) checkFreeAccountStatus(ctx context.Context, id string, settings
 	if err != nil {
 		return false, err
 	}
+	settings, password, err = s.freePushSettings(profile)
+	if err != nil {
+		return false, err
+	}
 	if strings.EqualFold(settings.Provider, "cpa") {
 		if strings.TrimSpace(profile.CPAAuthFileName) == "" {
 			return false, errors.New("账号尚未推送到当前 CPA")
+		}
+	} else if settings.Provider == "vm2api" {
+		if profile.VM2SlotID == "" {
+			return false, errors.New("账号尚未绑定 vm2api")
 		}
 	} else if profile.Sub2AccountID < 1 {
 		return false, errors.New("账号尚未推送到当前 Sub2")
@@ -2030,11 +2091,17 @@ func (s *Server) checkFreeAccountStatus(ctx context.Context, id string, settings
 	checkedAt := time.Now()
 	status := 0
 	if strings.EqualFold(settings.Provider, "cpa") {
-		cpaSettings, cpaKey, cpaErr := s.store.CPASettings()
+		cpaSettings, cpaKey, cpaErr := s.freeCPASettings(profile)
 		if cpaErr != nil {
 			return false, cpaErr
 		}
 		status, err = s.cpa.Status(ctx, cpaSettings, cpaKey, profile.CPAAuthFileName)
+	} else if settings.Provider == "vm2api" {
+		_, _, err = s.vmQuota(ctx, profile)
+		if vm2api.UpstreamUnauthorized(err) {
+			status = 401
+			err = nil
+		}
 	} else {
 		status, err = s.sub2.AccountStatus(ctx, settings, password, profile.Sub2AccountID)
 	}
@@ -2046,8 +2113,8 @@ func (s *Server) checkFreeAccountStatus(ctx context.Context, id string, settings
 		// interpreted as the managed account returning 401. cpa.Status returns
 		// the upstream status separately and the branch below handles that.
 		cpaDownstream := strings.EqualFold(settings.Provider, "cpa")
-		if !cpaDownstream && isSub2Unauthorized(err) && profile.AcceptStatus == "completed" && profile.RemoveStatus != "completed" {
-			if s.reloginFailureLimit("sub2") == 0 {
+		if !cpaDownstream && settings.Provider == "sub2" && isSub2Unauthorized(err) && profile.AcceptStatus == "completed" && profile.RemoveStatus != "completed" {
+			if settings.ReloginFailureLimit == 0 {
 				_, removeErr := s.removeFreeAccountWithoutRelogin(ctx, id, "sub2")
 				return true, removeErr
 			}
@@ -2070,7 +2137,7 @@ func (s *Server) checkFreeAccountStatus(ctx context.Context, id string, settings
 	}
 	if status == http.StatusUnauthorized && profile.AcceptStatus == "completed" && profile.RemoveStatus != "completed" {
 		provider := providerForSettings(settings)
-		if s.reloginFailureLimit(provider) == 0 {
+		if settings.ReloginFailureLimit == 0 {
 			_, removeErr := s.removeFreeAccountWithoutRelogin(ctx, id, provider)
 			return true, removeErr
 		}
@@ -2078,10 +2145,7 @@ func (s *Server) checkFreeAccountStatus(ctx context.Context, id string, settings
 			if errors.Is(reloginErr, errDeadAccountHandled) {
 				return true, nil
 			}
-			provider := "sub2"
-			if strings.EqualFold(settings.Provider, "cpa") {
-				provider = "cpa"
-			}
+			provider := providerForSettings(settings)
 			outcome, cleanupErr := s.record401ReloginFailure(ctx, id, provider, reloginErr)
 			if cleanupErr != nil {
 				return true, cleanupErr
@@ -2131,12 +2195,15 @@ func (s *Server) reloginAndRepush(ctx context.Context, accountID string) error {
 		return fmt.Errorf("重登凭据回写邮件管理失败: %w", err)
 	}
 	s.auditAccountEvent(ctx, accountID, "relogin", "oauth", "relogin", "", "重登 AT / RT 已回写邮件管理", nil)
-	settings, password, err := s.store.Sub2Settings()
+	settings, password, err := s.freePushSettings(profile)
 	if err != nil {
 		return err
 	}
+	if settings.Provider == "vm2api" {
+		return s.reloginVMAccount(ctx, profile, credentials)
+	}
 	if strings.EqualFold(settings.Provider, "cpa") {
-		cpaSettings, cpaKey, cpaErr := s.store.CPASettings()
+		cpaSettings, cpaKey, cpaErr := s.freeCPASettings(profile)
 		if cpaErr != nil {
 			return cpaErr
 		}
@@ -2295,6 +2362,10 @@ func (s *Server) performFreeAccountRemovalGuarded(ctx context.Context, id string
 		if err := guard(profile); err != nil {
 			return profile, err
 		}
+	}
+	if err = s.drainVMAccount(ctx, profile); err != nil {
+		s.failFreeAccount(profile.ID, "remove", err)
+		return profile, err
 	}
 	removeMethod := removalMethodForCycle(profile, s.store.AutoRotationSettings())
 	if forceMotherKick {
@@ -2489,7 +2560,7 @@ func retryTeamRequest(ctx context.Context, settings model.Settings, call func() 
 }
 
 func (s *Server) refreshSub2CostBeforeRemoval(ctx context.Context, profile model.FreeAccountProfile) model.FreeAccountProfile {
-	settings, password, err := s.store.Sub2Settings()
+	settings, password, err := s.freePushSettings(profile)
 	if err != nil || strings.EqualFold(settings.Provider, "cpa") || profile.Sub2AccountID < 1 {
 		return profile
 	}
@@ -2511,7 +2582,10 @@ func (s *Server) refreshSub2CostBeforeRemoval(ctx context.Context, profile model
 }
 
 func (s *Server) deleteLinkedDownstream(ctx context.Context, profile model.FreeAccountProfile) error {
-	settings, password, err := s.store.Sub2Settings()
+	if profile.VM2SlotID != "" {
+		return s.deleteVMAccount(ctx, profile)
+	}
+	settings, password, err := s.freePushSettings(profile)
 	if err != nil {
 		return err
 	}
@@ -2520,7 +2594,7 @@ func (s *Server) deleteLinkedDownstream(ctx context.Context, profile model.FreeA
 		if strings.TrimSpace(profile.CPAAuthFileName) == "" {
 			return nil
 		}
-		cpaSettings, key, cpaErr := s.store.CPASettings()
+		cpaSettings, key, cpaErr := s.freeCPASettings(profile)
 		if cpaErr != nil {
 			return cpaErr
 		}
@@ -2552,6 +2626,10 @@ func (s *Server) updateFreeAccountStage(w http.ResponseWriter, r *http.Request) 
 	}
 	if input.Status != "not_started" && input.Status != "pending" && input.Status != "completed" && input.Status != "failed" {
 		writeAPI(w, http.StatusBadRequest, nil, "阶段状态只能是 not_started、pending、completed 或 failed")
+		return
+	}
+	if p, _, e := s.store.FreeAccountCredential(strings.TrimSpace(r.PathValue("id"))); e == nil && p.VM2AssignmentID != "" && (input.Stage == "push" || input.Stage == "remove") {
+		writeAPI(w, 409, nil, "vm2api 推送和清理状态由真实接口结果维护")
 		return
 	}
 	if input.Stage == "push" && input.Status == "completed" && input.Sub2AccountID < 1 {
@@ -2746,10 +2824,15 @@ func (s *Server) getPushSettings(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	provider := strings.ToLower(strings.TrimSpace(sub.Provider))
-	if provider != "cpa" {
+	if provider != "cpa" && provider != "vm2api" {
 		provider = "sub2"
 	}
-	writeAPI(w, http.StatusOK, map[string]any{"provider": provider, "sub2": sub, "cpa": cpas}, "")
+	vm, _, err := s.store.VM2APISettings()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	writeAPI(w, http.StatusOK, map[string]any{"provider": provider, "sub2": sub, "cpa": cpas, "vm2api": vm}, "")
 }
 
 type cpaSettingsInput struct {
@@ -2766,10 +2849,16 @@ type cpaSettingsInput struct {
 	GroupNames                     []string `json:"group_names"`
 }
 
+type vm2SettingsInput struct {
+	model.VM2APISettings
+	Key string `json:"key"`
+}
+
 type pushSettingsInput struct {
 	Provider string             `json:"provider"`
 	Sub2     *sub2SettingsInput `json:"sub2"`
 	CPA      *cpaSettingsInput  `json:"cpa"`
+	VM2API   *vm2SettingsInput  `json:"vm2api"`
 }
 
 func (s *Server) savePushSettings(w http.ResponseWriter, r *http.Request) {
@@ -2777,18 +2866,20 @@ func (s *Server) savePushSettings(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &input, 1<<20); err != nil {
 		return
 	}
+	s.downstreamMu.Lock()
+	defer s.downstreamMu.Unlock()
+	if err := s.pinExistingDownstreamsLocked(); err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
 	provider := strings.ToLower(strings.TrimSpace(input.Provider))
-	if provider != "cpa" {
+	if provider != "cpa" && provider != "vm2api" {
 		provider = "sub2"
 	}
 	sub, subPassword, err := s.store.Sub2Settings()
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
-	}
-	previousProvider := strings.ToLower(strings.TrimSpace(sub.Provider))
-	if previousProvider != "cpa" {
-		previousProvider = "sub2"
 	}
 	existingCPA, _, existingCPAErr := s.store.CPASettings()
 	if existingCPAErr != nil {
@@ -2805,6 +2896,24 @@ func (s *Server) savePushSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.TrimSpace(candidateURL) == "" || !candidateKeyPresent {
 			writeAPI(w, http.StatusBadRequest, nil, "启用 CPA 前必须配置 CPA 地址和 Management Key")
+			return
+		}
+	}
+	vm, vmKey, err := s.store.VM2APISettings()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	if input.VM2API != nil {
+		vm = input.VM2API.VM2APISettings
+		normalizeVMSettings(&vm)
+		if strings.TrimSpace(input.VM2API.Key) != "" {
+			vmKey = strings.TrimSpace(input.VM2API.Key)
+		}
+	}
+	if provider == "vm2api" {
+		if err = vm2api.Validate(vm, vmKey != ""); err != nil {
+			writeAPI(w, 400, nil, err.Error())
 			return
 		}
 	}
@@ -2931,30 +3040,18 @@ func (s *Server) savePushSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = cpaKey
 	}
-	if previousProvider != provider {
-		// The remote account from the previous downstream is intentionally not
-		// deleted here. Local monitoring must stop using its old identifier and
-		// make the account selectable for a fresh manual push to the new target.
-		for _, account := range s.store.FreeAccounts() {
-			if account.PushStatus != "completed" && account.Sub2AccountID < 1 && account.CPAAuthFileName == "" {
-				continue
-			}
-			_, _ = s.store.UpdateFreeAccount(account.ID, func(item *model.FreeAccountProfile) {
-				if item.RemoveStatus == "completed" {
-					return
-				}
-				item.PushStatus = "pending"
-				item.QuotaStatus = "pending"
-				item.Status = "monitoring"
-				item.LastError = fmt.Sprintf("推送后端已从 %s 切换为 %s，请重新推送", previousProvider, provider)
-				item.Sub2AccountID, item.Sub2AccountName = 0, ""
-				item.CPAAuthFileName, item.PushProvider = "", ""
-				item.StatusCheckedAt, item.QuotaCheckedAt = nil, nil
-				item.ReloginFailureCount, item.ReloginLastFailedAt = 0, nil
-			})
+	if input.VM2API != nil {
+		vm, err = s.store.SaveVM2APISettings(vm, vmKey)
+		if err != nil {
+			writeAPI(w, 500, nil, err.Error())
+			return
 		}
 	}
-	writeAPI(w, 200, map[string]any{"provider": provider, "sub2": sub, "cpa": cpaSettings}, "")
+	if err = s.rotateSavedDownstreamSecrets(); err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]any{"provider": provider, "sub2": sub, "cpa": cpaSettings, "vm2api": vm}, "")
 }
 
 func boolValue(v *bool) bool { return v != nil && *v }
@@ -3020,6 +3117,12 @@ type sub2SettingsInput struct {
 }
 
 func (s *Server) saveSub2Settings(w http.ResponseWriter, r *http.Request) {
+	s.downstreamMu.Lock()
+	defer s.downstreamMu.Unlock()
+	if err := s.pinExistingDownstreamsLocked(); err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
 	var input sub2SettingsInput
 	if err := decodeJSON(w, r, &input, 1<<20); err != nil {
 		return
@@ -3129,6 +3232,10 @@ func (s *Server) saveSub2Settings(w http.ResponseWriter, r *http.Request) {
 		CpaWS: cpaWS, Enable401Check: enable401Check, StatusCheckIntervalSeconds: input.StatusCheckIntervalSeconds, ReloginFailureLimit: *input.ReloginFailureLimit, QuotaEnabled: quotaEnabled, QuotaCheckIntervalSeconds: input.QuotaCheckIntervalSeconds, QuotaRemainingThresholdPercent: quotaRemainingThresholdPercent,
 	}, input.Password)
 	if err != nil {
+		writeAPI(w, http.StatusInternalServerError, nil, err.Error())
+		return
+	}
+	if err = s.store.RotateDownstreamSecret("sub2", settings.URL, settings.Email, input.Password); err != nil {
 		writeAPI(w, http.StatusInternalServerError, nil, err.Error())
 		return
 	}
@@ -3264,92 +3371,80 @@ func (s *Server) monitorFreeAccounts(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			settings, password, settingsErr := s.store.Sub2Settings()
-			if settingsErr != nil {
+		}
+		type job struct {
+			p                      model.FreeAccountProfile
+			settings               model.Sub2Settings
+			password               string
+			status, quota, cleanup bool
+		}
+		var jobs []job
+		now := time.Now()
+		for _, p := range s.store.FreeAccounts() {
+			if p.RemoteRemovedAt != nil && !p.DownstreamCleaned && p.RemoveStatus == "cleanup_pending" {
+				jobs = append(jobs, job{p: p, cleanup: true})
 				continue
 			}
-			monitor401Enabled := settings.Enable401Check
-			quotaEnabled := settings.QuotaEnabled
-			statusInterval := time.Duration(settings.StatusCheckIntervalSeconds) * time.Second
-			quotaInterval := time.Duration(settings.QuotaCheckIntervalSeconds) * time.Second
-			if strings.EqualFold(settings.Provider, "cpa") {
-				if cpaSettings, _, cpaErr := s.store.CPASettings(); cpaErr == nil {
-					monitor401Enabled = cpaSettings.Enable401Check
-					quotaEnabled = cpaSettings.QuotaEnabled
-					statusInterval = time.Duration(cpaSettings.StatusCheckIntervalSeconds) * time.Second
-					quotaInterval = time.Duration(cpaSettings.QuotaCheckIntervalSeconds) * time.Second
-				}
+			if p.StandardRemoval != nil || p.Dead || p.AcceptStatus != "completed" || p.PushStatus != "completed" || p.RemoveStatus == "completed" || p.RemoteRemovedAt != nil {
+				continue
 			}
+			if p.Sub2AccountID < 1 && p.CPAAuthFileName == "" && p.VM2SlotID == "" {
+				continue
+			}
+			cfg, password, e := s.freePushSettings(p)
+			if e != nil {
+				continue
+			}
+			statusInterval := time.Duration(cfg.StatusCheckIntervalSeconds) * time.Second
 			if statusInterval < 10*time.Second {
 				statusInterval = 120 * time.Second
 			}
+			quotaInterval := time.Duration(cfg.QuotaCheckIntervalSeconds) * time.Second
 			if quotaInterval < 10*time.Second {
 				quotaInterval = 120 * time.Second
 			}
-			now := time.Now()
-			provider := providerForSettings(settings)
-			type monitorJob struct {
-				account             model.FreeAccountProfile
-				statusDue, quotaDue bool
+			status := cfg.Enable401Check && (p.StatusCheckedAt == nil || now.Sub(*p.StatusCheckedAt) >= statusInterval)
+			quota := cfg.QuotaEnabled && (p.QuotaCheckedAt == nil || now.Sub(*p.QuotaCheckedAt) >= quotaInterval)
+			if status || quota {
+				jobs = append(jobs, job{p: p, settings: cfg, password: password, status: status, quota: quota})
 			}
-			jobs := make([]monitorJob, 0)
-			for _, account := range s.store.FreeAccounts() {
-				// Monitoring is intentionally limited to accounts that are both in
-				// the Team space and successfully pushed to the active downstream.
-				if account.StandardRemoval != nil || account.Dead || account.AcceptStatus != "completed" || account.PushStatus != "completed" || account.RemoveStatus == "completed" || account.RemoteRemovedAt != nil {
-					continue
-				}
-				hasDownstream := provider == "cpa" && strings.TrimSpace(account.CPAAuthFileName) != ""
-				if provider != "cpa" {
-					hasDownstream = account.Sub2AccountID > 0
-				}
-				if !hasDownstream {
-					continue
-				}
-				statusDue := monitor401Enabled && (account.StatusCheckedAt == nil || now.Sub(*account.StatusCheckedAt) >= statusInterval)
-				quotaDue := quotaEnabled && (account.QuotaCheckedAt == nil || now.Sub(*account.QuotaCheckedAt) >= quotaInterval)
-				if statusDue || quotaDue {
-					jobs = append(jobs, monitorJob{account: account, statusDue: statusDue, quotaDue: quotaDue})
-				}
-			}
-			if len(jobs) == 0 {
-				continue
-			}
-			// Each account is independent, so monitoring can run in parallel
-			// without changing the account-level serialization guarantees.
-			workers := 8
-			if len(jobs) < workers {
-				workers = len(jobs)
-			}
-			queue := make(chan monitorJob)
-			var wg sync.WaitGroup
-			for i := 0; i < workers; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for job := range queue {
-						unlock := s.lockFreeAccount(job.account.ID)
-						reloggedIn := false
-						if job.statusDue {
-							s.auditAccountEvent(ctx, job.account.ID, "status_401", "status", "monitor_401", provider, "开始批量 401 检测", nil)
-							reloggedIn, _ = s.checkFreeAccountStatus(ctx, job.account.ID, settings, password)
-							s.auditAccountEvent(ctx, job.account.ID, "status_401", "status", "monitor_401", provider, "401 检测完成", map[string]any{"relogin_triggered": reloggedIn})
-						}
-						if job.quotaDue && !reloggedIn {
-							s.auditAccountEvent(ctx, job.account.ID, "quota", "quota", "monitor_quota", provider, "开始批量额度检测", nil)
-							_, _, _ = s.performFreeAccountQuotaInternal(ctx, job.account.ID, quotaEnabled, monitor401Enabled)
-							s.auditAccountEvent(ctx, job.account.ID, "quota", "quota", "monitor_quota", provider, "批量额度检测完成", nil)
-						}
-						unlock()
-					}
-				}()
-			}
-			for _, job := range jobs {
-				queue <- job
-			}
-			close(queue)
-			wg.Wait()
 		}
+		queue := make(chan job)
+		var wg sync.WaitGroup
+		for i := 0; i < 8 && i < len(jobs); i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range queue {
+					unlock := s.lockFreeAccount(j.p.ID)
+					if j.cleanup {
+						_, _ = s.performFreeAccountRemove(ctx, j.p.ID)
+					} else {
+						relogged := false
+						provider := providerForSettings(j.settings)
+						if j.status {
+							s.auditAccountEvent(ctx, j.p.ID, "status_401", "status", "monitor_401", provider, "开始批量 401 检测", nil)
+							relogged, _ = s.checkFreeAccountStatus(ctx, j.p.ID, j.settings, j.password)
+							s.auditAccountEvent(ctx, j.p.ID, "status_401", "status", "monitor_401", provider, "401 检测完成", map[string]any{"relogin_triggered": relogged})
+						}
+						if j.quota && !relogged {
+							s.auditAccountEvent(ctx, j.p.ID, "quota", "quota", "monitor_quota", provider, "开始批量额度检测", nil)
+							_, _, _ = s.performFreeAccountQuotaInternal(ctx, j.p.ID, j.settings.QuotaEnabled, j.settings.Enable401Check)
+							s.auditAccountEvent(ctx, j.p.ID, "quota", "quota", "monitor_quota", provider, "批量额度检测完成", nil)
+						}
+					}
+					unlock()
+				}
+			}()
+		}
+		for _, j := range jobs {
+			select {
+			case queue <- j:
+			case <-ctx.Done():
+			}
+		}
+		close(queue)
+		wg.Wait()
 	}
 }
 

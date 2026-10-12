@@ -245,6 +245,9 @@ func (s *Server) runQualityBatch(ctx context.Context, force bool, onlyID ...stri
 		return
 	}
 	for _, p := range accounts {
+		if !s.qualityTargetMatches(p, push) {
+			continue
+		}
 		if len(onlyID) > 0 && onlyID[0] != "" && p.ID != onlyID[0] {
 			continue
 		}
@@ -304,6 +307,9 @@ func (s *Server) qualityPolicyCurrent(q model.QualitySettings, push model.Sub2Se
 	return err == nil && providerForSettings(active) == "sub2" && active.URL == push.URL && active.Email == push.Email
 }
 func (s *Server) probeQualityAccount(ctx context.Context, initial model.FreeAccountProfile, q model.QualitySettings, push model.Sub2Settings, password string, force bool) {
+	if !s.qualityTargetMatches(initial, push) {
+		return
+	}
 	// Skip, rather than queue behind, an existing OAuth/quota/account operation.
 	value, _ := s.freeLocks.LoadOrStore(initial.ID, &sync.Mutex{})
 	mutex := value.(*sync.Mutex)
@@ -527,7 +533,7 @@ func intersectQualityGroups(a, b []int64) []int64 {
 }
 
 func (s *Server) applyQualityAction(ctx context.Context, p model.FreeAccountProfile, q model.QualitySettings, push model.Sub2Settings, password string) {
-	if !s.qualityPolicyCurrent(q, push) {
+	if !s.qualityPolicyCurrent(q, push) || !s.qualityTargetMatches(p, push) {
 		return
 	}
 	current, _, err := s.store.FreeAccountCredential(p.ID)

@@ -184,6 +184,9 @@ func (s *Server) auditAccountEventWithIO(ctx context.Context, accountID, operati
 }
 
 func providerForSettings(settings model.Sub2Settings) string {
+	if strings.EqualFold(settings.Provider, "vm2api") {
+		return "vm2api"
+	}
 	if strings.EqualFold(settings.Provider, "cpa") {
 		return "cpa"
 	}
