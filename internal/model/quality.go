@@ -21,6 +21,7 @@ type QualityQuestion struct {
 }
 
 type QualitySettings struct {
+	Provider                  string            `json:"provider,omitempty"`
 	PollIntervalSeconds       int               `json:"poll_interval_seconds"`
 	MaxResultAgeSeconds       int               `json:"max_result_age_seconds"`
 	ConditionMode             string            `json:"condition_mode"`
@@ -75,6 +76,12 @@ func (v QualitySettings) ActiveQuestions() []QualityQuestion {
 	return out
 }
 func (v QualitySettings) Validate() error {
+	if v.Provider != "" && v.Provider != "sub2" && v.Provider != "vm2api" {
+		return errors.New("降智结果来源无效")
+	}
+	if v.Provider == "vm2api" && ((v.Action != "kick" && v.Action != "observe") || v.ModelAuditEnabled || v.AutoRestore || !v.QuestionEnabled || len(v.NormalGroupIDs) > 0 || len(v.DegradedGroupIDs) > 0) {
+		return errors.New("vm2api 仅支持获取降智情况，或由母号强制踢出并停止复用")
+	}
 	if v.PollIntervalSeconds != 0 && (v.PollIntervalSeconds < 10 || v.PollIntervalSeconds > 86400) {
 		return errors.New("查询间隔必须为10至86400秒")
 	}
@@ -161,7 +168,7 @@ func (v QualitySettings) Validate() error {
 			return fmt.Errorf("正则无效：%w", err)
 		}
 	}
-	if v.Action != "kick" && v.Action != "groups" {
+	if v.Action != "kick" && v.Action != "groups" && !(v.Provider == "vm2api" && v.Action == "observe") {
 		return errors.New("异常处理方式无效")
 	}
 	if v.Action == "groups" {
@@ -186,6 +193,8 @@ func (v QualitySettings) Validate() error {
 
 // This state follows the child across cycles; it is not a dead-account flag.
 type AccountQuality struct {
+	SourceProvider     string          `json:"source_provider,omitempty"`
+	ActionStarted      bool            `json:"action_started,omitempty"`
 	SourceRecovered    bool            `json:"source_recovered"`
 	SourceVersion      string          `json:"source_version,omitempty"`
 	SourceFailureLimit int             `json:"source_failure_limit,omitempty"`

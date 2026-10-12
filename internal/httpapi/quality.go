@@ -13,6 +13,7 @@ import (
 
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/sub2"
+	"chapt-space-user/internal/vm2api"
 )
 
 type qualityRuntime struct {
@@ -42,6 +43,10 @@ func qualityDue(p model.FreeAccountProfile, q model.QualitySettings, s model.Sub
 	return (qualityEligible(p) || qualityActionRetryEligible(p)) && (p.Quality.Revision != q.Revision || p.Quality.Identity != qualityIdentity(p, s) || p.Quality.NextAt == nil || !now.Before(*p.Quality.NextAt))
 }
 func (s *Server) qualityStatus() map[string]any {
+	pushSettings, _, pushErr := s.store.Sub2Settings()
+	if pushErr == nil && providerForSettings(pushSettings) == "vm2api" {
+		return s.vmQualityStatus()
+	}
 	q, err := s.store.QualitySettings()
 	s.qualityMu.Lock()
 	runtime := s.qualityRuntime
@@ -52,6 +57,7 @@ func (s *Server) qualityStatus() map[string]any {
 	}
 	s.qualityMu.Unlock()
 	status := map[string]any{"settings": q, "runtime": runtime, "model_runtime": modelRuntime, "server_now": time.Now().UTC(), "next_at": nil, "model_next_at": nil, "eligible": 0}
+	status["provider"] = providerForSettings(pushSettings)
 	if err != nil {
 		status["error"] = err.Error()
 		return status
@@ -64,7 +70,7 @@ func (s *Server) qualityStatus() map[string]any {
 	status["summary"] = summary
 	push, _, err := s.store.Sub2Settings()
 	if err != nil || providerForSettings(push) != "sub2" {
-		status["inactive_reason"] = "当前启用 CPA，降智检测仅支持 Sub2"
+		status["inactive_reason"] = "降智结果查询仅支持 Sub2 和 vm2api"
 		return status
 	}
 	count, next, err := s.store.QualitySchedule(q.Revision)
@@ -100,7 +106,7 @@ func (s *Server) getQualityHistory(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 404, nil, err.Error())
 		return
 	}
-	q, err := s.store.QualitySettings()
+	q, err := s.store.QualitySettings(accountProvider(p))
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
@@ -117,16 +123,54 @@ func (s *Server) getQualityHistory(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, 200, map[string]any{"account": p, "events": events, "has_more": false}, "")
 }
 func (s *Server) saveQualitySettings(w http.ResponseWriter, r *http.Request) {
+	push, password, err := s.store.Sub2Settings()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	provider := providerForSettings(push)
 	q := model.DefaultQualitySettings()
+	if provider == "vm2api" {
+		q.Provider = "vm2api"
+		q.Action = "observe"
+	}
 	q.Questions = nil
 	if err := decodeJSON(w, r, &q, 1<<20); err != nil {
 		return
+	}
+	if q.Provider != "" && q.Provider != provider {
+		writeAPI(w, 409, nil, "推送来源已切换，请刷新降智设置后重试")
+		return
+	}
+	if provider == "vm2api" {
+		q.Provider = "vm2api"
+	} else if q.Provider == "sub2" {
+		q.Provider = ""
 	}
 	if err := q.Validate(); err != nil {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	push, password, err := s.store.Sub2Settings()
+	if provider == "vm2api" {
+		if q.Enabled {
+			cfg, key, e := s.store.VM2APISettings()
+			err = e
+			if err == nil {
+				ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+				defer cancel()
+				err = vm2api.New(cfg, key).QualityCapabilities(ctx)
+			}
+		}
+		if err == nil {
+			_, err = s.store.SaveQualitySettings(q)
+		}
+		if err != nil {
+			writeAPI(w, 400, nil, err.Error())
+			return
+		}
+		writeAPI(w, 200, s.qualityStatus(), "")
+		return
+	}
 	if err == nil && q.Enabled {
 		if providerForSettings(push) != "sub2" {
 			err = errors.New("降智检测目前只支持 Sub2，请先启用 Sub2")
@@ -163,21 +207,31 @@ func (s *Server) saveQualitySettings(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, 200, s.qualityStatus(), "")
 }
 func (s *Server) triggerQuality(w http.ResponseWriter, r *http.Request) {
-	q, err := s.store.QualitySettings()
+	push, _, err := s.store.Sub2Settings()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	provider := providerForSettings(push)
+	q, err := s.store.QualitySettings(provider)
 	if err != nil || !q.Enabled {
 		writeAPI(w, 400, nil, "请先开启并保存降智检测")
 		return
 	}
-	push, _, err := s.store.Sub2Settings()
-	if err != nil || providerForSettings(push) != "sub2" {
-		writeAPI(w, 409, nil, "当前未启用 Sub2")
+	if provider != "sub2" && provider != "vm2api" {
+		writeAPI(w, 409, nil, "当前未启用 Sub2 或 vm2api")
 		return
 	}
 	accountID := r.PathValue("id")
 	if accountID != "" {
 		p, _, err := s.store.FreeAccountCredential(accountID)
-		if err != nil || (!qualityEligible(p) && !qualityActionRetryEligible(p)) {
-			writeAPI(w, 409, nil, "账号必须在空间内且已推送到 Sub2")
+		eligible := err == nil && provider == "sub2" && s.qualityTargetMatches(p, push) && (qualityEligible(p) || qualityActionRetryEligible(p))
+		if err == nil && provider == "vm2api" {
+			cfg, _, e := s.store.VM2APISettings()
+			eligible = e == nil && s.vmQualityTargetMatches(p, cfg) && (vmQualityEligible(p) || vmQualityCleanupPending(p))
+		}
+		if !eligible {
+			writeAPI(w, 409, nil, "账号必须已推送到当前配置的结果来源，且仍在空间内或等待清理")
 			return
 		}
 	}
@@ -663,6 +717,10 @@ func (s *Server) restoreQualityAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.Dead {
 		writeAPI(w, 409, nil, "死号不能通过降智恢复解除")
+		return
+	}
+	if accountProvider(p) == "vm2api" {
+		writeAPI(w, 409, nil, "vm2api 结果跟随远端最新检测；已强制踢出的账号停止复用")
 		return
 	}
 	if p.RemoteRemovedAt != nil && !p.DownstreamCleaned {

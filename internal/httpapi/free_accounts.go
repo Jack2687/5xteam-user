@@ -2514,6 +2514,10 @@ func (s *Server) finishRemovedCycle(ctx context.Context, p model.FreeAccountProf
 		item.RemoveStatus = "completed"
 		item.LastError = ""
 		item.DownstreamCleaned = true
+		if item.Quality.SourceProvider == "vm2api" && item.Quality.Action == "kick" {
+			item.Quality.ActionStatus = "completed"
+			item.Quality.Error = ""
+		}
 		if item.StandardRemoval != nil && !item.StandardRemoval.Lane {
 			state := *item.StandardRemoval
 			state.Stage, state.Message = "completed", "转普通后移出完成"

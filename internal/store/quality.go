@@ -51,12 +51,26 @@ func (s *Store) QualitySchedule(revision string) (int, time.Time, error) {
 	return count, next, err
 }
 
-func (s *Store) QualitySettings() (model.QualitySettings, error) {
+func qualitySettingsTable(provider string) string {
+	if provider == "vm2api" {
+		return "vm2api_quality_settings"
+	}
+	return "quality_settings"
+}
+func (s *Store) QualitySettings(providers ...string) (model.QualitySettings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v := model.DefaultQualitySettings()
+	provider := "sub2"
+	if len(providers) > 0 && providers[0] == "vm2api" {
+		provider = "vm2api"
+		v.Provider = provider
+		v.Action = "observe"
+		v.FailureLimit = 1
+		v.RecoveryLimit = 1
+	}
 	var raw string
-	err := s.db.QueryRow("SELECT payload FROM quality_settings WHERE id=1").Scan(&raw)
+	err := s.db.QueryRow("SELECT payload FROM " + qualitySettingsTable(provider) + " WHERE id=1").Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -133,6 +147,9 @@ func (s *Store) QualityHistory(id string, limit int) ([]model.AutoRotationEvent,
 }
 
 func nextCycleQuality(q model.AccountQuality) model.AccountQuality {
+	if q.SourceProvider == "vm2api" && !q.Excluded {
+		return model.AccountQuality{}
+	}
 	return model.AccountQuality{Status: q.Status, Degraded: q.Degraded, Excluded: q.Excluded, QuestionDegraded: q.QuestionDegraded, ModelAudit: model.ModelAuditState{Degraded: q.ModelAudit.Degraded}}
 }
 func (s *Store) SaveQualitySettings(v model.QualitySettings) (model.QualitySettings, error) {
@@ -143,7 +160,7 @@ func (s *Store) SaveQualitySettings(v model.QualitySettings) (model.QualitySetti
 	defer s.mu.Unlock()
 	var oldRaw string
 	var old model.QualitySettings
-	if err := s.db.QueryRow("SELECT payload FROM quality_settings WHERE id=1").Scan(&oldRaw); err == nil {
+	if err := s.db.QueryRow("SELECT payload FROM " + qualitySettingsTable(v.Provider) + " WHERE id=1").Scan(&oldRaw); err == nil {
 		_ = json.Unmarshal([]byte(oldRaw), &old)
 	}
 	v.ModelAuditEnabledAt = old.ModelAuditEnabledAt
@@ -154,7 +171,7 @@ func (s *Store) SaveQualitySettings(v model.QualitySettings) (model.QualitySetti
 	v.Revision = fmt.Sprint(time.Now().UnixNano())
 	raw, err := json.Marshal(v)
 	if err == nil {
-		_, err = s.db.Exec("INSERT INTO quality_settings(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", string(raw))
+		_, err = s.db.Exec("INSERT INTO "+qualitySettingsTable(v.Provider)+"(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", string(raw))
 	}
 	return v, err
 }

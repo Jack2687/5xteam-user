@@ -27,6 +27,7 @@ jobs:
           npm run test:push-groups
           npm run test:pipeline-selection
           npm run test:quality-groups
+          npm run test:quality-vm
           npm run build
       - run: go test ./... -timeout 10m
       - run: go vet ./...

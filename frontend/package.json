@@ -11,6 +11,7 @@
     "test:mail-export": "node scripts/check-mail-export.mjs",
     "test:push-groups": "node scripts/check-push-groups.mjs",
     "test:quality-groups": "node scripts/check-quality-groups.mjs",
+    "test:quality-vm": "node scripts/check-quality-vm.mjs",
     "test:pipeline-selection": "node scripts/check-pipeline-selection.mjs",
     "test:list-requests": "node scripts/check-list-requests.mjs"
   },

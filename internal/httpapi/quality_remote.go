@@ -67,6 +67,7 @@ func remoteQualityDecision(q model.QualitySettings, p model.FreeAccountProfile, 
 	return bad, normal
 }
 func (s *Server) runRemoteQualityBatch(ctx context.Context, force bool, onlyID string) {
+	s.runVMQualityBatch(ctx, force, onlyID)
 	q, err := s.store.QualitySettings()
 	if err != nil || !q.Enabled {
 		return

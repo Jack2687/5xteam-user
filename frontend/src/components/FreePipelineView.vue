@@ -114,7 +114,7 @@ const qualityCountdown = computed(() => qualityCountdownValue())
 function qualityText(account) {
   const state = account.quality || {}
   const labels = { unknown: '未检测', normal: '正常', suspect: '疑似异常', degraded: '降智', error: '检测失败' }
-  if (!qualityStatus.value?.settings?.question_enabled) return '未开启'
+  if (boundProvider(account) !== 'vm2api' && !qualityStatus.value?.settings?.question_enabled) return '未开启'
   return labels[state.question_status || state.status] || '未检测'
 }
 function qualityModelText(account) {
@@ -135,10 +135,10 @@ async function restoreQuality(account) {
   } catch (error) { setMessage(error.message, 'error') }
 }
 async function probeQuality(account) {
-  if (!window.confirm('读取 Sub2 已保存的检测结果，满足条件后将踢出或切组。继续？')) return
+  if (!window.confirm(boundProvider(account) === 'vm2api' ? (qualityStatus.value?.settings?.action === 'kick' ? '读取 vm2api 最新结果，有效红色将触发母号强制踢出并删除对应槽位和容器。继续？' : '仅获取 vm2api 最新降智结果，不执行踢出。继续？') : '读取 Sub2 已保存的检测结果，满足条件后将踢出或切组。继续？')) return
   try {
     await api('/api/free-accounts/' + encodeURIComponent(account.id) + '/quality/probe', { method: 'POST' })
-    setMessage('已启动 Sub2 结果查询', 'success')
+    setMessage('已启动 ' + providerLabel(boundProvider(account)) + ' 结果查询', 'success')
     await loadQualityStatus()
   } catch (error) { setMessage(error.message, 'error') }
 }
@@ -1181,7 +1181,14 @@ onBeforeUnmount(() => motherSelectionController?.abort())
           <td class="cost-cell"><strong>{{ costText(account) }}</strong><small v-if="!['cpa', 'vm2api'].includes(boundProvider(account))" class="table-note user-cost" title="当前用户消耗额度">{{ userCostText(account) }}</small><small v-if="account.cost_checked_at && !['cpa', 'vm2api'].includes(boundProvider(account))" class="table-note">{{ formatTime(account.cost_checked_at) }}</small><small v-else-if="['cpa','vm2api'].includes(boundProvider(account))" class="table-note">{{ providerLabel(boundProvider(account)) }} 不统计</small></td>
           <td><strong>{{ quotaText(account.quota_5h) }}</strong><small v-if="account.quota_5h" class="table-note">剩余</small></td>
           <td><strong>{{ quotaText(account.quota_7d) }}</strong><small v-if="account.quota_7d" class="table-note">剩余</small></td>
-          <td v-if="boundProvider(account) === 'vm2api'" class="quality-cell">不支持</td><td v-else class="quality-cell">
+          <td v-if="boundProvider(account) === 'vm2api'" class="quality-cell">
+            <strong :class="{ 'danger-text': account.quality?.question_degraded }" :title="account.quality?.answer">vm2api：{{ qualityStatus?.runtime?.active?.[account.id] ? '查询中' : qualityText(account) }}</strong>
+            <small v-if="account.quality?.checked_at" class="table-note">{{ formatTime(account.quality.checked_at) }} · {{ account.quality.question_name }} · {{ account.quality.duration_ms }} ms</small>
+            <small v-if="account.quality?.reason" class="table-note">{{ account.quality.reason }}</small>
+            <small v-if="account.quality?.excluded" class="danger-text">降智停用，停止复用</small>
+            <small v-if="account.quality?.action_status" class="table-note">{{ { pending: '正在移出／等待清理', failed: '处理失败，等待重试', completed: '移出和容器清理完成' }[account.quality.action_status] || account.quality.action_status }}</small>
+            <small v-if="account.quality?.error" class="table-note" :title="account.quality.error">{{ account.quality.error }}</small>
+          </td><td v-else class="quality-cell">
             <strong :class="{ 'danger-text': account.quality?.question_degraded }" :title="account.quality?.answer">题目：{{ qualityStatus?.runtime?.active?.[account.id] ? '检测中' : qualityText(account) }}</strong>
             <small v-if="account.quality?.checked_at && qualityStatus?.settings?.question_enabled" class="table-note">{{ account.quality.question_name }} · {{ account.quality.duration_ms }} ms · 异常 {{ account.quality.failures || 0 }}/{{ account.quality?.source_failure_limit || '-' }}</small>
             <strong class="quality-model-line" :class="{ 'danger-text': account.quality?.model_audit?.failures > 0 }" :title="qualityModelTitle(account)">模型：{{ qualityModelText(account) }}</strong>
@@ -1201,8 +1208,8 @@ onBeforeUnmount(() => motherSelectionController?.abort())
       <div v-if="pipelineMenu.open && pipelineMenu.account" class="pipeline-action-menu" :style="{ top: `${pipelineMenu.top}px`, left: `${pipelineMenu.left}px` }" @mouseenter="keepPipelineMenuOpen" @mouseleave="closePipelineMenu()">
         <button type="button" @click="runPipelineMenuAction('lifecycle')"><History :size="14" />查看账号全流程</button>
         <button type="button" @click="openLifecycle(pipelineMenu.account, true); pipelineMenu.open = false"><History :size="14" />查看降智检测记录</button>
-        <button type="button" :disabled="!qualityStatus?.settings?.enabled || boundProvider(pipelineMenu.account) !== 'sub2' || qualityStatus?.runtime?.running || qualityStatus?.model_runtime?.running || pipelineMenu.account.accept_status !== 'completed' || pipelineMenu.account.push_status !== 'completed' || pipelineMenu.account.remove_status === 'completed' || pipelineMenu.account.dead" @click="probeQuality(pipelineMenu.account); pipelineMenu.open = false"><Gauge :size="14" />检测智商</button>
-        <button v-if="pipelineMenu.account.quality?.degraded || pipelineMenu.account.quality?.excluded" type="button" @click="restoreQuality(pipelineMenu.account); pipelineMenu.open = false"><RefreshCw :size="14" />恢复降智状态 / 分组</button>
+        <button type="button" :disabled="!qualityStatus?.settings?.enabled || !['sub2', 'vm2api'].includes(boundProvider(pipelineMenu.account)) || boundProvider(pipelineMenu.account) !== qualityStatus?.provider || qualityStatus?.runtime?.running || qualityStatus?.model_runtime?.running || pipelineMenu.account.accept_status !== 'completed' || pipelineMenu.account.push_status !== 'completed' || pipelineMenu.account.remove_status === 'completed' || pipelineMenu.account.dead" @click="probeQuality(pipelineMenu.account); pipelineMenu.open = false"><Gauge :size="14" />立即查询并处理</button>
+        <button v-if="boundProvider(pipelineMenu.account) !== 'vm2api' && (pipelineMenu.account.quality?.degraded || pipelineMenu.account.quality?.excluded)" type="button" @click="restoreQuality(pipelineMenu.account); pipelineMenu.open = false"><RefreshCw :size="14" />恢复降智状态 / 分组</button>
         <button v-if="pipelineMenu.account.history_uncertain" type="button" @click="openHistoryReview(pipelineMenu.account); pipelineMenu.open = false"><History :size="14" />核对历史空间</button>
         <button type="button" :disabled="pipelineMenu.account.dead || isAccountBusy(pipelineMenu.account) || joinCapacityRefreshing || !adminAccounts.length" @click="runPipelineMenuAction('join')"><DoorOpen :size="14" />{{ joinActionLabel(pipelineMenu.account) }}</button>
         <button type="button" :disabled="pipelineMenu.account.dead || isAccountBusy(pipelineMenu.account) || pipelineMenu.account.accept_status !== 'completed' || pipelineMenu.account.remove_status === 'completed'" @click="runPipelineMenuAction('oauth')"><KeyRound :size="14" />获取 Codex AT / RT</button>
