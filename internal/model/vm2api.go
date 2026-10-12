@@ -2,19 +2,21 @@ package model
 
 // VM2APISettings is a template for new Team cycles. Credentials live encrypted in the store.
 type VM2APISettings struct {
-	URL                            string  `json:"url"`
-	KeyPresent                     bool    `json:"key_present"`
-	PoolID                         string  `json:"pool_id"`
-	Kernel                         string  `json:"kernel"`
-	Memory                         string  `json:"memory"`
-	Region                         string  `json:"region"`
-	Locale                         string  `json:"locale"`
-	Enable401Check                 bool    `json:"enable_401_check"`
-	StatusCheckIntervalSeconds     int     `json:"status_check_interval_seconds"`
-	ReloginFailureLimit            int     `json:"relogin_failure_limit"`
-	QuotaEnabled                   bool    `json:"quota_enabled"`
-	QuotaCheckIntervalSeconds      int     `json:"quota_check_interval_seconds"`
-	QuotaRemainingThresholdPercent float64 `json:"quota_remaining_threshold_percent"`
+	URL                            string   `json:"url"`
+	KeyPresent                     bool     `json:"key_present"`
+	PoolID                         string   `json:"pool_id"`
+	BindProxy                      bool     `json:"bind_proxy"`
+	ProxyIDs                       []string `json:"proxy_ids"`
+	Kernel                         string   `json:"kernel"`
+	Memory                         string   `json:"memory"`
+	Region                         string   `json:"region"`
+	Locale                         string   `json:"locale"`
+	Enable401Check                 bool     `json:"enable_401_check"`
+	StatusCheckIntervalSeconds     int      `json:"status_check_interval_seconds"`
+	ReloginFailureLimit            int      `json:"relogin_failure_limit"`
+	QuotaEnabled                   bool     `json:"quota_enabled"`
+	QuotaCheckIntervalSeconds      int      `json:"quota_check_interval_seconds"`
+	QuotaRemainingThresholdPercent float64  `json:"quota_remaining_threshold_percent"`
 }
 
 func DefaultVM2APISettings() VM2APISettings {

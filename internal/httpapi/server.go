@@ -287,6 +287,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/push-settings", s.savePushSettings)
 	mux.HandleFunc("POST /api/push-settings/cpa/test", s.testCPASettings)
 	mux.HandleFunc("POST /api/push-settings/vm2api/test", s.testVMSettings)
+	mux.HandleFunc("POST /api/push-settings/vm2api/proxies", s.getVMProxies)
 	mux.HandleFunc("GET /api/push-settings/cpa/groups", s.getCPAGroups)
 	mux.HandleFunc("GET /api/mail/status", s.mailStatus)
 	mux.HandleFunc("GET /api/mail/accounts", s.listMailAccounts)

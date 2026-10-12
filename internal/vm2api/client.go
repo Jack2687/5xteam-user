@@ -129,9 +129,10 @@ type Slot struct {
 
 func (c *Client) Check(ctx context.Context) error {
 	var caps struct {
-		Version int  `json:"version"`
-		Docker  bool `json:"docker_per_slot"`
-		Delete  bool `json:"delete_account"`
+		Version        int  `json:"version"`
+		Docker         bool `json:"docker_per_slot"`
+		Delete         bool `json:"delete_account"`
+		ProxySelection bool `json:"proxy_selection"`
 	}
 	if e := c.request(ctx, "GET", "/space-capabilities", "", nil, &caps); e != nil {
 		return e
@@ -139,11 +140,19 @@ func (c *Client) Check(ctx context.Context) error {
 	if caps.Version < 1 || !caps.Docker || !caps.Delete {
 		return errors.New("vm2api 未安装 Space 一槽一容器接口")
 	}
+	if c.Settings.BindProxy && len(NormalizeProxyIDs(c.Settings.ProxyIDs)) > 0 && !caps.ProxySelection {
+		return errors.New("vm2api 尚不支持代理选择，请先更新 vm2api 后再推送")
+	}
 	return nil
 }
 func (c *Client) Create(ctx context.Context, email, assignment string) (Slot, error) {
 	var out Slot
 	body := map[string]any{"assignment_id": assignment, "account_email": email, "execution_mode": "docker_per_slot", "platform": "openai", "runtime_type": "docker", "proxy_id": "px-local", "pool_id": c.Settings.PoolID, "kernel": c.Settings.Kernel, "locale": c.Settings.Locale, "region": c.Settings.Region, "machine": map[string]any{"memory": c.Settings.Memory}, "start": true}
+	if ids := NormalizeProxyIDs(c.Settings.ProxyIDs); c.Settings.BindProxy && len(ids) > 0 {
+		// vm2api reads counts, chooses the least-bound exit and reserves it before
+		// starting Docker. The assignment pins that choice across ambiguous retries.
+		body["proxy_ids"] = ids
+	}
 	e := c.request(ctx, "POST", "/vms/create", assignment, body, &out)
 	return out, e
 }

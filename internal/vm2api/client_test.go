@@ -2,9 +2,11 @@ package vm2api
 
 import (
 	"chapt-space-user/internal/model"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -43,6 +45,77 @@ func TestQuotaAuthenticationAndWindows(t *testing.T) {
 				t.Fatal("invalid quota accepted")
 			}
 		})
+	}
+}
+
+func TestProxySelectionContractAndLegacyServer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		enabled   bool
+		ids, want []string
+	}{
+		{"off", false, []string{"px-a"}, nil},
+		{"empty-default-local", true, []string{}, nil},
+		{"selected", true, []string{"px-a", " px-b ", "px-a"}, []string{"px-a", "px-b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			advanced := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/panel/space-capabilities" {
+					fmt.Fprintf(w, `{"ok":true,"data":{"version":1,"docker_per_slot":true,"delete_account":true,"proxy_selection":%t}}`, advanced)
+					return
+				}
+				var body struct {
+					ProxyID  string   `json:"proxy_id"`
+					ProxyIDs []string `json:"proxy_ids"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body.ProxyID != "px-local" || !reflect.DeepEqual(body.ProxyIDs, tc.want) {
+					t.Errorf("unexpected proxy selection: %+v", body)
+				}
+				fmt.Fprint(w, `{"ok":true,"data":{}}`)
+			}))
+			defer srv.Close()
+			cfg := model.DefaultVM2APISettings()
+			cfg.URL, cfg.BindProxy, cfg.ProxyIDs = srv.URL, tc.enabled, tc.ids
+			client := New(cfg, "management")
+			if err := client.Check(t.Context()); (err != nil) != (len(tc.want) > 0) {
+				t.Fatalf("incorrect legacy capability check: %v", err)
+			}
+			advanced = true
+			if err := client.Check(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Create(t.Context(), "account@example.com", "assignment-fixture"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestProxyListStripsCredentialsAndKeepsAvailabilityCounts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/panel/proxies" || r.Method != "GET" || r.Header.Get("Authorization") != "Bearer management" {
+			t.Errorf("unexpected proxy request: %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"ok":true,"data":{"proxies":[{"id":"px-a","label":"出口 A","scheme":"socks5","host":"10.0.0.1","port":1080,"enabled":true,"status":"ok","bound_count":2,"bind_limit":32,"username":"private-user","password":"private-pass","url":"socks5://private"},{"id":"px-local","scheme":"local","enabled":false,"status":"dead","bound_count":0,"bind_limit":32}]}}`)
+	}))
+	defer srv.Close()
+	cfg := model.DefaultVM2APISettings()
+	cfg.URL = srv.URL
+	rows, err := New(cfg, "management").Proxies(t.Context())
+	if err != nil || len(rows) != 2 || rows[0].BoundCount == nil || *rows[0].BoundCount != 2 || *rows[0].BindLimit != 32 || rows[1].Enabled {
+		t.Fatalf("bad proxy list: %+v %v", rows, err)
+	}
+	encoded, _ := json.Marshal(rows)
+	var fields []map[string]any
+	_ = json.Unmarshal(encoded, &fields)
+	for _, field := range []string{"username", "password", "url"} {
+		if _, ok := fields[0][field]; ok {
+			t.Fatalf("proxy credentials exposed: %s", field)
+		}
 	}
 }
 func TestGlobalSettingsAndRedirectSafety(t *testing.T) {

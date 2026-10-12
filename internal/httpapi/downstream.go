@@ -398,6 +398,7 @@ func (s *Server) testVMSettings(w http.ResponseWriter, r *http.Request) {
 }
 func normalizeVMSettings(v *model.VM2APISettings) {
 	v.URL = strings.TrimRight(strings.TrimSpace(v.URL), "/")
+	v.ProxyIDs = vm2api.NormalizeProxyIDs(v.ProxyIDs)
 	if v.Kernel == "" {
 		v.Kernel = "ubuntu-24.04"
 	}
