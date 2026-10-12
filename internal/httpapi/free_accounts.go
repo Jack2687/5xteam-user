@@ -2561,7 +2561,7 @@ func retryTeamRequest(ctx context.Context, settings model.Settings, call func() 
 
 func (s *Server) refreshSub2CostBeforeRemoval(ctx context.Context, profile model.FreeAccountProfile) model.FreeAccountProfile {
 	settings, password, err := s.freePushSettings(profile)
-	if err != nil || strings.EqualFold(settings.Provider, "cpa") || profile.Sub2AccountID < 1 {
+	if err != nil || providerForSettings(settings) != "sub2" || profile.Sub2AccountID < 1 {
 		return profile
 	}
 	cost, err := s.sub2.QueryTotalCosts(ctx, settings, password, profile.Sub2AccountID)

@@ -106,6 +106,8 @@ func TestVM2LifecycleRetryBindingReloginAndDeletion(t *testing.T) {
 	}
 	sub := model.DefaultSub2Settings()
 	sub.Provider = "vm2api"
+	sub.URL = srv.URL
+	sub.Email = "legacy-admin@example.com"
 	if _, e := f.s.store.SaveSub2Settings(sub, ""); e != nil {
 		t.Fatal(e)
 	}
@@ -165,7 +167,11 @@ func TestVM2LifecycleRetryBindingReloginAndDeletion(t *testing.T) {
 	quotaUsed = 100
 	on = true
 	mu.Unlock()
-	_, _ = f.s.store.UpdateFreeAccount(p.ID, func(v *model.FreeAccountProfile) { v.AutoRemove = true; v.ExhaustionPolicy = "7d" })
+	_, _ = f.s.store.UpdateFreeAccount(p.ID, func(v *model.FreeAccountProfile) {
+		v.AutoRemove = true
+		v.ExhaustionPolicy = "7d"
+		v.Sub2AccountID = 123 // A legacy ID must never route a VM account's management key to Sub2.
+	})
 	if _, removed, err := f.s.performFreeAccountQuota(t.Context(), p.ID, true); err == nil || removed {
 		t.Fatal("quota exhaustion must attempt deletion and retain failed cleanup")
 	}
