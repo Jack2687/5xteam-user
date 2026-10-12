@@ -78,11 +78,14 @@ func TestVM2LifecycleRetryBindingReloginAndDeletion(t *testing.T) {
 				On bool `json:"schedulable"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&b)
+			if !b.On {
+				t.Error("removal must not send a scheduling pause request")
+			}
 			on = b.On
 			ok(map[string]any{"in_flight": 0})
 		case r.Method == "DELETE":
-			if on || f.kicks.Load() != 1 {
-				t.Error("must drain, then leave Team, then delete")
+			if !on || f.kicks.Load() != 1 {
+				t.Error("must leave Team then delete directly, without a scheduling pause")
 			}
 			deletes++
 			if deletes == 1 {

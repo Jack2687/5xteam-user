@@ -2363,10 +2363,6 @@ func (s *Server) performFreeAccountRemovalGuarded(ctx context.Context, id string
 			return profile, err
 		}
 	}
-	if err = s.drainVMAccount(ctx, profile); err != nil {
-		s.failFreeAccount(profile.ID, "remove", err)
-		return profile, err
-	}
 	removeMethod := removalMethodForCycle(profile, s.store.AutoRotationSettings())
 	if forceMotherKick {
 		removeMethod = "mother_kick"

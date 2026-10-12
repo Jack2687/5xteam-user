@@ -362,26 +362,6 @@ func (s *Server) vmQuota(ctx context.Context, p model.FreeAccountProfile) (*mode
 	}
 	return c.Quota(ctx, p.VM2SlotID, p.VM2AssignmentID)
 }
-func (s *Server) drainVMAccount(ctx context.Context, p model.FreeAccountProfile) error {
-	if p.VM2SlotID == "" {
-		return nil
-	}
-	c, e := s.vmClient(p)
-	if e != nil {
-		return e
-	}
-	if e = s.setVMStage(p, "draining"); e != nil {
-		return e
-	}
-	e = c.Schedule(ctx, p.VM2SlotID, p.VM2AssignmentID, false)
-	var apiErr *vm2api.APIError
-	// A never-created slot (failed create) has nothing to drain. Deletion still
-	// records the assignment tombstone before completing the cycle.
-	if errors.As(e, &apiErr) && apiErr.Status == 404 {
-		return nil
-	}
-	return e
-}
 func (s *Server) deleteVMAccount(ctx context.Context, p model.FreeAccountProfile) error {
 	if p.VM2SlotID == "" {
 		return nil

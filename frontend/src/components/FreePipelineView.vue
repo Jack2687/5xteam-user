@@ -33,7 +33,7 @@ const importForm = reactive({ tokens: '' })
 const sub2Form = reactive({ bindProxy: false, proxyIDs: [], url: '', email: '', password: '', groupIDs: [], groupNames: [], models: '', pushPlanType: 'self_serve_business_prolite', accountConcurrency: 10, priority: 1, cpaWs: false, enable401Check: true, statusCheckIntervalSeconds: 120, reloginFailureLimit: 2, quotaEnabled: true, quotaCheckIntervalSeconds: 120, quotaRemainingThresholdPercent: 0, schedulingPauseTimeoutSeconds: 0, passwordPresent: false })
 const cpaForm = reactive({ url: '', key: '', keyPresent: false, websockets: false, enable401Check: true, statusCheckIntervalSeconds: 120, reloginFailureLimit: 2, quotaEnabled: true, quotaCheckIntervalSeconds: 120, quotaRemainingThresholdPercent: 0, groupIDs: [], groupNames: [] })
 const vmForm = reactive({ url: '', key: '', key_present: false, kernel: 'ubuntu-24.04', memory: '1g', region: '', locale: 'en_US.UTF-8', enable_401_check: true, status_check_interval_seconds: 120, relogin_failure_limit: 2, quota_enabled: true, quota_check_interval_seconds: 120, quota_remaining_threshold_percent: 0 })
-const vmStages = { creating: '创建并开机', authorizing: '写入凭证', validating: '校验账号', scheduling: '启用调度', ready: '就绪', draining: '停止调度并等待请求结束', deleting: '删除槽位和容器', deleted: '已清理' }
+const vmStages = { creating: '创建并开机', authorizing: '写入凭证', validating: '校验账号', scheduling: '启用调度', ready: '就绪', deleting: '删除槽位和容器', deleted: '已清理' }
 const providerLabel = value => ({ sub2: 'Sub2', cpa: 'CPA', vm2api: 'vm2api' }[value] || '未推送')
 const boundProvider = account => account?.push_provider || (account?.vm2_slot_id ? 'vm2api' : account?.cpa_auth_file_name ? 'cpa' : account?.sub2_account_id ? 'sub2' : '')
 const cpaGroups = ref([])
