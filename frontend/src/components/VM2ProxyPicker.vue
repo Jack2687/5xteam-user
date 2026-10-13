@@ -4,6 +4,7 @@ import { RefreshCw } from 'lucide-vue-next'
 import { api } from '../api'
 
 const props = defineProps({
+  scope: { type: String, default: 'team' },
   enabled: Boolean, ids: { type: Array, default: () => [] }, active: Boolean, disabled: Boolean,
   url: { type: String, default: '' }, managementKey: { type: String, default: '' },
 })
@@ -31,7 +32,8 @@ async function refresh() {
   controller = request
   loading.value = true; error.value = ''
   try {
-    const result = await api('/api/push-settings/vm2api/proxies', { method: 'POST', body: { vm2api: { url: props.url.trim(), key: props.managementKey } }, signal: request.signal })
+    const pro = props.scope === 'pro'
+    const result = await api(pro ? '/api/pro-settings/vm2api/proxies' : '/api/push-settings/vm2api/proxies', { method: 'POST', body: pro ? { vm2api: { url: props.url.trim() }, vm2api_key: props.managementKey } : { vm2api: { url: props.url.trim(), key: props.managementKey } }, signal: request.signal })
     if (request.signal.aborted) return
     rows.value = result || []; loaded.value = true
   } catch (e) { if (!request.signal.aborted) error.value = e.message }

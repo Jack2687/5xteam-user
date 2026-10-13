@@ -38,7 +38,7 @@ func (p *MailAccountProfile) ReconcileProAutoManual(now time.Time) bool {
 	}
 	push := p.ProManualStages["push"]
 	newPush := push.Status == "completed" && !push.StartedAt.Before(a.StartedAt) && push.UpdatedAt.After(a.UpdatedAt) &&
-		!push.UpdatedAt.Before(*p.OAuthAuthorizedAt) && p.PushStatus == "completed" && p.PushProvider == "sub2" && p.Sub2AccountID > 0
+		!push.UpdatedAt.Before(*p.OAuthAuthorizedAt) && p.PushStatus == "completed" && ((p.PushProvider == "sub2" && p.Sub2AccountID > 0) || (p.PushProvider == "vm2api" && p.VM2 != nil && p.VM2.ReadyAt != nil && p.VM2.DeletedAt == nil))
 	if !newOAuth && !newPush {
 		return false
 	}
@@ -84,6 +84,9 @@ func (p *MailAccountProfile) ReconcileProAutoMerge(now time.Time) bool {
 		status, message = "failed", p.ProLastError
 	case "pending":
 		status, message = "interrupted", "空间已合并，请继续完成剩余四步流程"
+		if p.ProVM2CleanupPending() {
+			message = "空间已移出，请继续清理 vm2api 槽位及运行环境"
+		}
 		if p.ProPostMergeGroupsPending() && p.RemoveStatus == "completed" {
 			message = "空间已移出，请继续调整 Sub2 分组"
 		}
@@ -137,11 +140,14 @@ func (p MailAccountProfile) ProStages() ProStageDisplay {
 	}
 	// The saved grouping result is authoritative even if an earlier manual
 	// attempt failed and the workflow was subsequently resumed automatically.
-	if p.ProPostMergeGroups != nil && p.TransferStatus == "completed" && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") {
+	if (p.ProPostMergeGroups != nil || p.VM2 != nil) && p.TransferStatus == "completed" && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") {
 		v.Steps["merge"] = p.ProMergeProgress()
 		delete(v.Errors, "merge")
-		if p.ProPostMergeGroups.Error != "" {
+		if p.ProPostMergeGroups != nil && p.ProPostMergeGroups.Error != "" {
 			v.Errors["merge"] = p.ProPostMergeGroups.Error
+		}
+		if p.ProVM2CleanupPending() && p.VM2.Error != "" {
+			v.Errors["merge"] = p.VM2.Error
 		}
 	}
 	return v
@@ -163,6 +169,12 @@ func (p MailAccountProfile) ProMergeProgress() string {
 		}
 	}
 	if p.InviteStatus == "completed" && p.AcceptStatus == "completed" && p.TransferStatus == "completed" && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") {
+		if p.ProVM2CleanupPending() {
+			if p.VM2.Stage == "delete_failed" {
+				return "failed"
+			}
+			return "pending"
+		}
 		if p.ProPostMergeGroupsPending() {
 			switch p.ProPostMergeGroups.Status {
 			case "failed":

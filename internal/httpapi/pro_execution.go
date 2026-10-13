@@ -237,6 +237,9 @@ func (s *Server) runProMergeStep(ctx context.Context, p model.MailAccountProfile
 		return err
 	})
 	status := "completed"
+	if stage == "remove" && p.VM2 != nil && p.VM2.DeletedAt == nil {
+		status = "team_removed"
+	}
 	if err != nil {
 		status = "failed"
 		if errors.Is(err, errProTransferUncertain) {

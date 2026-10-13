@@ -14,6 +14,30 @@ func (s *Store) DeleteProAccount(email string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	email = strings.ToLower(strings.TrimSpace(email))
+	if err := s.checkProAccountDeletionLocked(email); err != nil {
+		return err
+	}
+	var raw string
+	if err := s.db.QueryRow("SELECT profile FROM mail_accounts WHERE email=?", email).Scan(&raw); err != nil {
+		return err
+	}
+	var p model.MailAccountProfile
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return err
+	}
+	if p.VM2 != nil && p.VM2.DeletedAt == nil {
+		return errors.New("请先清理 vm2api 槽位及运行环境")
+	}
+	return s.deleteMailAccountLocked(email, true)
+}
+
+func (s *Store) CheckProAccountDeletion(email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.checkProAccountDeletionLocked(strings.ToLower(strings.TrimSpace(email)))
+}
+
+func (s *Store) checkProAccountDeletionLocked(email string) error {
 	var raw string
 	if err := s.db.QueryRow("SELECT profile FROM mail_accounts WHERE email=?", email).Scan(&raw); err != nil {
 		return errors.New("Pro 账号不存在")
@@ -40,5 +64,5 @@ func (s *Store) DeleteProAccount(email string) error {
 	if pending > 0 {
 		return errors.New("账号有未结束的开通订单或在途占位，请确认开通结果后再删除")
 	}
-	return s.deleteMailAccountLocked(email, true)
+	return nil
 }

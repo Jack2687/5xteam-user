@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sync"
@@ -12,20 +13,37 @@ type proDeleteResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-func (s *Server) deleteProAccount(email string) error {
+func (s *Server) deleteProAccount(email string, contexts ...context.Context) error {
 	// Share the login/automation startup gate and never wait behind an active
 	// account operation. The store rechecks durable state under its own lock.
 	s.proAutoMu.Lock()
-	defer s.proAutoMu.Unlock()
+
 	if s.proAutoJobs[email] != nil || s.proLoginAlreadyRunning(email) {
+		s.proAutoMu.Unlock()
 		return errors.New("账号正在登录或执行全自动任务，请完成或停止后再删除")
 	}
 	v, _ := s.proLocks.LoadOrStore("account:"+email, &sync.Mutex{})
 	lock := v.(*sync.Mutex)
 	if !lock.TryLock() {
+		s.proAutoMu.Unlock()
 		return errors.New("账号正在执行操作，请稍后再删除")
 	}
+	s.proAutoMu.Unlock()
 	defer lock.Unlock()
+	if err := s.store.CheckProAccountDeletion(email); err != nil {
+		return err
+	}
+	p, _, err := s.store.MailAccountCredential(email)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	if _, err = s.deleteProVM(ctx, p); err != nil {
+		return err
+	}
 	return s.store.DeleteProAccount(email)
 }
 
@@ -40,7 +58,7 @@ func (s *Server) deleteProAccounts(w http.ResponseWriter, r *http.Request) {
 		item := proDeleteResult{Email: email}
 		err := r.Context().Err()
 		if err == nil {
-			err = s.deleteProAccount(email)
+			err = s.deleteProAccount(email, r.Context())
 		}
 		if err != nil {
 			item.Error = err.Error()

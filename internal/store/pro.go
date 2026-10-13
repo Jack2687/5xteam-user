@@ -30,7 +30,7 @@ func normalizeProSettings(v *model.ProSettings) {
 		v.ScheduleIntervalSeconds = 120
 	}
 	v.Provider = strings.ToLower(strings.TrimSpace(v.Provider))
-	if v.Provider != "cpa" {
+	if v.Provider != "cpa" && v.Provider != "vm2api" {
 		v.Provider = "sub2"
 	}
 	if v.QuotaCheckIntervalSeconds < 10 {
@@ -91,10 +91,15 @@ func (s *Store) ProSettings() (model.ProSettings, string, string, error) {
 		return v, "", "", err
 	}
 	v.Sub2.PasswordPresent, v.CPA.KeyPresent = encryptedSub2 != "", encryptedCPA != ""
+	var vmKey string
+	if err := s.db.QueryRow("SELECT encrypted_key FROM pro_vm2api_secret WHERE id=1").Scan(&vmKey); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return v, "", "", err
+	}
+	v.VM2API.KeyPresent = vmKey != ""
 	return v, subPassword, cpaKey, nil
 }
 
-func (s *Store) SaveProSettings(v model.ProSettings, subPassword, cpaKey string) (model.ProSettings, error) {
+func (s *Store) SaveProSettings(v model.ProSettings, subPassword, cpaKey string, vmKeys ...string) (model.ProSettings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	normalizeProSettings(&v)
@@ -113,13 +118,40 @@ func (s *Store) SaveProSettings(v model.ProSettings, subPassword, cpaKey string)
 			return v, err
 		}
 	}
+	var vmKey string
+	if err = s.db.QueryRow("SELECT encrypted_key FROM pro_vm2api_secret WHERE id=1").Scan(&vmKey); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return v, err
+	}
+	if len(vmKeys) > 0 && strings.TrimSpace(vmKeys[0]) != "" {
+		vmKey, err = s.encrypt(strings.TrimSpace(vmKeys[0]))
+		if err != nil {
+			return v, err
+		}
+	}
+	v.VM2API.KeyPresent = vmKey != ""
 	v.Sub2.PasswordPresent, v.CPA.KeyPresent = oldSub != "", oldCPA != ""
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return v, err
 	}
-	_, err = s.db.Exec(`INSERT INTO pro_settings(id,profile,encrypted_sub2_password,encrypted_cpa_key) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET profile=excluded.profile,encrypted_sub2_password=excluded.encrypted_sub2_password,encrypted_cpa_key=excluded.encrypted_cpa_key`, string(raw), oldSub, oldCPA)
-	return v, err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO pro_vm2api_secret(id,encrypted_key) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET encrypted_key=excluded.encrypted_key", vmKey); err != nil {
+		return v, err
+	}
+	_, err = tx.Exec(`INSERT INTO pro_settings(id,profile,encrypted_sub2_password,encrypted_cpa_key) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET profile=excluded.profile,encrypted_sub2_password=excluded.encrypted_sub2_password,encrypted_cpa_key=excluded.encrypted_cpa_key`, string(raw), oldSub, oldCPA)
+	if err != nil {
+		return v, err
+	}
+	if len(vmKeys) > 0 && strings.TrimSpace(vmKeys[0]) != "" {
+		if err = s.rotateProVMSecretTx(tx, v.VM2API.URL, strings.TrimSpace(vmKeys[0])); err != nil {
+			return v, err
+		}
+	}
+	return v, tx.Commit()
 }
 
 func (s *Store) SaveProOAuthSession(session model.ProOAuthSession, verifier string) error {

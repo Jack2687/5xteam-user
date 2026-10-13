@@ -13,7 +13,7 @@ import (
 // Persist before removal so a restart between OpenAI removal and the Sub2
 // update retains the intended groups. Empty configuration means no change.
 func (s *Server) prepareProPostMergeGroups(p model.MailAccountProfile, settings model.ProSettings) (model.MailAccountProfile, error) {
-	if p.ProPostMergeGroups != nil || settings.Provider != "sub2" || len(settings.PostMergeGroupIDs) == 0 {
+	if p.VM2 != nil || p.ProPostMergeGroups != nil || settings.Provider != "sub2" || len(settings.PostMergeGroupIDs) == 0 {
 		return p, nil
 	}
 	return s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {

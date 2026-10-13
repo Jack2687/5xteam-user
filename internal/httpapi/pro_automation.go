@@ -137,9 +137,12 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取开通配置失败")
 		return
 	}
-	pro, subPassword, _, err := s.store.ProSettings()
-	if err != nil || pro.Provider != "sub2" || pro.Sub2.URL == "" || pro.Sub2.Email == "" || subPassword == "" || len(pro.Sub2.GroupIDs) == 0 {
-		writeAPI(w, 400, nil, "请先配置 Pro 的 Sub2 推送地址、登录凭证和分组")
+	pro, subPassword, _, err := s.proAccountPushSettings(p)
+	if err == nil {
+		err = s.validateProAutoPush(p, pro, subPassword)
+	}
+	if err != nil {
+		writeAPI(w, 400, nil, err.Error())
 		return
 	}
 	if pro.TargetAdminID == "" {
@@ -573,12 +576,12 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	if p.ProAuto.Status == "completed" {
 		return nil
 	}
-	settings, _, _, err := s.store.ProSettings()
+	settings, _, _, err := s.proAccountPushSettings(p)
 	if err != nil {
 		return err
 	}
-	if settings.Provider != "sub2" {
-		return errors.New("Pro 推送设置已切换，请恢复 Sub2 后续跑")
+	if settings.Provider != "sub2" && settings.Provider != "vm2api" {
+		return errors.New("Pro 全自动需使用 Sub2 或 vm2api 推送设置")
 	}
 	push, quota, merge := s.performProPush, s.performProQuota, s.performProMerge
 	if h := s.proAutoHooks; h != nil {
@@ -593,13 +596,13 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 		}
 	}
 	if p.ProAuto.Steps["push"] != "completed" {
-		if err = s.autoProUpdate(email, "push", "running", "开始推送 Sub2"); err != nil {
+		if err = s.autoProUpdate(email, "push", "running", "开始推送 "+settings.Provider); err != nil {
 			return err
 		}
 		if _, err = push(ctx, email); err != nil {
 			return err
 		}
-		if err = s.autoProUpdate(email, "push", "completed", "已推送 Sub2"); err != nil {
+		if err = s.autoProUpdate(email, "push", "completed", "已推送 "+settings.Provider); err != nil {
 			return err
 		}
 	}

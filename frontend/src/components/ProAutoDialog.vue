@@ -37,7 +37,7 @@ defineExpose({open})
 <template v-if="canStart"><p>供应商：{{ payProviderName(settings.provider) }}</p><p>套餐：{{ proPlanName(settings.plan_code) }}；7 天已用额度达到 {{ settings.quota_used_threshold || 100 }}% 后合并。</p>
 <label class="field"><span>开通银行卡</span><select v-model="cardID" :disabled="busy"><option value="">请选择银行卡</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
 <Pagination v-if="total>10" :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
-<p class="muted">首次登录后保留会话等待开通，成功后沿用该会话取得新 RT/AT，再推送 Sub2。关闭窗口不影响后台流程。</p></template>
+<p class="muted">首次登录后保留会话等待开通，成功后沿用该会话取得新 RT/AT，再推送配置的下游。关闭窗口不影响后台流程。</p></template>
 <p v-if="state.order_id&&!active&&!resumable&&state.status!=='completed'">请先在 GPTPay 供应商页面核实原订单；原会话已释放时，请使用单项按钮处理后续步骤。</p>
 <div class="panel-actions"><button v-if="active" class="btn ghost danger-text" :disabled="busy" @click="stop">停止全自动</button><button v-if="resumable" class="btn primary" :disabled="busy" @click="start">继续后续流程</button><button v-if="canStart" class="btn primary" :disabled="busy||!cardID||!settings.key_present" @click="start">确认全自动开通 {{ proPlanName(settings.plan_code) }}</button><button class="btn ghost" :disabled="busy" @click="close">关闭</button></div>
 </section></div></Teleport></template>

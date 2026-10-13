@@ -29,6 +29,7 @@ func DefaultVM2APISettings() VM2APISettings {
 // DownstreamTarget is private storage, never an API response. A cycle pins its
 // connection and policy before the first network side effect.
 type DownstreamTarget struct {
+	Scope    string         `json:"scope,omitempty"`
 	Provider string         `json:"provider"`
 	Sub2     Sub2Settings   `json:"sub2"`
 	CPA      CPASettings    `json:"cpa"`

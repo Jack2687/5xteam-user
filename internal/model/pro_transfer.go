@@ -12,6 +12,9 @@ type ProDownstreamRef struct {
 }
 
 func ProDownstream(settings ProSettings) ProDownstreamRef {
+	if settings.Provider == "vm2api" {
+		return ProDownstreamRef{Provider: "vm2api", URL: strings.TrimRight(strings.TrimSpace(settings.VM2API.URL), "/")}
+	}
 	if settings.Provider == "cpa" {
 		return ProDownstreamRef{Provider: "cpa", URL: strings.TrimRight(strings.TrimSpace(settings.CPA.URL), "/")}
 	}

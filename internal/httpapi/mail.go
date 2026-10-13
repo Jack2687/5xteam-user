@@ -500,6 +500,11 @@ func (s *Server) finishMailAccountOAuthJob(jobID, email string, result map[strin
 			status, message = "failed", err.Error()
 		}
 	}
+	if status == "success" {
+		if err := s.syncProVMAfterOAuth(context.Background(), email); err != nil {
+			status, message = "failed", "凭证已保存，vm2api 重新授权失败："+err.Error()
+		}
+	}
 	if status != "success" && isDeadOAuthResult(result, message) {
 		if strings.TrimSpace(message) == "" {
 			message = "OpenAI 返回账号已删除或停用"

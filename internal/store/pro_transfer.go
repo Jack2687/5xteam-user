@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -35,6 +36,7 @@ type ProTransferAccount struct {
 	Orders       []ProTransferOrder           `json:"orders"`
 	TargetTeamID string                       `json:"target_team_id,omitempty"`
 	Downstream   model.ProDownstreamRef       `json:"downstream"`
+	VM2Target    *model.DownstreamTarget      `json:"vm2api_target,omitempty"`
 }
 type ProTransferResult struct {
 	Email   string `json:"email"`
@@ -98,6 +100,22 @@ func (s *Store) ExportProAccounts(emails []string, downstream model.ProDownstrea
 		if entry.Profile.PushProvider != "" && entry.Profile.PushProvider != entry.Downstream.Provider {
 			entry.Downstream = model.ProDownstreamRef{Provider: entry.Profile.PushProvider}
 		}
+		if entry.Profile.VM2 != nil {
+			var encrypted string
+			if err = tx.QueryRow("SELECT encrypted_payload FROM downstream_connections WHERE id=?", entry.Profile.VM2.ConnectionID).Scan(&encrypted); err != nil {
+				return out, errors.New("vm2api 绑定快照缺失，无法完整导出")
+			}
+			plain, e := s.decrypt(encrypted)
+			if e != nil {
+				return out, e
+			}
+			var target model.DownstreamTarget
+			if err = json.Unmarshal([]byte(plain), &target); err != nil {
+				return out, err
+			}
+			entry.VM2Target = &target
+			entry.Downstream = model.ProDownstream(model.ProSettings{Provider: "vm2api", VM2API: target.VM2API})
+		}
 		rows, e := tx.Query("SELECT profile,encrypted_snapshot FROM gptpay_orders WHERE email=? ORDER BY created_at,id", email)
 		if e != nil {
 			return out, e
@@ -158,6 +176,12 @@ func ValidateProTransfer(file ProTransferFile) error {
 		}
 		if a.Credentials.ChatGPTSession != "" && !json.Valid([]byte(a.Credentials.ChatGPTSession)) {
 			return errors.New("迁移文件中的 Session 格式无效")
+		}
+		if binding := a.Profile.VM2; binding != nil {
+			hash := sha256.Sum256([]byte(binding.AssignmentID))
+			if !strings.HasPrefix(binding.AssignmentID, "space-") || len(binding.AssignmentID) != 54 || binding.SlotID != fmt.Sprintf("space-%x", hash[:12]) || a.Profile.PushProvider != "vm2api" || a.VM2Target == nil || a.VM2Target.Provider != "vm2api" || a.VM2Target.Secret == "" || a.VM2Target.VM2API.URL == "" || binding.RuntimeType != a.VM2Target.VM2API.RuntimeType {
+				return errors.New("迁移文件中的 vm2api 绑定或连接快照不完整")
+			}
 		}
 		orderIDs := map[string]bool{}
 		active := 0
@@ -268,6 +292,12 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 		if old.ManagementScope != "pro" {
 			return result, errors.New("同邮箱账号不在 Pro 管理中，请先移入 Pro 管理")
 		}
+		if old.VM2 != nil && (entry.Profile.VM2 == nil || old.VM2.AssignmentID != entry.Profile.VM2.AssignmentID) {
+			return result, errors.New("不能覆盖不同的 vm2api 槽位绑定")
+		}
+		if old.VM2 != nil && old.VM2.DeletedAt != nil && entry.Profile.VM2.DeletedAt == nil {
+			return result, errors.New("不能恢复已删除的 vm2api 槽位")
+		}
 		if proImportBusy(old) {
 			return result, errors.New("账号正在执行任务，不能覆盖")
 		}
@@ -289,6 +319,28 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 		p.ID = old.ID
 	} else {
 		p.ID = proTransferID()
+	}
+	if p.VM2 != nil {
+		entry.VM2Target.Scope = "pro"
+		raw, e := json.Marshal(entry.VM2Target)
+		if e != nil {
+			return result, e
+		}
+		h := hmac.New(sha256.New, s.key)
+		_, _ = h.Write(raw)
+		id := fmt.Sprintf("target-%x", h.Sum(nil))
+		encrypted, e := s.encrypt(string(raw))
+		if e != nil {
+			return result, e
+		}
+		if _, e = tx.Exec("INSERT OR IGNORE INTO downstream_connections(id,encrypted_payload) VALUES(?,?)", id, encrypted); e != nil {
+			return result, e
+		}
+		p.VM2.ConnectionID = id
+		if p.VM2.Stage == "deleting" {
+			p.VM2.Stage = "delete_failed"
+			p.VM2.Error = "迁移时清理未确认，可重试"
+		}
 	}
 	p.Email = result.Email
 	p.ManagementScope = "pro"
@@ -327,7 +379,7 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 			notice += "；请先添加原空间对应的母号"
 		}
 	}
-	if p.PushStatus == "completed" && !entry.Downstream.Matches(downstream) {
+	if p.VM2 == nil && p.PushStatus == "completed" && !entry.Downstream.Matches(downstream) {
 		notice += "；下游服务不同，请先推送到当前下游"
 	}
 	p.ProMigration = &model.ProMigrationState{ImportedAt: now, ExportedAt: exportedAt, Fingerprint: fingerprint, Paused: true, Downstream: entry.Downstream, TargetTeamID: teamID, Notice: notice}

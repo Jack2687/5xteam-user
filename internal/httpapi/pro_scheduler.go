@@ -174,8 +174,11 @@ func (s *Server) tickProSchedule(force bool) {
 		_ = s.store.SaveProScheduleRun(run)
 	}
 	pay, key, err := s.store.GPTPaySettings()
-	if err != nil || key == "" || cfg.Provider != "sub2" || cfg.Sub2.URL == "" || cfg.Sub2.Email == "" || password == "" || len(cfg.Sub2.GroupIDs) == 0 || cfg.TargetAdminID == "" {
-		finish("failed", "开通配置不完整，请检查 GPTPay、Sub2 推送和目标母号")
+	if err == nil {
+		err = s.validateProAutoPush(model.MailAccountProfile{}, cfg, password)
+	}
+	if err != nil || key == "" || cfg.TargetAdminID == "" {
+		finish("failed", "开通配置不完整，请检查 GPTPay、Pro 推送和目标母号")
 		return
 	}
 	capacity, err := s.store.ProCapacity()

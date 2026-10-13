@@ -176,6 +176,7 @@ func (s *Store) initSchema() error {
 			id INTEGER PRIMARY KEY CHECK (id = 1), profile TEXT NOT NULL,
 			encrypted_sub2_password TEXT NOT NULL DEFAULT '', encrypted_cpa_key TEXT NOT NULL DEFAULT ''
 		);
+		CREATE TABLE IF NOT EXISTS pro_vm2api_secret (id INTEGER PRIMARY KEY CHECK(id=1), encrypted_key TEXT NOT NULL DEFAULT '');
 		CREATE TABLE IF NOT EXISTS gptpay_settings (id INTEGER PRIMARY KEY CHECK(id=1), profile TEXT NOT NULL, encrypted_key TEXT NOT NULL DEFAULT '');
 		CREATE TABLE IF NOT EXISTS gptpay_provider_settings (provider TEXT PRIMARY KEY, profile TEXT NOT NULL, encrypted_key TEXT NOT NULL DEFAULT '');
 		CREATE TABLE IF NOT EXISTS gptpay_cards (id TEXT PRIMARY KEY, profile TEXT NOT NULL, encrypted_secret TEXT NOT NULL, enabled INTEGER NOT NULL, created_at TEXT NOT NULL);
@@ -516,6 +517,7 @@ func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccount
 	profile.OAuthStatus, profile.OAuthAccountID, profile.OAuthUserID = old.OAuthStatus, old.OAuthAccountID, old.OAuthUserID
 	profile.OAuthExpiresAt, profile.OAuthAuthorizedAt = old.OAuthExpiresAt, old.OAuthAuthorizedAt
 	profile.PushProvider, profile.PushStatus = old.PushProvider, old.PushStatus
+	profile.VM2 = old.VM2
 	profile.Sub2AccountID, profile.Sub2AccountName, profile.CPAAuthFileName = old.Sub2AccountID, old.Sub2AccountName, old.CPAAuthFileName
 	profile.Quota5H, profile.Quota7D, profile.QuotaStatus, profile.QuotaCheckedAt = old.Quota5H, old.Quota7D, old.QuotaStatus, old.QuotaCheckedAt
 	profile.SpaceMergedOnce, profile.SpaceMergedAt = old.SpaceMergedOnce, old.SpaceMergedAt
@@ -544,6 +546,9 @@ func (s *Store) UpdateMailAccountManagementScope(email, scope string) (model.Mai
 		return model.MailAccountProfile{}, err
 	}
 	now := time.Now()
+	if scope != "pro" && profile.VM2 != nil && profile.VM2.DeletedAt == nil {
+		return profile, errors.New("账号仍绑定 vm2api，请先完成移出清理或在 Pro 管理中删除账号")
+	}
 	profile.ManagementScope, profile.UpdatedAt = scope, now
 	if scope == "pro" {
 		profile.ProManagedAt = &now
@@ -806,6 +811,18 @@ func (s *Store) DeleteMailAccount(email string) error {
 
 func (s *Store) deleteMailAccountLocked(email string, pro bool) error {
 	email = strings.ToLower(strings.TrimSpace(email))
+	var raw string
+	if err := s.db.QueryRow("SELECT profile FROM mail_accounts WHERE email=?", email).Scan(&raw); err == nil {
+		var p model.MailAccountProfile
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			return err
+		}
+		if p.VM2 != nil && p.VM2.DeletedAt == nil {
+			return errors.New("请从 Pro 管理删除账号，先清理 vm2api 槽位及运行环境")
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err

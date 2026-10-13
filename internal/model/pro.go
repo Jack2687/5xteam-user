@@ -22,33 +22,34 @@ type ProAutoState struct {
 }
 
 // ProSettings is intentionally independent from Team rotation push settings.
-// Its two providers are mutually exclusive through Provider.
+// Its providers are mutually exclusive through Provider.
 type ProSettings struct {
-	PostMergeGroupIDs         []int64      `json:"post_merge_group_ids"`
-	PostMergeGroupNames       []string     `json:"post_merge_group_names"`
-	ScheduledEnabled          bool         `json:"scheduled_enabled"`
-	MaxUnmerged               int          `json:"max_unmerged"`
-	ScheduleIntervalSeconds   int          `json:"schedule_interval_seconds"`
-	Provider                  string       `json:"provider"`
-	Sub2                      Sub2Settings `json:"sub2"`
-	CPA                       CPASettings  `json:"cpa"`
-	QuotaEnabled              bool         `json:"quota_enabled"`
-	QuotaUsedThreshold        float64      `json:"quota_used_threshold"`
-	QuotaCheckIntervalSeconds int          `json:"quota_check_interval_seconds"`
-	AutoMergeEnabled          bool         `json:"auto_merge_enabled"`
-	TargetAdminID             string       `json:"target_admin_id,omitempty"`
-	TargetSeatType            string       `json:"target_seat_type"`
-	RetryCount                int          `json:"retry_count"`
-	RetryIntervalSeconds      int          `json:"retry_interval_seconds"`
-	Concurrency               int          `json:"concurrency"`
-	LastQuotaSweepAt          *time.Time   `json:"last_quota_sweep_at,omitempty"`
-	NextQuotaSweepAt          *time.Time   `json:"next_quota_sweep_at,omitempty"`
+	PostMergeGroupIDs         []int64        `json:"post_merge_group_ids"`
+	PostMergeGroupNames       []string       `json:"post_merge_group_names"`
+	ScheduledEnabled          bool           `json:"scheduled_enabled"`
+	MaxUnmerged               int            `json:"max_unmerged"`
+	ScheduleIntervalSeconds   int            `json:"schedule_interval_seconds"`
+	Provider                  string         `json:"provider"`
+	Sub2                      Sub2Settings   `json:"sub2"`
+	CPA                       CPASettings    `json:"cpa"`
+	VM2API                    VM2APISettings `json:"vm2api"`
+	QuotaEnabled              bool           `json:"quota_enabled"`
+	QuotaUsedThreshold        float64        `json:"quota_used_threshold"`
+	QuotaCheckIntervalSeconds int            `json:"quota_check_interval_seconds"`
+	AutoMergeEnabled          bool           `json:"auto_merge_enabled"`
+	TargetAdminID             string         `json:"target_admin_id,omitempty"`
+	TargetSeatType            string         `json:"target_seat_type"`
+	RetryCount                int            `json:"retry_count"`
+	RetryIntervalSeconds      int            `json:"retry_interval_seconds"`
+	Concurrency               int            `json:"concurrency"`
+	LastQuotaSweepAt          *time.Time     `json:"last_quota_sweep_at,omitempty"`
+	NextQuotaSweepAt          *time.Time     `json:"next_quota_sweep_at,omitempty"`
 }
 
 func DefaultProSettings() ProSettings {
 	return ProSettings{
 		MaxUnmerged: 5, ScheduleIntervalSeconds: 120,
-		Provider: "sub2", Sub2: DefaultSub2Settings(), CPA: DefaultCPASettings(),
+		Provider: "sub2", Sub2: DefaultSub2Settings(), CPA: DefaultCPASettings(), VM2API: DefaultVM2APISettings(),
 		QuotaUsedThreshold: 100, QuotaCheckIntervalSeconds: 120, TargetSeatType: "default",
 		RetryCount: 2, RetryIntervalSeconds: 3, Concurrency: 2,
 	}

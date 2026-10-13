@@ -18,6 +18,7 @@ import (
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/store"
 	"chapt-space-user/internal/sub2"
+	"chapt-space-user/internal/vm2api"
 	"chapt-space-user/internal/workflow"
 )
 
@@ -451,6 +452,11 @@ func (s *Server) completeProOAuth(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
+	if err = s.syncProVMAfterOAuth(r.Context(), email); err != nil {
+		writeAPI(w, 400, nil, "凭证已保存，vm2api 重新授权失败："+err.Error())
+		return
+	}
+	profile, _, _ = s.store.MailAccountCredential(email)
 	_ = s.store.DeleteProOAuthSession(input.SessionID)
 	writeAPI(w, 200, profile, "")
 }
@@ -546,6 +552,10 @@ func (s *Server) refreshProOAuth(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
+	if err = s.syncProVMAfterOAuth(r.Context(), email); err != nil {
+		writeAPI(w, 400, nil, "凭证已保存，vm2api 重新授权失败："+err.Error())
+		return
+	}
 	profile, _, _ = s.store.MailAccountCredential(email)
 	writeAPI(w, 200, profile, "")
 }
@@ -554,6 +564,7 @@ type proSettingsInput struct {
 	model.ProSettings
 	Sub2Password string `json:"sub2_password"`
 	CPAKey       string `json:"cpa_key"`
+	VM2APIKey    string `json:"vm2api_key"`
 }
 
 func (s *Server) getProSettings(w http.ResponseWriter, _ *http.Request) {
@@ -566,10 +577,12 @@ func (s *Server) getProSettings(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
-	var input proSettingsInput
+	input := proSettingsInput{ProSettings: model.DefaultProSettings()}
 	if err := decodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
+	s.downstreamMu.Lock()
+	defer s.downstreamMu.Unlock()
 	current, subPassword, cpaKey, err := s.store.ProSettings()
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
@@ -587,7 +600,22 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	if input.CPA.URL == "" {
 		input.CPA.URL = current.CPA.URL
 	}
-	if input.Provider == "sub2" {
+	input.VM2API.URL = strings.TrimRight(strings.TrimSpace(input.VM2API.URL), "/")
+	input.VM2API.ProxyIDs = vm2api.NormalizeProxyIDs(input.VM2API.ProxyIDs)
+	if input.Provider == "vm2api" {
+		_, key, readErr := s.store.ProVM2APISettings()
+		if readErr != nil {
+			writeAPI(w, 500, nil, readErr.Error())
+			return
+		}
+		if strings.TrimSpace(input.VM2APIKey) != "" {
+			key = strings.TrimSpace(input.VM2APIKey)
+		}
+		if err := vm2api.Validate(input.VM2API, key != ""); err != nil {
+			writeAPI(w, 400, nil, err.Error())
+			return
+		}
+	} else if input.Provider == "sub2" {
 		if err := sub2.ValidateProxySettings(input.Sub2); err != nil {
 			writeAPI(w, 400, nil, err.Error())
 			return
@@ -600,7 +628,7 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, 400, nil, "请选择 Pro 的 Sub2 OpenAI 分组")
 			return
 		}
-	} else if strings.TrimSpace(input.CPA.URL) == "" || strings.TrimSpace(input.CPAKey) == "" {
+	} else if input.Provider != "cpa" || strings.TrimSpace(input.CPA.URL) == "" || strings.TrimSpace(input.CPAKey) == "" {
 		writeAPI(w, 400, nil, "CPA 地址和 Management Key 不能为空")
 		return
 	}
@@ -618,13 +646,16 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	} else {
 		input.NextQuotaSweepAt = nil
 	}
-	saved, err := s.store.SaveProSettings(input.ProSettings, input.Sub2Password, input.CPAKey)
+	saved, err := s.store.SaveProSettings(input.ProSettings, input.Sub2Password, input.CPAKey, input.VM2APIKey)
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
 	if previousProvider != saved.Provider {
 		for _, account := range s.store.MailAccountsByManagementScope("pro") {
+			if account.VM2 != nil {
+				continue
+			}
 			_, _ = s.store.UpdateProAccount(account.Email, func(p *model.MailAccountProfile) {
 				p.PushStatus, p.PushProvider, p.Sub2AccountID, p.Sub2AccountName, p.CPAAuthFileName = "pending", "", 0, "", ""
 				p.Quota5H, p.Quota7D, p.QuotaCheckedAt = nil, nil, nil
@@ -711,12 +742,20 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 	if err != nil {
 		return profile, err
 	}
-	v, subPassword, cpaKey, err := s.store.ProSettings()
+	v, subPassword, cpaKey, err := s.proAccountPushSettings(profile)
 	if err != nil {
 		return profile, err
 	}
 	s.auditProEvent(profile, "push", "running", v.Provider, "开始推送 Pro 账号", nil)
 	defer func() {
+		if retErr != nil && (v.Provider == "vm2api" || profile.VM2 != nil) {
+			_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+				p.PushStatus, p.ProLastError = "failed", retErr.Error()
+				if p.VM2 != nil && p.VM2.DeletedAt != nil {
+					p.PushStatus = "removed"
+				}
+			})
+		}
 		status, message, details := "completed", "Pro 账号推送成功", map[string]any{"plan_type": "pro"}
 		if retErr != nil {
 			status, message, details = "failed", "Pro 账号推送失败", map[string]any{"error": retErr.Error()}
@@ -724,6 +763,9 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 		s.auditProEvent(firstProProfile(out, profile), "push", status, v.Provider, message, details)
 	}()
 	_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.PushStatus, p.ProLastError = "running", "" })
+	if v.Provider == "vm2api" {
+		return s.pushProVM(ctx, profile, credentials)
+	}
 	name := proAccountName(profile)
 	if v.Provider == "cpa" {
 		if strings.TrimSpace(v.CPA.URL) == "" || cpaKey == "" {
@@ -875,9 +917,12 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	if err != nil {
 		return profile, err
 	}
-	v, subPassword, cpaKey, err := s.store.ProSettings()
+	v, subPassword, cpaKey, err := s.proAccountPushSettings(profile)
 	if err != nil {
 		return profile, err
+	}
+	if profile.ProVM2CleanupPending() {
+		return s.finishProDownstream(ctx, profile)
 	}
 	if profile.PushStatus != "completed" || profile.PushProvider != v.Provider {
 		return profile, errors.New("账号尚未推送到当前 Pro 下游")
@@ -904,7 +949,9 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 		}
 	})
 	var five, seven *model.FreeQuotaWindow
-	if v.Provider == "cpa" {
+	if v.Provider == "vm2api" {
+		five, seven, err = s.proVMQuota(ctx, profile)
+	} else if v.Provider == "cpa" {
 		if profile.CPAAuthFileName == "" {
 			return profile, errors.New("CPA auth 文件不存在")
 		}
@@ -1004,7 +1051,7 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 		return profile, errProTransferUncertain
 	}
 	executionID := randomRegistrationID()
-	v, _, _, err := s.store.ProSettings()
+	v, _, _, err := s.proAccountPushSettings(profile)
 	if err != nil {
 		return profile, err
 	}
@@ -1026,8 +1073,8 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 		}
 		s.auditProEvent(firstProProfile(out, profile), "space_merge", status, v.Provider, message, details)
 	}()
-	if profile.SpaceMergedOnce && profile.RemoveStatus == "completed" {
-		return s.finishProPostMergeGroups(ctx, profile)
+	if profile.SpaceMergedOnce && (profile.RemoveStatus == "completed" || (profile.VM2 != nil && profile.RemoveStatus == "team_removed")) {
+		return s.finishProDownstream(ctx, profile)
 	}
 	// Only a started workflow is bound to its original Team. Preselected
 	// targets and fully reset workflows use the current Pro configuration.
@@ -1169,14 +1216,18 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 			return profile, readErr
 		}
 	}
-	// Pro keeps its Sub2/CPA account after leaving, including legacy cleanup states.
-	profile, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.RemoveStatus = "completed" })
+	// Sub2/CPA stay after leaving; vm2api cleanup must complete before removal does.
+	profile, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		if p.VM2 == nil || p.VM2.DeletedAt != nil {
+			p.RemoveStatus = "completed"
+		}
+	})
 	if err != nil {
 		return profile, err
 	}
 	// Downstream grouping must not hold up unrelated operations on this Team.
 	unlockAdmin()
-	return s.finishProPostMergeGroups(ctx, profile)
+	return s.finishProDownstream(ctx, profile)
 }
 
 func (s *Server) mergeProAccount(w http.ResponseWriter, r *http.Request) {
@@ -1256,8 +1307,8 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 					continue
 				}
 				needsQuota := !p.SpaceMergedOnce
-				needsCleanup := p.SpaceMergedOnce && p.RemoveStatus != "completed"
-				if p.PushStatus == "completed" && p.PushProvider == v.Provider && !p.ProWorkflowRunning && (needsQuota || needsCleanup) {
+				needsCleanup := p.ProVM2CleanupPending() || p.SpaceMergedOnce && p.RemoveStatus != "completed"
+				if p.PushStatus == "completed" && (p.PushProvider == v.Provider || p.VM2 != nil) && !p.ProWorkflowRunning && (needsQuota || needsCleanup) {
 					emails = append(emails, p.Email)
 				}
 			}

@@ -338,6 +338,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pro-settings/sub2/groups", s.getProSub2Groups)
 	mux.HandleFunc("POST /api/pro-settings/sub2/groups", s.getProSub2Groups)
 	mux.HandleFunc("POST /api/pro-settings/sub2/proxies", s.getProSub2Proxies)
+	mux.HandleFunc("POST /api/pro-settings/vm2api/test", s.testProVM)
+	mux.HandleFunc("POST /api/pro-settings/vm2api/proxies", s.getProVMProxies)
 	mux.HandleFunc("POST /api/pro-settings/cpa/test", s.testProCPA)
 	mux.HandleFunc("GET /api/pro-settings/cpa/groups", s.getProCPAGroups)
 	mux.HandleFunc("POST /api/pro-settings/cpa/groups", s.getProCPAGroups)

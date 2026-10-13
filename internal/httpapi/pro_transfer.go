@@ -231,7 +231,7 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, message)
 		return
 	}
-	settings, _, _, err := s.store.ProSettings()
+	settings, _, _, err := s.proAccountPushSettings(p)
 	if err != nil {
 		writeAPI(w, 500, nil, "读取 Pro 配置失败")
 		return
@@ -240,7 +240,7 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, err.Error())
 		return
 	}
-	if settings.Provider != "sub2" {
+	if settings.Provider != "sub2" && settings.Provider != "vm2api" {
 		writeAPI(w, 409, nil, "当前为 CPA，请继续使用推送、查额度和空间合并单项按钮")
 		return
 	}
@@ -261,7 +261,7 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 			p.ProAuto.Steps["login"] = "completed"
 		}
 		// The imported downstream binding was checked immediately above.
-		if p.PushStatus == "completed" && p.PushProvider == "sub2" {
+		if p.PushStatus == "completed" && (p.PushProvider == "sub2" || p.PushProvider == "vm2api") {
 			p.ProAuto.Steps["push"] = "completed"
 		} else {
 			delete(p.ProAuto.Steps, "push")
