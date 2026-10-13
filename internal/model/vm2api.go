@@ -8,7 +8,10 @@ type VM2APISettings struct {
 	BindProxy                      bool     `json:"bind_proxy"`
 	ProxyIDs                       []string `json:"proxy_ids"`
 	Kernel                         string   `json:"kernel"`
+	RuntimeType                    string   `json:"runtime_type"`
 	Memory                         string   `json:"memory"`
+	VCPUs                          int      `json:"vcpus"`
+	DiskGB                         int      `json:"disk_gb"`
 	Region                         string   `json:"region"`
 	Locale                         string   `json:"locale"`
 	Enable401Check                 bool     `json:"enable_401_check"`
@@ -20,7 +23,7 @@ type VM2APISettings struct {
 }
 
 func DefaultVM2APISettings() VM2APISettings {
-	return VM2APISettings{Kernel: "ubuntu-24.04", Memory: "1g", Locale: "en_US.UTF-8", Enable401Check: true, StatusCheckIntervalSeconds: 120, ReloginFailureLimit: 2, QuotaEnabled: true, QuotaCheckIntervalSeconds: 120}
+	return VM2APISettings{RuntimeType: "docker", Kernel: "ubuntu-24.04", Memory: "1g", VCPUs: 2, DiskGB: 20, Locale: "en_US.UTF-8", Enable401Check: true, StatusCheckIntervalSeconds: 120, ReloginFailureLimit: 2, QuotaEnabled: true, QuotaCheckIntervalSeconds: 120}
 }
 
 // DownstreamTarget is private storage, never an API response. A cycle pins its

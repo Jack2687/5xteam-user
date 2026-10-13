@@ -95,6 +95,7 @@ type FreeAccountProfile struct {
 	VM2SlotID                string             `json:"vm2_slot_id,omitempty"`
 	VM2AssignmentID          string             `json:"vm2_assignment_id,omitempty"`
 	VM2ContainerName         string             `json:"vm2_container_name,omitempty"`
+	VM2RuntimeType           string             `json:"vm2_runtime_type,omitempty"`
 	VM2ContainerRunning      bool               `json:"vm2_container_running,omitempty"`
 	VM2Stage                 string             `json:"vm2_stage,omitempty"`
 	VM2Schedulable           bool               `json:"vm2_schedulable,omitempty"`

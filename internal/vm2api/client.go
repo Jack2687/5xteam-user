@@ -34,8 +34,22 @@ func UpstreamUnauthorized(err error) bool {
 	return errors.As(err, &e) && e.UpstreamStatus == 401
 }
 func New(v model.VM2APISettings, key string) *Client {
-	return &Client{Settings: v, Key: key, HTTP: &http.Client{Timeout: 7 * time.Minute, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
+	timeout := 7 * time.Minute
+	if RuntimeType(v) == "kvm" {
+		timeout = 25 * time.Minute
+	}
+	return &Client{Settings: v, Key: key, HTTP: &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 }
+
+func RuntimeType(v model.VM2APISettings) string {
+	if v.RuntimeType == "" {
+		return "docker"
+	}
+	return v.RuntimeType
+}
+
+func ExecutionMode(v model.VM2APISettings) string { return RuntimeType(v) + "_per_slot" }
+
 func Validate(v model.VM2APISettings, keyPresent bool) error {
 	u, e := url.Parse(v.URL)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -43,6 +57,12 @@ func Validate(v model.VM2APISettings, keyPresent bool) error {
 	}
 	if !keyPresent {
 		return errors.New("vm2api 需要管理密钥（不是模型调用 Key）")
+	}
+	if !oneOf(RuntimeType(v), "docker", "kvm") {
+		return errors.New("vm2api 形态必须为 Docker 或 KVM")
+	}
+	if RuntimeType(v) == "kvm" && (v.VCPUs < 1 || v.VCPUs > 16 || v.DiskGB < 10 || v.DiskGB > 200) {
+		return errors.New("KVM 需要 1–16 vCPU、10–200 GB 磁盘")
 	}
 	if !oneOf(v.Kernel, "ubuntu-24.04", "debian-12", "archlinux", "fedora-41") || !oneOf(v.Memory, "256m", "512m", "1g", "2g", "4g", "8g", "16g") || !oneOf(v.Locale, "en_US.UTF-8", "zh_CN.UTF-8", "ja_JP.UTF-8", "C") {
 		return errors.New("vm2api 系统、内存或语言无效")
@@ -131,6 +151,7 @@ func (c *Client) Check(ctx context.Context) error {
 	var caps struct {
 		Version        int  `json:"version"`
 		Docker         bool `json:"docker_per_slot"`
+		KVM            bool `json:"kvm_per_slot"`
 		Delete         bool `json:"delete_account"`
 		ProxySelection bool `json:"proxy_selection"`
 	}
@@ -140,6 +161,9 @@ func (c *Client) Check(ctx context.Context) error {
 	if caps.Version < 1 || !caps.Docker || !caps.Delete {
 		return errors.New("vm2api 未安装 Space 一槽一容器接口")
 	}
+	if RuntimeType(c.Settings) == "kvm" && !caps.KVM {
+		return errors.New("vm2api 尚不支持一槽一 KVM 独立 Codex 内核，请先更新 vm2api")
+	}
 	if c.Settings.BindProxy && len(NormalizeProxyIDs(c.Settings.ProxyIDs)) > 0 && !caps.ProxySelection {
 		return errors.New("vm2api 尚不支持代理选择，请先更新 vm2api 后再推送")
 	}
@@ -147,7 +171,11 @@ func (c *Client) Check(ctx context.Context) error {
 }
 func (c *Client) Create(ctx context.Context, email, assignment string) (Slot, error) {
 	var out Slot
-	body := map[string]any{"assignment_id": assignment, "account_email": email, "execution_mode": "docker_per_slot", "platform": "openai", "runtime_type": "docker", "proxy_id": "px-local", "pool_id": c.Settings.PoolID, "kernel": c.Settings.Kernel, "locale": c.Settings.Locale, "region": c.Settings.Region, "machine": map[string]any{"memory": c.Settings.Memory}, "start": true}
+	machine := map[string]any{"memory": c.Settings.Memory}
+	if RuntimeType(c.Settings) == "kvm" {
+		machine["vcpus"], machine["disk_gb"] = c.Settings.VCPUs, c.Settings.DiskGB
+	}
+	body := map[string]any{"assignment_id": assignment, "account_email": email, "execution_mode": ExecutionMode(c.Settings), "platform": "openai", "runtime_type": RuntimeType(c.Settings), "proxy_id": "px-local", "pool_id": c.Settings.PoolID, "kernel": c.Settings.Kernel, "locale": c.Settings.Locale, "region": c.Settings.Region, "machine": machine, "start": true}
 	if ids := NormalizeProxyIDs(c.Settings.ProxyIDs); c.Settings.BindProxy && len(ids) > 0 {
 		// vm2api reads counts, chooses the least-bound exit and reserves it before
 		// starting Docker. The assignment pins that choice across ambiguous retries.

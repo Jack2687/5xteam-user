@@ -197,12 +197,17 @@ func (s *Server) setVMStage(p model.FreeAccountProfile, stage string) error {
 	return e
 }
 func (s *Server) syncVMSlot(p model.FreeAccountProfile, slot vm2api.Slot) error {
-	if slot.VM.ID != p.VM2SlotID || slot.VM.AssignmentID != p.VM2AssignmentID || slot.VM.ExecutionMode != "docker_per_slot" {
+	target, err := s.downstreamTarget(p)
+	if err != nil {
+		return err
+	}
+	if slot.VM.ID != p.VM2SlotID || slot.VM.AssignmentID != p.VM2AssignmentID || slot.VM.ExecutionMode != vm2api.ExecutionMode(target.VM2API) {
 		return errors.New("vm2api 返回的槽位归属不匹配")
 	}
 	now := time.Now()
 	_, e := s.store.UpdateFreeAccountCycle(p.ID, p.CycleID, func(v *model.FreeAccountProfile) {
 		v.VM2ContainerName = slot.VM.ContainerName
+		v.VM2RuntimeType = vm2api.RuntimeType(target.VM2API)
 		v.VM2ContainerRunning = slot.Container != nil && slot.Container.Running
 		v.VM2Schedulable = slot.VM.Schedulable
 		v.VM2SyncedAt = &now
@@ -256,7 +261,7 @@ func (s *Server) pushVMAccount(ctx context.Context, p model.FreeAccountProfile, 
 		return p, e
 	}
 	if slot.Container == nil || !slot.Container.Running {
-		return p, errors.New("vm2api 容器尚未开机")
+		return p, errors.New("vm2api 槽位运行环境尚未开机")
 	}
 	if e = s.setVMStage(p, "authorizing"); e != nil {
 		return p, e
@@ -285,7 +290,7 @@ func (s *Server) pushVMAccount(ctx context.Context, p model.FreeAccountProfile, 
 		return p, e
 	}
 	if slot.Container == nil || !slot.Container.Running || !slot.VM.Schedulable || slot.VM.PoolID != client.Settings.PoolID {
-		return p, errors.New("vm2api 容器或调度尚未就绪")
+		return p, errors.New("vm2api 槽位运行环境或调度尚未就绪")
 	}
 	now := time.Now()
 	return s.store.UpdateFreeAccountCycle(p.ID, p.CycleID, func(v *model.FreeAccountProfile) {
@@ -358,7 +363,7 @@ func (s *Server) vmQuota(ctx context.Context, p model.FreeAccountProfile) (*mode
 		return nil, nil, e
 	}
 	if slot.Container == nil || !slot.Container.Running {
-		return nil, nil, errors.New("vm2api 账号容器未运行")
+		return nil, nil, errors.New("vm2api 账号运行环境未运行")
 	}
 	return c.Quota(ctx, p.VM2SlotID, p.VM2AssignmentID)
 }
@@ -399,6 +404,15 @@ func (s *Server) testVMSettings(w http.ResponseWriter, r *http.Request) {
 func normalizeVMSettings(v *model.VM2APISettings) {
 	v.URL = strings.TrimRight(strings.TrimSpace(v.URL), "/")
 	v.ProxyIDs = vm2api.NormalizeProxyIDs(v.ProxyIDs)
+	if v.RuntimeType == "" {
+		v.RuntimeType = "docker"
+	}
+	if v.VCPUs == 0 {
+		v.VCPUs = 2
+	}
+	if v.DiskGB == 0 {
+		v.DiskGB = 20
+	}
 	if v.Kernel == "" {
 		v.Kernel = "ubuntu-24.04"
 	}

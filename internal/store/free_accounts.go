@@ -153,6 +153,7 @@ func (s *Store) saveImportedFreeAccount(profile model.FreeAccountProfile, access
 		profile.DownstreamConnectionID = existing.DownstreamConnectionID
 		profile.VM2SlotID, profile.VM2AssignmentID = existing.VM2SlotID, existing.VM2AssignmentID
 		profile.VM2ContainerName, profile.VM2Stage = existing.VM2ContainerName, existing.VM2Stage
+		profile.VM2RuntimeType = existing.VM2RuntimeType
 		profile.VM2ContainerRunning, profile.VM2Schedulable, profile.VM2SyncedAt = existing.VM2ContainerRunning, existing.VM2Schedulable, existing.VM2SyncedAt
 		profile.Sub2GroupIDs, profile.Sub2GroupNames = existing.Sub2GroupIDs, existing.Sub2GroupNames
 		profile.ReloginCount, profile.ReloginFailureCount, profile.ReloginLastFailedAt = existing.ReloginCount, existing.ReloginFailureCount, existing.ReloginLastFailedAt

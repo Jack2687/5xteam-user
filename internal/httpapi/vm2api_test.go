@@ -13,6 +13,12 @@ import (
 )
 
 func TestVM2LifecycleRetryBindingReloginAndDeletion(t *testing.T) {
+	for _, runtime := range []string{"docker", "kvm"} {
+		t.Run(runtime, func(t *testing.T) { testVM2Lifecycle(t, runtime) })
+	}
+}
+
+func testVM2Lifecycle(t *testing.T, runtime string) {
 	f := newManualRemoveFixture(t)
 	p := f.account(t, "vm-child", "mother_kick", false)
 	var mu sync.Mutex
@@ -31,16 +37,20 @@ func TestVM2LifecycleRetryBindingReloginAndDeletion(t *testing.T) {
 		}
 		ok := func(data any) { _ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": data}) }
 		detail := func() any {
-			return map[string]any{"vm": map[string]any{"id": slotID, "assignment_id": assignment, "execution_mode": "docker_per_slot", "container_name": "kin-account-unique", "schedulable": on, "pool_id": ""}, "container": map[string]any{"id": "docker-id", "running": true}}
+			return map[string]any{"vm": map[string]any{"id": slotID, "assignment_id": assignment, "execution_mode": runtime + "_per_slot", "container_name": "kin-account-unique", "schedulable": on, "pool_id": ""}, "container": map[string]any{"id": "docker-id", "running": true}}
 		}
 		switch {
 		case r.URL.Path == "/api/panel/space-capabilities":
-			ok(map[string]any{"version": 1, "docker_per_slot": true, "delete_account": true})
+			ok(map[string]any{"version": 1, "docker_per_slot": true, "kvm_per_slot": true, "delete_account": true})
 		case r.URL.Path == "/api/panel/vms/create":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["execution_mode"] != "docker_per_slot" || body["runtime_type"] != "docker" || body["start"] != true || body["proxy_id"] != "px-local" || body["pool_id"] != "" {
+			if body["execution_mode"] != runtime+"_per_slot" || body["runtime_type"] != runtime || body["start"] != true || body["proxy_id"] != "px-local" || body["pool_id"] != "" {
 				t.Error("wrong create contract", body)
+			}
+			machine := body["machine"].(map[string]any)
+			if runtime == "kvm" && (machine["vcpus"] != float64(4) || machine["disk_gb"] != float64(40)) {
+				t.Error("pinned KVM spec changed", machine)
 			}
 			incoming, _ := body["assignment_id"].(string)
 			if assignment == "" {
@@ -103,6 +113,7 @@ func TestVM2LifecycleRetryBindingReloginAndDeletion(t *testing.T) {
 	}))
 	defer srv.Close()
 	cfg := model.DefaultVM2APISettings()
+	cfg.RuntimeType, cfg.VCPUs, cfg.DiskGB = runtime, 4, 40
 	cfg.URL = srv.URL
 	if _, e := f.s.store.SaveVM2APISettings(cfg, "vm-management"); e != nil {
 		t.Fatal(e)
@@ -135,12 +146,18 @@ func TestVM2LifecycleRetryBindingReloginAndDeletion(t *testing.T) {
 	sub.Provider = "cpa"
 	_, _ = f.s.store.SaveSub2Settings(sub, "")
 	cfg.URL = "http://127.0.0.1:1"
+	if runtime == "kvm" {
+		cfg.RuntimeType = "docker"
+	} else {
+		cfg.RuntimeType = "kvm"
+	}
+	cfg.Memory, cfg.VCPUs, cfg.DiskGB = "8g", 8, 80
 	_, _ = f.s.store.SaveVM2APISettings(cfg, "new-key")
 	if status := push(); status != 200 {
 		t.Fatalf("retry failed: %d", status)
 	}
 	p, creds, _ := f.s.store.FreeAccountCredential(p.ID)
-	if p.PushStatus != "completed" || !p.VM2ContainerRunning || !p.VM2Schedulable || p.PushProvider != "vm2api" {
+	if p.PushStatus != "completed" || !p.VM2ContainerRunning || !p.VM2Schedulable || p.PushProvider != "vm2api" || p.VM2RuntimeType != runtime {
 		t.Fatalf("not ready: %+v", p)
 	}
 	mu.Lock()
@@ -222,5 +239,36 @@ func TestSettingsSwitchPinsLegacyButNotUnpushedAccounts(t *testing.T) {
 	target, e = f.s.downstreamTarget(newAccount)
 	if e != nil || target.Provider != "vm2api" {
 		t.Fatal("new account should use new default")
+	}
+}
+
+func TestVMRuntimeSettingsPinOnlyAtFirstPush(t *testing.T) {
+	f := newManualRemoveFixture(t)
+	p := f.account(t, "unpushed-runtime", "mother_kick", false)
+	sub := model.DefaultSub2Settings()
+	sub.Provider = "vm2api"
+	_, _ = f.s.store.SaveSub2Settings(sub, "")
+	cfg := model.DefaultVM2APISettings()
+	cfg.URL = "https://vm.example.com"
+	_, _ = f.s.store.SaveVM2APISettings(cfg, "secret")
+	first, err := f.s.downstreamTarget(p)
+	if err != nil || first.VM2API.RuntimeType != "docker" {
+		t.Fatal(first, err)
+	}
+	cfg.RuntimeType, cfg.VCPUs, cfg.DiskGB = "kvm", 4, 40
+	_, _ = f.s.store.SaveVM2APISettings(cfg, "")
+	latest, err := f.s.downstreamTarget(p)
+	if err != nil || latest.VM2API.RuntimeType != "kvm" {
+		t.Fatal("unpushed must see latest settings", err)
+	}
+	_, err = f.s.downstreamTargetLocked(p, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RuntimeType, cfg.VCPUs, cfg.DiskGB = "docker", 8, 80
+	_, _ = f.s.store.SaveVM2APISettings(cfg, "")
+	pinned, err := f.s.downstreamTarget(p)
+	if err != nil || pinned.VM2API.RuntimeType != "kvm" || pinned.VM2API.VCPUs != 4 || pinned.VM2API.DiskGB != 40 {
+		t.Fatal("bound target changed", err)
 	}
 }

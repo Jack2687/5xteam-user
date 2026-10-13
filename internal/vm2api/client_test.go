@@ -137,3 +137,67 @@ func TestGlobalSettingsAndRedirectSafety(t *testing.T) {
 		t.Fatal("redirect followed with management credentials")
 	}
 }
+
+func TestRuntimeCapabilityAndCreateSpec(t *testing.T) {
+	for _, runtime := range []string{"", "docker", "kvm"} {
+		t.Run(runtime, func(t *testing.T) {
+			kvmSupported := false
+			cfg := model.DefaultVM2APISettings()
+			cfg.RuntimeType, cfg.Memory, cfg.VCPUs, cfg.DiskGB = runtime, "2g", 4, 40
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/panel/space-capabilities" {
+					fmt.Fprintf(w, `{"ok":true,"data":{"version":1,"docker_per_slot":true,"delete_account":true,"kvm_per_slot":%t}}`, kvmSupported)
+					return
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["execution_mode"] != ExecutionMode(cfg) || body["runtime_type"] != RuntimeType(cfg) || body["start"] != true {
+					t.Error("incorrect runtime contract", body)
+				}
+				machine := body["machine"].(map[string]any)
+				if machine["memory"] != "2g" {
+					t.Error("memory lost")
+				}
+				if runtime == "kvm" {
+					if machine["vcpus"] != float64(4) || machine["disk_gb"] != float64(40) {
+						t.Error("KVM resources lost", machine)
+					}
+				} else if len(machine) != 1 {
+					t.Error("Docker must only send memory", machine)
+				}
+				fmt.Fprint(w, `{"ok":true,"data":{}}`)
+			}))
+			defer srv.Close()
+			cfg.URL = srv.URL
+			client := New(cfg, "management")
+			if err := client.Check(t.Context()); (err != nil) != (runtime == "kvm") {
+				t.Fatalf("legacy capability: %v", err)
+			}
+			kvmSupported = true
+			if err := client.Check(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Create(t.Context(), "account@example.com", "assignment-test"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestKVMResourceValidation(t *testing.T) {
+	v := model.DefaultVM2APISettings()
+	v.URL, v.RuntimeType = "https://vm.example.com", "kvm"
+	for _, pair := range [][2]int{{1, 10}, {16, 200}, {0, 20}, {17, 20}, {2, 9}, {2, 201}} {
+		v.VCPUs, v.DiskGB = pair[0], pair[1]
+		want := v.VCPUs >= 1 && v.VCPUs <= 16 && v.DiskGB >= 10 && v.DiskGB <= 200
+		if (Validate(v, true) == nil) != want {
+			t.Errorf("unexpected validation for %v", pair)
+		}
+	}
+	v.RuntimeType = "bad"
+	if Validate(v, true) == nil {
+		t.Fatal("unknown runtime accepted")
+	}
+}
