@@ -5,6 +5,7 @@ type VM2APISettings struct {
 	URL                            string   `json:"url"`
 	KeyPresent                     bool     `json:"key_present"`
 	PoolID                         string   `json:"pool_id"`
+	GroupIDs                       []string `json:"group_ids"`
 	BindProxy                      bool     `json:"bind_proxy"`
 	ProxyIDs                       []string `json:"proxy_ids"`
 	Kernel                         string   `json:"kernel"`

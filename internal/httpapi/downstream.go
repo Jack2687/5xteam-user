@@ -289,7 +289,7 @@ func (s *Server) pushVMAccount(ctx context.Context, p model.FreeAccountProfile, 
 	if e = s.syncVMSlot(p, slot); e != nil {
 		return p, e
 	}
-	if slot.Container == nil || !slot.Container.Running || !slot.VM.Schedulable || slot.VM.PoolID != client.Settings.PoolID {
+	if slot.Container == nil || !slot.Container.Running || !slot.VM.Schedulable || !vm2api.SlotGroupsMatch(client.Settings, slot) {
 		return p, errors.New("vm2api 槽位运行环境或调度尚未就绪")
 	}
 	now := time.Now()
@@ -404,6 +404,11 @@ func (s *Server) testVMSettings(w http.ResponseWriter, r *http.Request) {
 func normalizeVMSettings(v *model.VM2APISettings) {
 	v.URL = strings.TrimRight(strings.TrimSpace(v.URL), "/")
 	v.ProxyIDs = vm2api.NormalizeProxyIDs(v.ProxyIDs)
+	if v.GroupIDs == nil && v.PoolID != "" {
+		v.GroupIDs = []string{v.PoolID}
+	}
+	v.GroupIDs = vm2api.NormalizeGroupIDs(v.GroupIDs)
+	v.PoolID = ""
 	if v.RuntimeType == "" {
 		v.RuntimeType = "docker"
 	}

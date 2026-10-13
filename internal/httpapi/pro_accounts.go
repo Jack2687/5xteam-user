@@ -600,8 +600,7 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	if input.CPA.URL == "" {
 		input.CPA.URL = current.CPA.URL
 	}
-	input.VM2API.URL = strings.TrimRight(strings.TrimSpace(input.VM2API.URL), "/")
-	input.VM2API.ProxyIDs = vm2api.NormalizeProxyIDs(input.VM2API.ProxyIDs)
+	normalizeVMSettings(&input.VM2API)
 	if input.Provider == "vm2api" {
 		_, key, readErr := s.store.ProVM2APISettings()
 		if readErr != nil {

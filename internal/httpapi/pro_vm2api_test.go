@@ -22,6 +22,7 @@ type proVMFixture struct {
 	calls                  []string
 	creates                []map[string]any
 	assignment, slot, mode string
+	groupIDs               []string
 	scheduled              bool
 	failCreate, failDelete bool
 }
@@ -47,17 +48,19 @@ func newProVMFixture(t *testing.T, runtime string) *proVMFixture {
 			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": map[string]any{"code": "temporary", "message": "retry later"}})
 		}
 		slot := func() any {
-			return map[string]any{"vm": map[string]any{"id": f.slot, "assignment_id": f.assignment, "execution_mode": f.mode, "container_name": "kin-pro-vm", "status": "running", "schedulable": f.scheduled}, "container": map[string]any{"id": "runtime", "running": true}}
+			return map[string]any{"vm": map[string]any{"id": f.slot, "assignment_id": f.assignment, "execution_mode": f.mode, "container_name": "kin-pro-vm", "status": "running", "schedulable": f.scheduled, "group_ids": f.groupIDs}, "container": map[string]any{"id": "runtime", "running": true}}
 		}
 		switch {
 		case r.URL.Path == "/api/panel/space-capabilities":
-			respond(map[string]any{"version": 1, "docker_per_slot": true, "kvm_per_slot": true, "delete_account": true, "proxy_selection": true})
+			respond(map[string]any{"version": 1, "docker_per_slot": true, "kvm_per_slot": true, "delete_account": true, "proxy_selection": true, "account_groups": true})
 		case r.URL.Path == "/api/panel/proxies":
 			respond(map[string]any{"proxies": []any{}})
 		case r.URL.Path == "/api/panel/vms/create":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
 			f.creates = append(f.creates, body)
+			raw, _ := json.Marshal(body["group_ids"])
+			json.Unmarshal(raw, &f.groupIDs)
 			assignment := body["assignment_id"].(string)
 			if f.assignment != "" && f.assignment != assignment {
 				t.Error("retry created another assignment")
@@ -138,6 +141,10 @@ func TestProVMFullPushRetryQuotaAndPinnedReauthorization(t *testing.T) {
 	for _, runtime := range []string{"docker", "kvm"} {
 		t.Run(runtime, func(t *testing.T) {
 			f := newProVMFixture(t, runtime)
+			f.settings.VM2API.GroupIDs = []string{"pool_aaaaaaaa", "pool_bbbbbbbb"}
+			if _, err := f.s.store.SaveProSettings(f.settings, "", ""); err != nil {
+				t.Fatal(err)
+			}
 			f.failCreate = true
 			if _, err := f.s.performProPush(t.Context(), f.email); err == nil {
 				t.Fatal("expected ambiguous creation")
@@ -157,6 +164,9 @@ func TestProVMFullPushRetryQuotaAndPinnedReauthorization(t *testing.T) {
 				t.Fatal("non-idempotent retry")
 			}
 			body := f.creates[0]
+			if got, _ := json.Marshal(body["group_ids"]); string(got) != `["pool_aaaaaaaa","pool_bbbbbbbb"]` {
+				t.Fatal("groups not assigned", string(got))
+			}
 			if body["execution_mode"] != runtime+"_per_slot" || body["start"] != true || len(body["proxy_ids"].([]any)) != 2 {
 				t.Fatalf("wrong create: %+v", body)
 			}
@@ -176,6 +186,7 @@ func TestProVMFullPushRetryQuotaAndPinnedReauthorization(t *testing.T) {
 			next.CPA.URL = "http://cpa.invalid"
 			next.VM2API.URL = "http://other.invalid"
 			next.VM2API.RuntimeType = "docker"
+			next.VM2API.GroupIDs = []string{"pool_cccccccc"}
 			if _, err = f.s.store.SaveProSettings(next, "", "cpa-key", "new-vm-key"); err != nil {
 				t.Fatal(err)
 			}

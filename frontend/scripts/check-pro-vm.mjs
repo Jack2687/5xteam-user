@@ -47,3 +47,22 @@ for (const scope of ['pro', 'team']) {
   assert.equal(calls.length, 1, 'Inactive provider must not read proxies')
 }
 console.log('Passed: Pro unsaved VM settings, runtime/spec payload, separate proxy/key scopes and inactive provider')
+
+const groupPicker = declarations('VM2GroupPicker.vue', ['cancel', 'refresh'], ['rows', 'loading', 'loaded', 'error', 'controller'])
+for (const scope of ['pro', 'team']) {
+  const calls = []
+  const props = { scope, active: true, disabled: false, url: ' https://vm.example ', managementKey: 'edited-key' }
+  const context = vm.createContext({ props, AbortController, ref: value => ({ value }), api: async (path, options) => { calls.push({ path, options }); return [{ id: 'pool_aaaaaaaa' }] } })
+  vm.runInContext(groupPicker + '\nthis.refresh = refresh', context)
+  await context.refresh()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].path, scope === 'pro' ? '/api/pro-settings/vm2api/groups' : '/api/push-settings/vm2api/groups')
+  assert.equal(calls[0].options.body.vm2api.url, 'https://vm.example')
+  assert.equal(scope === 'pro' ? calls[0].options.body.vm2api_key : calls[0].options.body.vm2api.key, 'edited-key')
+  props.active = false
+  await context.refresh()
+  assert.equal(calls.length, 1)
+}
+settings.vm2api.group_ids = ['pool_aaaaaaaa', 'pool_bbbbbbbb']
+assert.deepEqual(connectionPayload('vm2api').vm2api.group_ids, ['pool_aaaaaaaa', 'pool_bbbbbbbb'])
+console.log('Passed: Team/Pro group loading, unsaved credentials and multiple group IDs')

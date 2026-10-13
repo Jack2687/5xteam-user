@@ -6,6 +6,7 @@ import { copyText } from '../clipboard'
 import { formatTime } from '../utils'
 import Sub2ProxyPicker from './Sub2ProxyPicker.vue'
 import VM2ProxyPicker from './VM2ProxyPicker.vue'
+import VM2GroupPicker from './VM2GroupPicker.vue'
 import MessageBar from './MessageBar.vue'
 import Pagination from './Pagination.vue'
 import StatusPill from './StatusPill.vue'
@@ -86,7 +87,7 @@ const defaults = () => ({
   next_quota_sweep_at: null,
   sub2: { bind_proxy: false, proxy_ids: [], url: '', email: '', password_present: false, group_ids: [], group_names: [], models: [], account_concurrency: 10, priority: 1, cpa_ws: false },
   cpa: { url: '', key_present: false, websockets: false, group_ids: [], group_names: [] },
-  vm2api: { url: '', key_present: false, pool_id: '', bind_proxy: false, proxy_ids: [], runtime_type: 'docker', kernel: 'ubuntu-24.04', memory: '1g', vcpus: 2, disk_gb: 20, region: '', locale: 'en_US.UTF-8', status_check_interval_seconds: 120, quota_check_interval_seconds: 120, relogin_failure_limit: 2 },
+  vm2api: { group_ids: [], url: '', key_present: false, pool_id: '', bind_proxy: false, proxy_ids: [], runtime_type: 'docker', kernel: 'ubuntu-24.04', memory: '1g', vcpus: 2, disk_gb: 20, region: '', locale: 'en_US.UTF-8', status_check_interval_seconds: 120, quota_check_interval_seconds: 120, relogin_failure_limit: 2 },
   sub2_password: '', cpa_key: '', vm2api_key: '',
 })
 const settings = reactive(defaults())
@@ -190,7 +191,7 @@ async function reload() { await loadPage(); emit('reload') }
 async function loadSettings() {
   try {
     const data = await api('/api/pro-settings')
-    Object.assign(settings, defaults(), data, { sub2: { ...defaults().sub2, ...(data.sub2 || {}) }, cpa: { ...defaults().cpa, ...(data.cpa || {}) }, vm2api: { ...defaults().vm2api, ...(data.vm2api || {}) }, sub2_password: '', cpa_key: '', vm2api_key: '' })
+    Object.assign(settings, defaults(), data, { sub2: { ...defaults().sub2, ...(data.sub2 || {}) }, cpa: { ...defaults().cpa, ...(data.cpa || {}) }, vm2api: { ...defaults().vm2api, ...(data.vm2api || {}), group_ids: data.vm2api?.group_ids || (data.vm2api?.pool_id ? [data.vm2api.pool_id] : []) }, sub2_password: '', cpa_key: '', vm2api_key: '' })
     sub2Models.value = (settings.sub2.models || []).join('\n')
     for (const provider of ['sub2', 'cpa']) {
       const target = settings[provider]
@@ -442,6 +443,7 @@ onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); listRequestID++; win
           <label class="field"><span>地区</span><select v-model="settings.vm2api.region"><option value="">自动</option><option value="us-west">美西</option><option value="us-central">美中</option><option value="us-east">美东</option><option value="eu">欧洲</option><option value="ap-east">亚太东</option><option value="ap-southeast">亚太东南</option></select></label>
           <label class="field"><span>系统语言</span><select v-model="settings.vm2api.locale"><option value="en_US.UTF-8">English</option><option value="zh_CN.UTF-8">中文</option><option value="ja_JP.UTF-8">日本語</option><option value="C">C</option></select></label>
         </div>
+        <VM2GroupPicker scope="pro" v-model:ids="settings.vm2api.group_ids" :url="settings.vm2api.url" :management-key="settings.vm2api_key" :active="settings.provider === 'vm2api'" :disabled="!!busy" />
         <VM2ProxyPicker scope="pro" v-model:enabled="settings.vm2api.bind_proxy" v-model:ids="settings.vm2api.proxy_ids" :url="settings.vm2api.url" :management-key="settings.vm2api_key" :active="settings.provider === 'vm2api'" :disabled="!!busy" />
         <p class="table-note">一账号一槽位，独立运行 Codex 内核。未选代理默认使用 vm2api 的 local 本地代理；多选时优先绑定最少的可用代理。</p>
         <p class="table-note">重试、重登沿用原槽位和规格。额度达到 Pro 配置阈值后执行空间合并，移出成功后删除槽位及运行环境，删除失败可重试清理。</p>

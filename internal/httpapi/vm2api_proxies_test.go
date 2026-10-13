@@ -48,7 +48,7 @@ func TestVMProxyListUsesSavedKeyOrUnsavedConnectionWithoutSaving(t *testing.T) {
 
 func TestVMProxySettingsRoundTripAndPinnedTarget(t *testing.T) {
 	f := newManualRemoveFixture(t)
-	payload := `{"provider":"vm2api","vm2api":{"url":"https://vm.example","key":"management","kernel":"ubuntu-24.04","memory":"1g","locale":"en_US.UTF-8","status_check_interval_seconds":120,"quota_check_interval_seconds":120,"bind_proxy":true,"proxy_ids":["px-a"," px-b ","px-a"]}}`
+	payload := `{"provider":"vm2api","vm2api":{"url":"https://vm.example","key":"management","kernel":"ubuntu-24.04","memory":"1g","locale":"en_US.UTF-8","status_check_interval_seconds":120,"quota_check_interval_seconds":120,"group_ids":["pool_bbbbbbbb"," pool_aaaaaaaa ","pool_bbbbbbbb"],"bind_proxy":true,"proxy_ids":["px-a"," px-b ","px-a"]}}`
 	w := httptest.NewRecorder()
 	f.s.savePushSettings(w, httptest.NewRequest("PUT", "/api/push-settings", strings.NewReader(payload)))
 	if w.Code != 200 {
@@ -58,17 +58,24 @@ func TestVMProxySettingsRoundTripAndPinnedTarget(t *testing.T) {
 	if err != nil || !cfg.BindProxy || !reflect.DeepEqual(cfg.ProxyIDs, []string{"px-a", "px-b"}) {
 		t.Fatalf("settings lost: %+v %v", cfg, err)
 	}
+	if !reflect.DeepEqual(cfg.GroupIDs, []string{"pool_aaaaaaaa", "pool_bbbbbbbb"}) {
+		t.Fatal("group settings lost", cfg.GroupIDs)
+	}
 	id, err := f.s.store.SaveDownstreamTarget(model.DownstreamTarget{Provider: "vm2api", VM2API: cfg, Secret: key})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.ProxyIDs = []string{}
+	cfg.GroupIDs = []string{"pool_cccccccc"}
 	if _, err := f.s.store.SaveVM2APISettings(cfg, ""); err != nil {
 		t.Fatal(err)
 	}
 	target, err := f.s.store.DownstreamTarget(id)
 	if err != nil || !reflect.DeepEqual(target.VM2API.ProxyIDs, []string{"px-a", "px-b"}) {
 		t.Fatal("settings edit changed pinned cycle", err)
+	}
+	if !reflect.DeepEqual(target.VM2API.GroupIDs, []string{"pool_aaaaaaaa", "pool_bbbbbbbb"}) {
+		t.Fatal("settings changed pinned groups", target.VM2API.GroupIDs)
 	}
 	// An enabled but empty choice is valid and falls back to local, like disabling it.
 	payload = strings.Replace(payload, `["px-a"," px-b ","px-a"]`, `[]`, 1)

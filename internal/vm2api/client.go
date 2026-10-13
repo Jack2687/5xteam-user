@@ -51,6 +51,14 @@ func RuntimeType(v model.VM2APISettings) string {
 func ExecutionMode(v model.VM2APISettings) string { return RuntimeType(v) + "_per_slot" }
 
 func Validate(v model.VM2APISettings, keyPresent bool) error {
+	if len(v.GroupIDs) > 100 {
+		return errors.New("vm2api 分组最多选择 100 个")
+	}
+	for _, id := range v.GroupIDs {
+		if !groupIDPattern.MatchString(strings.TrimSpace(id)) {
+			return errors.New("vm2api 分组 ID 无效")
+		}
+	}
 	u, e := url.Parse(v.URL)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("vm2api 地址必须是 http(s) 服务根地址")
@@ -132,13 +140,14 @@ func (c *Client) request(ctx context.Context, method, path, assignment string, b
 
 type Slot struct {
 	VM struct {
-		ID            string `json:"id"`
-		AssignmentID  string `json:"assignment_id"`
-		ExecutionMode string `json:"execution_mode"`
-		ContainerName string `json:"container_name"`
-		PoolID        string `json:"pool_id"`
-		Schedulable   bool   `json:"schedulable"`
-		Status        string `json:"status"`
+		ID            string   `json:"id"`
+		AssignmentID  string   `json:"assignment_id"`
+		ExecutionMode string   `json:"execution_mode"`
+		ContainerName string   `json:"container_name"`
+		PoolID        string   `json:"pool_id"`
+		GroupIDs      []string `json:"group_ids"`
+		Schedulable   bool     `json:"schedulable"`
+		Status        string   `json:"status"`
 	} `json:"vm"`
 	Container *struct {
 		ID      string `json:"id"`
@@ -154,6 +163,7 @@ func (c *Client) Check(ctx context.Context) error {
 		KVM            bool `json:"kvm_per_slot"`
 		Delete         bool `json:"delete_account"`
 		ProxySelection bool `json:"proxy_selection"`
+		AccountGroups  bool `json:"account_groups"`
 	}
 	if e := c.request(ctx, "GET", "/space-capabilities", "", nil, &caps); e != nil {
 		return e
@@ -167,6 +177,9 @@ func (c *Client) Check(ctx context.Context) error {
 	if c.Settings.BindProxy && len(NormalizeProxyIDs(c.Settings.ProxyIDs)) > 0 && !caps.ProxySelection {
 		return errors.New("vm2api 尚不支持代理选择，请先更新 vm2api 后再推送")
 	}
+	if len(c.Settings.GroupIDs) > 0 && !caps.AccountGroups {
+		return errors.New("vm2api 尚不支持多选账号分组，请先更新 vm2api 后再推送")
+	}
 	return nil
 }
 func (c *Client) Create(ctx context.Context, email, assignment string) (Slot, error) {
@@ -176,6 +189,9 @@ func (c *Client) Create(ctx context.Context, email, assignment string) (Slot, er
 		machine["vcpus"], machine["disk_gb"] = c.Settings.VCPUs, c.Settings.DiskGB
 	}
 	body := map[string]any{"assignment_id": assignment, "account_email": email, "execution_mode": ExecutionMode(c.Settings), "platform": "openai", "runtime_type": RuntimeType(c.Settings), "proxy_id": "px-local", "pool_id": c.Settings.PoolID, "kernel": c.Settings.Kernel, "locale": c.Settings.Locale, "region": c.Settings.Region, "machine": machine, "start": true}
+	if len(c.Settings.GroupIDs) > 0 {
+		body["group_ids"] = NormalizeGroupIDs(c.Settings.GroupIDs)
+	}
 	if ids := NormalizeProxyIDs(c.Settings.ProxyIDs); c.Settings.BindProxy && len(ids) > 0 {
 		// vm2api reads counts, chooses the least-bound exit and reserves it before
 		// starting Docker. The assignment pins that choice across ambiguous retries.

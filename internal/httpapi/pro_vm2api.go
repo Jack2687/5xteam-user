@@ -107,7 +107,7 @@ func (s *Server) pinProVM(p model.MailAccountProfile) (model.MailAccountProfile,
 }
 
 func (s *Server) syncProVM(p model.MailAccountProfile, slot vm2api.Slot, cfg model.VM2APISettings) (model.MailAccountProfile, error) {
-	if p.VM2 == nil || slot.VM.ID != p.VM2.SlotID || slot.VM.AssignmentID != p.VM2.AssignmentID || slot.VM.ExecutionMode != vm2api.ExecutionMode(cfg) || slot.VM.PoolID != cfg.PoolID {
+	if p.VM2 == nil || slot.VM.ID != p.VM2.SlotID || slot.VM.AssignmentID != p.VM2.AssignmentID || slot.VM.ExecutionMode != vm2api.ExecutionMode(cfg) || !vm2api.SlotGroupsMatch(cfg, slot) {
 		return p, errors.New("vm2api 返回的 Pro 槽位归属不匹配")
 	}
 	now := time.Now()

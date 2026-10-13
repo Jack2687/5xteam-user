@@ -13,6 +13,7 @@ import { latestOAuthLoginSummary, oauthLoginSummary } from '../oauthLoginLog'
 import IconButton from './IconButton.vue'
 import Sub2ProxyPicker from './Sub2ProxyPicker.vue'
 import VM2ProxyPicker from './VM2ProxyPicker.vue'
+import VM2GroupPicker from './VM2GroupPicker.vue'
 import MessageBar from './MessageBar.vue'
 import StatusPill from './StatusPill.vue'
 import Pagination from './Pagination.vue'
@@ -33,7 +34,7 @@ const emit = defineEmits(['reload', 'auto-rotation'])
 const importForm = reactive({ tokens: '' })
 const sub2Form = reactive({ bindProxy: false, proxyIDs: [], url: '', email: '', password: '', groupIDs: [], groupNames: [], models: '', pushPlanType: 'self_serve_business_prolite', accountConcurrency: 10, priority: 1, cpaWs: false, enable401Check: true, statusCheckIntervalSeconds: 120, reloginFailureLimit: 2, quotaEnabled: true, quotaCheckIntervalSeconds: 120, quotaRemainingThresholdPercent: 0, schedulingPauseTimeoutSeconds: 0, passwordPresent: false })
 const cpaForm = reactive({ url: '', key: '', keyPresent: false, websockets: false, enable401Check: true, statusCheckIntervalSeconds: 120, reloginFailureLimit: 2, quotaEnabled: true, quotaCheckIntervalSeconds: 120, quotaRemainingThresholdPercent: 0, groupIDs: [], groupNames: [] })
-const vmForm = reactive({ url: '', key: '', key_present: false, bind_proxy: false, proxy_ids: [], runtime_type: 'docker', vcpus: 2, disk_gb: 20, kernel: 'ubuntu-24.04', memory: '1g', region: '', locale: 'en_US.UTF-8', enable_401_check: true, status_check_interval_seconds: 120, relogin_failure_limit: 2, quota_enabled: true, quota_check_interval_seconds: 120, quota_remaining_threshold_percent: 0 })
+const vmForm = reactive({ group_ids: [], url: '', key: '', key_present: false, bind_proxy: false, proxy_ids: [], runtime_type: 'docker', vcpus: 2, disk_gb: 20, kernel: 'ubuntu-24.04', memory: '1g', region: '', locale: 'en_US.UTF-8', enable_401_check: true, status_check_interval_seconds: 120, relogin_failure_limit: 2, quota_enabled: true, quota_check_interval_seconds: 120, quota_remaining_threshold_percent: 0 })
 const vmStages = { creating: '创建并开机', authorizing: '写入凭证', validating: '校验账号', scheduling: '启用调度', ready: '就绪', deleting: '删除槽位和容器', deleted: '已清理' }
 const providerLabel = value => ({ sub2: 'Sub2', cpa: 'CPA', vm2api: 'vm2api' }[value] || '未推送')
 const boundProvider = account => account?.push_provider || (account?.vm2_slot_id ? 'vm2api' : account?.cpa_auth_file_name ? 'cpa' : account?.sub2_account_id ? 'sub2' : '')
@@ -702,7 +703,7 @@ async function loadPushSettings() {
   try {
     const result = await api('/api/push-settings')
     pushProvider.value = ['cpa', 'vm2api'].includes(result.provider) ? result.provider : 'sub2'
-    Object.assign(vmForm, result.vm2api || {}, { key: '', proxy_ids: result.vm2api?.proxy_ids || [] })
+    Object.assign(vmForm, result.vm2api || {}, { key: '', proxy_ids: result.vm2api?.proxy_ids || [], group_ids: result.vm2api?.group_ids || (result.vm2api?.pool_id ? [result.vm2api.pool_id] : []) })
     const s = result.sub2 || {}; Object.assign(sub2Form, { bindProxy: !!s.bind_proxy, proxyIDs: s.proxy_ids || [], url: s.url || '', email: s.email || '', groupIDs: s.group_ids || [], groupNames: s.group_names || [], models: (s.models || []).join('\n'), pushPlanType: s.push_plan_type || 'self_serve_business_prolite', accountConcurrency: s.account_concurrency || 10, priority: s.priority || 1, cpaWs: s.cpa_ws === true || Number(s.cpa_ws) === 1, enable401Check: s.enable_401_check !== false, statusCheckIntervalSeconds: s.status_check_interval_seconds || 120, reloginFailureLimit: s.relogin_failure_limit ?? 2, quotaEnabled: s.quota_enabled !== false, quotaCheckIntervalSeconds: s.quota_check_interval_seconds || 120, quotaRemainingThresholdPercent: Number(s.quota_remaining_threshold_percent ?? 0), schedulingPauseTimeoutSeconds: Number(s.scheduling_pause_timeout_seconds ?? 0), passwordPresent: !!s.password_present })
     const c = result.cpa || {}; Object.assign(cpaForm, { url: c.url || '', keyPresent: !!c.key_present, websockets: !!c.websockets, enable401Check: c.enable_401_check !== false, statusCheckIntervalSeconds: c.status_check_interval_seconds || 120, reloginFailureLimit: c.relogin_failure_limit ?? 2, quotaEnabled: c.quota_enabled !== false, quotaCheckIntervalSeconds: c.quota_check_interval_seconds || 120, quotaRemainingThresholdPercent: Number(c.quota_remaining_threshold_percent ?? 0), groupIDs: c.group_ids || [], groupNames: c.group_names || [] })
     void loadActivePushGroups(result)
@@ -1121,7 +1122,7 @@ onBeforeUnmount(() => motherSelectionController?.abort())
         <div class="split-actions"><button class="btn ghost" type="button" :disabled="!!busy" @click="testCPA"><Cable :size="15" />测试 CPA 连接</button></div>
       </div>
       <div class="panel vm-config-panel">
-        <div class="panel-title"><div><span>VM2API MANAGEMENT</span><h2>vm2api 设置</h2><p class="panel-description">GPT · 本机 Docker / KVM · 一账号一槽位一独立 Codex 内核 · 全局调度</p></div><label class="mini-toggle"><input v-model="pushProvider" value="vm2api" type="radio" name="push-provider" /><i></i><span>{{ pushProvider === 'vm2api' ? '当前启用' : '启用 vm2api' }}</span></label></div>
+        <div class="panel-title"><div><span>VM2API MANAGEMENT</span><h2>vm2api 设置</h2><p class="panel-description">GPT · 本机 Docker / KVM · 一账号一槽位一独立 Codex 内核 · 支持账号分组</p></div><label class="mini-toggle"><input v-model="pushProvider" value="vm2api" type="radio" name="push-provider" /><i></i><span>{{ pushProvider === 'vm2api' ? '当前启用' : '启用 vm2api' }}</span></label></div>
         <div class="sub2-fields">
           <label class="field wide"><span>vm2api 地址</span><input v-model="vmForm.url" type="url" placeholder="https://vm2api.example.com（不带 /v1）" :required="pushProvider === 'vm2api'" /></label>
           <label class="field wide"><span>管理密钥 <small>{{ vmForm.key_present ? '已保存，留空不修改' : '填写 KIN_API_KEY，不是模型调用 Key' }}</small></span><input v-model="vmForm.key" type="password" autocomplete="new-password" :required="pushProvider === 'vm2api' && !vmForm.key_present" /></label>
@@ -1143,6 +1144,7 @@ onBeforeUnmount(() => motherSelectionController?.abort())
           <label class="field"><span>剩余额度移出阈值（%）</span><input v-model.number="vmForm.quota_remaining_threshold_percent" type="number" min="0" max="100" step="0.1" /></label>
           <p class="panel-description field wide">名称使用账号邮箱；首次推送按最新保存的形态和规格创建、开机并授权。已绑定账号的重试、重登继续使用原槽位及规格；重登仅更新凭证，保留手动暂停。额度达标后移出空间并删除槽位及对应容器或虚拟机，新账号总是新建。</p>
         </div>
+        <VM2GroupPicker v-model:ids="vmForm.group_ids" :url="vmForm.url" :management-key="vmForm.key" :active="pushProvider === 'vm2api'" :disabled="!!busy" />
         <VM2ProxyPicker v-model:enabled="vmForm.bind_proxy" v-model:ids="vmForm.proxy_ids" :url="vmForm.url" :management-key="vmForm.key" :active="pushProvider === 'vm2api'" :disabled="!!busy" />
         <button class="btn ghost" type="button" :disabled="!!busy" @click="testVM"><Cable :size="15" />测试已保存的管理连接</button>
       </div>

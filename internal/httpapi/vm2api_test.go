@@ -37,16 +37,19 @@ func testVM2Lifecycle(t *testing.T, runtime string) {
 		}
 		ok := func(data any) { _ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": data}) }
 		detail := func() any {
-			return map[string]any{"vm": map[string]any{"id": slotID, "assignment_id": assignment, "execution_mode": runtime + "_per_slot", "container_name": "kin-account-unique", "schedulable": on, "pool_id": ""}, "container": map[string]any{"id": "docker-id", "running": true}}
+			return map[string]any{"vm": map[string]any{"id": slotID, "assignment_id": assignment, "execution_mode": runtime + "_per_slot", "container_name": "kin-account-unique", "schedulable": on, "pool_id": "", "group_ids": []string{"pool_aaaaaaaa", "pool_bbbbbbbb"}}, "container": map[string]any{"id": "docker-id", "running": true}}
 		}
 		switch {
 		case r.URL.Path == "/api/panel/space-capabilities":
-			ok(map[string]any{"version": 1, "docker_per_slot": true, "kvm_per_slot": true, "delete_account": true})
+			ok(map[string]any{"version": 1, "docker_per_slot": true, "kvm_per_slot": true, "delete_account": true, "account_groups": true})
 		case r.URL.Path == "/api/panel/vms/create":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body["execution_mode"] != runtime+"_per_slot" || body["runtime_type"] != runtime || body["start"] != true || body["proxy_id"] != "px-local" || body["pool_id"] != "" {
 				t.Error("wrong create contract", body)
+			}
+			if got, _ := json.Marshal(body["group_ids"]); string(got) != `["pool_aaaaaaaa","pool_bbbbbbbb"]` {
+				t.Error("pinned groups changed", string(got))
 			}
 			machine := body["machine"].(map[string]any)
 			if runtime == "kvm" && (machine["vcpus"] != float64(4) || machine["disk_gb"] != float64(40)) {
@@ -113,6 +116,7 @@ func testVM2Lifecycle(t *testing.T, runtime string) {
 	}))
 	defer srv.Close()
 	cfg := model.DefaultVM2APISettings()
+	cfg.GroupIDs = []string{"pool_aaaaaaaa", "pool_bbbbbbbb"}
 	cfg.RuntimeType, cfg.VCPUs, cfg.DiskGB = runtime, 4, 40
 	cfg.URL = srv.URL
 	if _, e := f.s.store.SaveVM2APISettings(cfg, "vm-management"); e != nil {
@@ -146,6 +150,7 @@ func testVM2Lifecycle(t *testing.T, runtime string) {
 	sub.Provider = "cpa"
 	_, _ = f.s.store.SaveSub2Settings(sub, "")
 	cfg.URL = "http://127.0.0.1:1"
+	cfg.GroupIDs = []string{"pool_cccccccc"}
 	if runtime == "kvm" {
 		cfg.RuntimeType = "docker"
 	} else {
