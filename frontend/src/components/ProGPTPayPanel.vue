@@ -1,11 +1,15 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
+import { CreditCard, CalendarClock, SlidersHorizontal, Workflow, Settings2, ChevronRight, Save, ShieldCheck } from 'lucide-vue-next'
 import { formatTime } from '../utils'
 import { parseCardText, payStatusName, proPlanName, payProviderName, catalogProPlans, tokenseekCatalog, paymentCountries, paymentCountryLabel } from '../gptpay'
 import MessageBar from './MessageBar.vue'
 import Pagination from './Pagination.vue'
 import ProSchedulePanel from './ProSchedulePanel.vue'
+import { caseSummary, cardHasCase } from '../ejh'
+import ReturnCaseLine from './ReturnCaseLine.vue'
+import CardAccountPreview from './CardAccountPreview.vue'
 
 const props = defineProps({ mode: String, defaultPageSize: { type: Number, default: 10 }, adminAccounts: { type: Array, default: () => [] } })
 const emit = defineEmits(['saved'])
@@ -66,6 +70,26 @@ async function changeProvider(event) {
 }
 const automation = reactive({ scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, target_admin_id: '', target_seat_type: 'default', concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 const selectedAdmin = computed(() => props.adminAccounts.find(a => a.id === automation.target_admin_id))
+Object.assign(automation,{ejh_auto_open:false,ejh_template_id:'',ejh_daily_open_limit:1,ejh_daily_amount_limit:'',force_merge_enabled:false,force_merge_minutes:60})
+const ejhTemplates=ref([]),cardCases=ref([]),cardDetail=ref(null)
+function associated(card){return cardCases.value.filter(c=>cardHasCase(card,c))}
+function cardHint(card){return associated(card).slice(0,30).map(caseSummary).join('\n')||'暂无关联账号'}
+const configSection = ref('purchase')
+const configSections = [
+  { id: 'purchase', label: '开通设置', hint: '供应商、套餐与国家', icon: CreditCard },
+  { id: 'schedule', label: '定时任务', hint: '自动开通与任务容量', icon: CalendarClock },
+  { id: 'cards', label: '银行卡与补卡', hint: '用卡上限、EJH 预算', icon: CreditCard },
+  { id: 'merge', label: '空间合并', hint: '额度条件、超时与目标', icon: Workflow },
+  { id: 'advanced', label: '高级设置', hint: '并发、重试与会话', icon: SlidersHorizontal },
+]
+const currentConfigSection = computed(() => configSections.find(s => s.id === configSection.value))
+function revealInvalid(event) {
+  event.preventDefault()
+  const section = event.target.closest('[data-config-section]')
+  if (section) configSection.value = section.dataset.configSection
+  notify(event.target.validationMessage || '请检查必填项和数值范围', 'error')
+  nextTick(() => event.target.focus())
+}
 const settingsReady = ref(false)
 const busy = ref(false), message = reactive({ text: '', type: '' }), account = ref(null)
 const rows = ref([]), page = ref(1), pageSize = ref(props.defaultPageSize), total = ref(0)
@@ -91,6 +115,7 @@ async function load() {
   const result = await api(`/api/gptpay/${props.mode === 'cards' ? 'cards' : 'orders'}?${params}`)
   if (disposed || id !== requestID) return
   rows.value = result.items || []; total.value = result.total || 0
+  if(props.mode==='cards'){const d=await api('/api/ejh/dashboard');if(!disposed&&id===requestID)cardCases.value=d.cases||[]}
   if (page.value > Math.max(1, Math.ceil(total.value / pageSize.value))) { page.value = Math.max(1, Math.ceil(total.value / pageSize.value)); await load() }
 }
 function changePage(v) { page.value = v; action(load) }
@@ -137,6 +162,7 @@ async function queryOrders() {
 }
 onMounted(() => action(async () => {
   if (props.mode === 'settings') {
+    const ejh=await api('/api/ejh/settings');ejhTemplates.value=ejh.templates||[]
     const [pay, pro] = await Promise.all([api('/api/gptpay/settings'), api('/api/pro-settings')])
     if (disposed) return
     Object.assign(settings, pay); savedURLs.set(settings.provider, settings.url); Object.assign(automation, pro); settingsReady.value = true
@@ -150,13 +176,31 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 
 <template>
   <div class="gptpay-panel view-stack">
-    <MessageBar :message="message" />
-    <ProSchedulePanel v-if="mode==='settings'" compact/>
-    <form v-if="mode === 'settings'" class="panel" @submit.prevent="saveSettings">
-      <div class="panel-title"><div><span>PRO AUTOMATION</span><h2>Pro 全自动配置</h2><p>登录 → 开通 → 新 RT/AT → 推送 Sub2 → 额度达标 → 空间四步流程。</p></div></div>
-      <div class="settings-fields">
+    <Teleport to="body"><div v-if="cardDetail" class="modal-backdrop" @click.self="cardDetail=null"><section class="modal" style="max-height:80vh;overflow:auto"><h2>{{cardDetail.name}} · 关联账号</h2><ReturnCaseLine v-for="c in associated(cardDetail)" :key="c.id" :row="c"/><p v-if="!associated(cardDetail).length">暂无关联账号</p><button class="btn" @click="cardDetail=null">关闭</button></section></div></Teleport>
+    <MessageBar v-if="message.text" :message="message" />
+    <form v-if="mode === 'settings'" class="automation-config" @submit.prevent="saveSettings" @invalid.capture="revealInvalid">
+      <header class="config-heading">
+        <div><span class="overline">PRO AUTOMATION</span><h2>全自动配置</h2><p>按流程配置，修改后统一保存。切换分组不会丢失已填内容。</p></div>
+        <span class="config-badge" :class="{ enabled: automation.scheduled_enabled }"><span></span>{{ automation.scheduled_enabled ? '定时开通已开启' : '定时开通未开启' }}</span>
+      </header>
+      <div class="config-workspace">
+        <nav class="config-nav" aria-label="全自动配置分组">
+          <button v-for="item in configSections" :key="item.id" type="button" :aria-current="configSection === item.id ? 'page' : undefined" :class="{ selected: configSection === item.id }" @click="configSection = item.id">
+            <component :is="item.icon" :size="18"/><span><strong>{{ item.label }}</strong><small>{{ item.hint }}</small></span><ChevronRight :size="14"/>
+          </button>
+          <div class="config-nav-note"><ShieldCheck :size="17"/><p>配置保存不会立即开通。真实开通仍按原任务流程执行。</p></div>
+        </nav>
+        <div class="config-body">
+          <header class="config-section-heading"><span>配置 / {{ currentConfigSection.label }}</span><h3>{{ currentConfigSection.label }}</h3><p>{{ currentConfigSection.hint }}</p></header>
+          <section v-show="configSection === 'purchase'" data-config-section="purchase">
+            <div class="settings-fields">
         <label class="field"><span>开通供应商</span><select :value="settings.provider" :disabled="busy || !settingsReady" @change="changeProvider"><option value="tokenseek">GPTPay · Tokenseek</option><option value="cmsnav">GPTPay · CMSNav</option></select><small>分别保存地址和密钥；保存后用于手动及全自动开通，已有订单仍使用原供应商。</small></label>
-        <label class="field"><span>开通套餐</span><select v-model="settings.plan_code" aria-label="开通套餐" :disabled="countryPickerDisabled"><optgroup v-for="group in planGroups" :key="group.label" :label="group.label"><option v-for="plan in group.plans" :key="plan.code" :value="plan.code" :disabled="!plan.available">{{ plan.label }}</option></optgroup></select><small>报价为供应商 Credits 服务费，不是银行卡扣款金额。</small><small v-if="settings.plan_code.endsWith('_up')">仅支持已有 Plus 的账号；供应商最终校验升级资格。</small><small v-if="settings.plan_code === 'codex_point'">账号须已有有效订阅，Free 不可购买；服务费按每单收取。</small></label>
+        <label class="field wide"><span>GPTPay API 地址</span><input v-model="settings.url" required placeholder="https://gptpay.tokenseek.app/api/v1" /></label>
+        <label class="field wide"><span>GPTPay API Key</span><input v-model="settings.api_key" type="password" autocomplete="new-password" :placeholder="settings.key_present ? '已保存，留空不修改' : '填写供应商 API Key'" /></label>
+
+            </div>
+            <div class="config-divider"><h4>套餐与支付地区</h4><p>供应商报价是服务费，不是银行卡扣款金额。</p></div>
+            <div class="settings-fields">        <label class="field"><span>开通套餐</span><select v-model="settings.plan_code" aria-label="开通套餐" :disabled="countryPickerDisabled"><optgroup v-for="group in planGroups" :key="group.label" :label="group.label"><option v-for="plan in group.plans" :key="plan.code" :value="plan.code" :disabled="!plan.available">{{ plan.label }}</option></optgroup></select><small>报价为供应商 Credits 服务费，不是银行卡扣款金额。</small><small v-if="settings.plan_code.endsWith('_up')">仅支持已有 Plus 的账号；供应商最终校验升级资格。</small><small v-if="settings.plan_code === 'codex_point'">账号须已有有效订阅，Free 不可购买；服务费按每单收取。</small></label>
         <label v-if="settings.plan_code === 'codex_point'" class="field"><span>Codex 点数数量</span><input v-model.number="settings.credit_quantity" type="number" min="250" max="250000" step="250" required /><small>250～250000，必须为 250 的倍数；表示本次购买数量。</small></label>
         <div class="field country-picker">
           <label for="pro-payment-country"><span>支付国家</span></label>
@@ -171,32 +215,51 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
           <button v-if="settings.provider === 'tokenseek'" class="btn ghost compact" type="button" :disabled="countryPickerDisabled" @click="settings.country = selectedPlan.defaultCountry">使用套餐默认国家（{{ selectedPlan?.defaultCountry }}）</button>
         </div>
         <div class="catalog-status wide" aria-live="polite"><span v-if="catalogLoading">正在读取国家、货币与套餐…</span><span v-else-if="catalogError" class="danger-text">目录读取失败：{{ catalogError }}<span v-if="settings.provider === 'tokenseek'"> 当前显示文档选项，实际可购买套餐以账户报价为准。</span></span><span v-else-if="catalog">已读取 {{ availableCountries.length }} 个国家/地区。<span v-if="catalogSelectionInvalid" class="danger-text">请选择目录内的国家和可用套餐，并检查点数数量。</span></span><button class="btn ghost compact" type="button" :disabled="busy || catalogLoading" @click="loadCatalog">刷新国家与套餐</button></div>
-        <label class="field"><span>银行卡默认最大开通数</span><input v-model.number="settings.card_account_limit" type="number" min="1" max="10000" required/><small>未单独设置的卡沿用此上限，默认 3 个。成功开通与在途占位共同计数，同一卡号共用上限。</small></label>
-        <label class="field"><span>登录及开通会话最长保留（分钟）</span><input v-model.number="settings.session_timeout_minutes" type="number" min="5" max="60" required /><small>出口 IP 变化或检测失败仅记录日志，继续执行；任务超时仍会停止，已提交订单可查询。</small></label>
-        <label class="field wide"><span>GPTPay API 地址</span><input v-model="settings.url" required placeholder="https://gptpay.tokenseek.app/api/v1" /></label>
-        <label class="field wide"><span>GPTPay API Key</span><input v-model="settings.api_key" type="password" autocomplete="new-password" :placeholder="settings.key_present ? '已保存，留空不修改' : '填写供应商 API Key'" /></label>
-      </div>
-      <h3 class="config-section-title">定时全自动开通</h3>
-      <div class="settings-fields">
-        <label class="toggle-row wide"><div><strong>定时执行全自动 Pro</strong><small>从 Pro 管理选择未开通过的新账号，自动选择有名额的银行卡，登录 → 开通 → RT/AT → Sub2 → 刷新额度。</small></div><input v-model="automation.scheduled_enabled" type="checkbox"/><i></i></label>
+</div>
+          </section>
+          <section v-show="configSection === 'schedule'" data-config-section="schedule">
+            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>定时执行全自动 Pro</strong><small>从 Pro 管理选择未开通过的新账号，自动选择有名额的银行卡，登录 → 开通 → RT/AT → Sub2 → 刷新额度。</small></div><input v-model="automation.scheduled_enabled" type="checkbox"/><i></i></label>
         <label class="field"><span>开通并在 Sub 最大数（未合并）</span><input v-model.number="automation.max_unmerged" type="number" min="1" max="10000" required/><small>已开通未合并及开通在途共同占位，避免超出上限。</small></label>
         <label class="field"><span>定时开通检查间隔（秒）</span><input v-model.number="automation.schedule_interval_seconds" type="number" min="10" max="86400" required/><small>本批推送成功并完成首次额度刷新后，才允许下一批启动。</small></label>
-      </div>
-      <h3 class="config-section-title">额度检测与空间合并</h3>
-      <p class="muted">以下两个开关管理手动处理的 Pro 账号；全自动任务自身定时查额度，达标后继续合并，并保留启动时的额度配置。</p>
-      <div class="settings-fields">
-        <label class="field"><span>7 天已用额度达到（%）</span><input v-model.number="automation.quota_used_threshold" type="number" min="0.01" max="100" step="0.01" required /></label>
+</div>
+            <div class="config-callout">仅选择未开通过的新账号；登录和付款在途也占用容量。上一批推送并完成首次额度刷新后，才启动下一批。</div>
+          </section>
+          <section v-show="configSection === 'cards'" data-config-section="cards">
+            <div class="settings-fields">        <label class="field"><span>银行卡默认最大开通数</span><input v-model.number="settings.card_account_limit" type="number" min="1" max="10000" required/><small>未单独设置的卡沿用此上限，默认 3 个。成功开通与在途占位共同计数，同一卡号共用上限。</small></label>
+</div>
+            <div class="config-divider"><h4>EJH 自动补卡</h4><p>EJH 卡片使用卡台独立的默认上限，可在卡台或单卡设置中调整。</p></div>
+            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>无可用卡时自动从 EJH 开卡</strong><small>优先使用现有可用卡；新卡加入银行卡信息。结果未知时停止等待核实，不重复扣款。</small></div><input v-model="automation.ejh_auto_open" type="checkbox"/><i></i></label>
+        <label class="field"><span>EJH 开卡模板</span><select v-model="automation.ejh_template_id" :required="automation.ejh_auto_open"><option value="">请先到 EJH 卡台保存模板</option><option v-for="t in ejhTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.cardAmount}} {{t.cardCurrency}}</option></select></label>
+        <label class="field"><span>自动开卡每日数量上限</span><input v-model.number="automation.ejh_daily_open_limit" type="number" min="1" max="1000" :required="automation.ejh_auto_open"/></label>
+        <label class="field wide"><span>自动开卡每日刷卡额度预算（模板币种）</span><input v-model="automation.ejh_daily_amount_limit" :required="automation.ejh_auto_open" placeholder="例如 100"/><small>累计新卡额度，不含手续费和汇率差，不是实际扣款上限；按北京时间每日计算。</small></label>
+</div>
+          </section>
+          <section v-show="configSection === 'merge'" data-config-section="merge">
+            <p class="config-callout">手动账号使用下方检测开关；全自动任务沿用启动时的额度配置。合并、移出仍走原流程。</p>
+            <div class="settings-fields">        <label class="field"><span>7 天已用额度达到（%）</span><input v-model.number="automation.quota_used_threshold" type="number" min="0.01" max="100" step="0.01" required /></label>
         <label class="field"><span>额度检测间隔（秒）</span><input v-model.number="automation.quota_check_interval_seconds" type="number" min="10" max="86400" required /></label>
         <label class="toggle-row wide"><div><strong>定时查额度</strong><small>定时查询已推送且未合并的手动账号，并保存最新额度到数据库。</small></div><input v-model="automation.quota_enabled" type="checkbox" /><i></i></label>
         <label class="toggle-row wide"><div><strong>查额度达标后自动合并</strong><small>查额度成功且达到阈值时执行合并；定时触发需同时开启“定时查额度”。401、超时或无 7 天额度数据不触发。</small></div><input v-model="automation.auto_merge_enabled" type="checkbox" /><i></i></label>
         <label class="field wide"><span>目标母号</span><select v-model="automation.target_admin_id"><option value="">请选择母号</option><option v-for="admin in adminAccounts" :key="admin.id" :value="admin.id">{{ admin.label || admin.email }} · {{ admin.team_account_id || '无 Team ID' }}</option></select></label>
         <label class="field"><span>空间席位套餐</span><select v-model="automation.target_seat_type"><option value="default">Standard（普通空间）</option><option value="prolite">Premium（5x）</option></select></label>
-        <label class="field"><span>并发账号数</span><input v-model.number="automation.concurrency" type="number" min="1" max="20" required /></label>
+        <div class="target-summary wide"><strong>{{ selectedAdmin?.label || selectedAdmin?.email || '尚未选择母号' }}</strong><span>{{ selectedAdmin?.team_account_id || '选择后显示目标 Team ID' }}</span></div>
+</div>
+            <div class="config-divider"><h4>推送等待时限</h4><p>从首次推送开始计时，重试和重启不清零。</p></div>
+            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>推送超时执行原空间四步流程</strong><small>从首次推送开始计时，推送成功后触发。重试和重启不清零，停止、暂停和待确认任务除外。合并仅标记待回款，不调用退款接口。</small></div><input v-model="automation.force_merge_enabled" type="checkbox"/><i></i></label>
+        <label class="field"><span>首次推送后最多等待（分钟）</span><input v-model.number="automation.force_merge_minutes" type="number" min="1" max="525600" :required="automation.force_merge_enabled"/></label>
+</div>
+          </section>
+          <section v-show="configSection === 'advanced'" data-config-section="advanced">
+            <p class="config-callout">一般保留当前值即可。资金操作的未知结果不会因重试设置而自动重复提交。</p>
+            <div class="settings-fields">        <label class="field"><span>并发账号数</span><input v-model.number="automation.concurrency" type="number" min="1" max="20" required /></label>
         <label class="field"><span>失败重试次数</span><input v-model.number="automation.retry_count" type="number" min="0" max="10" required /></label>
         <label class="field"><span>重试间隔（秒）</span><input v-model.number="automation.retry_interval_seconds" type="number" min="1" required /></label>
-        <div class="target-summary wide"><strong>{{ selectedAdmin?.label || selectedAdmin?.email || '尚未选择母号' }}</strong><span>{{ selectedAdmin?.team_account_id || '选择后显示目标 Team ID' }}</span></div>
+        <label class="field"><span>登录及开通会话最长保留（分钟）</span><input v-model.number="settings.session_timeout_minutes" type="number" min="5" max="60" required /><small>出口 IP 变化或检测失败仅记录日志，继续执行；任务超时仍会停止，已提交订单可查询。</small></label>
+</div>
+          </section>
+        </div>
       </div>
-      <div class="panel-actions"><button class="btn primary" :disabled="busy || !settingsReady || catalogSelectionInvalid">保存 Pro 配置</button></div>
+      <footer class="config-savebar"><span>{{ busy ? '正在处理，请稍候…' : !settingsReady ? '正在读取配置…' : catalogSelectionInvalid ? '请在开通设置中检查套餐与国家' : '修改应用于后续任务，已有订单保留原供应商。' }}</span><button class="btn primary" :disabled="busy || !settingsReady || catalogSelectionInvalid"><Save :size="16"/>保存 Pro 配置</button></footer>
     </form>
 
     <template v-else-if="mode === 'cards'">
@@ -204,7 +267,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <div class="panel-title"><div><span>PAYMENT CARDS</span><h2>银行卡信息</h2><p>仅启用且未过期的卡可用于新开通订单。</p></div><button class="btn primary" :disabled="busy" @click="edit()">添加银行卡</button></div>
         <div class="table-shell"><table><thead><tr><th>名称</th><th>银行卡</th><th>已开通账号</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>
           <tr v-if="!rows.length"><td colspan="6" class="empty-cell">暂无银行卡</td></tr>
-          <tr v-for="card in rows" :key="card.id"><td>{{ card.name }}</td><td>•••• {{ card.last4 }}</td><td>{{card.opened_accounts||0}} / {{card.account_limit||3}}<small class="order-id">{{ card.max_accounts ? '单独设置' : '沿用全局' }}</small><small class="order-id">在途 {{card.pending_accounts||0}} · 剩余 {{card.remaining_accounts??0}}</small></td><td>{{ card.exp_year }}-{{ String(card.exp_month).padStart(2, '0') }}</td><td>{{ card.enabled ? '已启用' : '已禁用' }}</td><td><div class="row-actions"><button class="btn ghost compact" :disabled="busy" @click="toggle(card)">{{ card.enabled ? '禁用' : '启用' }}</button><button class="btn ghost compact" :disabled="busy" @click="edit(card)">编辑</button><button class="btn ghost compact danger-text" :disabled="busy" @click="remove(card)">删除</button></div></td></tr>
+          <tr v-for="card in rows" :key="card.id"><td>{{ card.name }}</td><td>•••• {{ card.last4 }}</td><td><CardAccountPreview :rows="associated(card)"><button class="btn ghost compact" @click="cardDetail=card">{{card.opened_accounts||0}} / {{card.account_limit||3}}</button></CardAccountPreview><small class="order-id">{{ card.max_accounts ? '单独设置' : card.source==='ejh'?'EJH 默认':'沿用全局' }}</small><small class="order-id">在途 {{card.pending_accounts||0}} · 剩余 {{card.remaining_accounts??0}}</small></td><td>{{ card.exp_year }}-{{ String(card.exp_month).padStart(2, '0') }}</td><td>{{ card.enabled ? '已启用' : '已禁用' }}</td><td><div class="row-actions"><button class="btn ghost compact" :disabled="busy" @click="toggle(card)">{{ card.enabled ? '禁用' : '启用' }}</button><button class="btn ghost compact" :disabled="busy" @click="edit(card)">编辑</button><button class="btn ghost compact danger-text" :disabled="busy" @click="remove(card)">删除</button></div></td></tr>
         </tbody></table></div>
         <Pagination :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
       </section>
@@ -245,6 +308,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
       </section>
       <form class="panel" @submit.prevent="queryOrders"><h2>按供应商订单 ID 查询</h2><label class="field"><span>订单 ID（每行一个，最多 50 个）</span><textarea v-model="queryIDs" rows="3" placeholder="填写供应商返回的 id，不是订单号 orderNo" required /></label><div class="panel-actions"><button class="btn primary" :disabled="busy">查询订单状态</button></div><div v-if="queryRows.length" class="table-shell"><table><thead><tr><th>订单 ID</th><th>套餐 / 国家</th><th>状态</th><th>结算 / 取消续费</th><th>原因</th></tr></thead><tbody><tr v-for="order in queryRows" :key="order.id"><td>{{ order.id }}</td><td>{{ proPlanName(order.planCode) }} · {{ paymentCountryLabel(order.country) }}<small v-if="order.planCode === 'codex_point'" class="order-id">购买点数：{{ order.creditQuantity || '未返回' }}</small></td><td>{{ payStatusName(order.status) }}</td><td>{{ payStatusName(order.settlementStatus) }} / {{ payStatusName(order.cancellationStatus) }}</td><td>{{ order.failureReason || '—' }}</td></tr></tbody></table></div></form>
     </template>
+    <details v-if="mode === 'settings'" class="config-runtime"><summary><CalendarClock :size="17"/><span>查看定时运行概况</span><ChevronRight :size="15"/></summary><ProSchedulePanel compact/></details>
   </div>
 </template>
 
@@ -267,4 +331,19 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 .filter-row { display: flex; gap: 10px; margin-bottom: 15px; }
 .filter-row input { max-width: 360px; }
 @media(max-width:800px) { .pay-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+.automation-config{border:1px solid var(--line);border-radius:18px;background:var(--surface);overflow:clip}
+.config-body .field{align-content:start}
+.config-heading{padding:26px 28px;display:flex;justify-content:space-between;align-items:center;gap:18px;border-bottom:1px solid var(--line)}
+.config-heading h2{font-size:23px;margin:6px 0}.config-heading p,.config-section-heading p{color:var(--muted);font-size:13px;line-height:1.7}
+.config-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:30px;white-space:nowrap;font-size:12px;color:var(--muted)}.config-badge>span{width:7px;height:7px;background:currentColor;border-radius:50%}.config-badge.enabled{color:var(--green-strong);background:var(--green-bg)}
+.config-workspace{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:540px}.config-nav{padding:20px 14px;border-right:1px solid var(--line);background:var(--bg-elevated)}
+.config-nav>button{display:flex;align-items:center;gap:12px;width:100%;padding:14px 12px;margin-bottom:6px;border:1px solid transparent;border-radius:10px;text-align:left;color:var(--muted);transition:background .15s}
+.config-nav>button:hover{background:var(--surface-2)}.config-nav>button.selected{background:var(--green-bg);color:var(--green-strong);border-color:color-mix(in srgb,var(--green) 20%,transparent)}.config-nav>button>span{flex:1}.config-nav strong{display:block;font-size:13px;color:var(--text)}.config-nav small{display:block;font-size:11px;margin-top:5px;color:var(--muted)}.config-nav-note{display:flex;gap:10px;padding:20px 12px;margin-top:20px;border-top:1px solid var(--line);color:var(--muted)}.config-nav-note svg{flex-shrink:0}.config-nav-note p{font-size:11px;line-height:1.8}
+.config-body{padding:28px 32px;min-width:0}.config-section-heading{margin-bottom:24px}.config-section-heading>span{color:var(--muted);font-size:11px}.config-section-heading h3{font-size:20px;margin:8px 0 5px}.config-body .settings-fields{max-width:none;gap:18px 22px}.config-body .field{margin:0}.config-body .field>span,.config-body .country-picker>label{font-size:12px}.config-body .field small{font-size:11px;line-height:1.7}.config-body .toggle-row{padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--bg-elevated)}.config-body .toggle-row small{font-size:11px;line-height:1.7}.config-body .toggle-row input:focus-visible+i{outline:2px solid var(--green);outline-offset:4px}
+.config-divider{padding-top:24px;margin-top:26px;border-top:1px solid var(--line)}.config-divider h4{font-size:14px;font-weight:650}.config-divider p{font-size:12px;color:var(--muted);margin:6px 0 18px;line-height:1.7}.config-callout{padding:14px 16px;margin:20px 0;color:var(--text-2);background:var(--blue-bg);border-radius:10px;font-size:12px;line-height:1.8}
+.config-savebar{position:sticky;bottom:0;display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 24px;border-top:1px solid var(--line);background:var(--surface);z-index:2}.config-savebar>span{font-size:12px;color:var(--muted)}.config-savebar .btn{flex-shrink:0}
+.config-runtime{border:1px solid var(--line);border-radius:12px;background:var(--surface)}.config-runtime>summary{display:flex;align-items:center;gap:10px;padding:18px 22px;cursor:pointer;font-size:13px}.config-runtime>summary>span{flex:1}.config-runtime[open]>summary>svg:last-child{transform:rotate(90deg)}.config-runtime :deep(.pro-schedule-panel){box-shadow:none;border-top:1px solid var(--line);border-radius:0 0 12px 12px}
+@media(max-width:1000px){.config-workspace{grid-template-columns:190px minmax(0,1fr)}.config-body{padding:24px}.config-body .settings-fields{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:720px){.config-workspace{display:block}.config-heading{padding:20px;align-items:flex-start;flex-direction:column}.config-nav{border-right:0;border-bottom:1px solid var(--line);display:flex;gap:6px;overflow-x:auto;padding:10px}.config-nav>button{width:auto;min-width:130px;margin:0;flex-shrink:0;padding:10px}.config-nav small,.config-nav>button>svg:last-child,.config-nav-note{display:none}.config-body{padding:20px}.config-savebar{padding:14px;align-items:flex-end}.config-savebar>span{font-size:11px}.config-body .toggle-row{gap:12px}}
 </style>

@@ -12,6 +12,7 @@ import MailManagementView from './components/MailManagementView.vue'
 import SmsManagementView from './components/SmsManagementView.vue'
 import OpenAIAccountsView from './components/OpenAIAccountsView.vue'
 import ProManagementView from './components/ProManagementView.vue'
+import EJHManagementView from './components/EJHManagementView.vue'
 import ProxiesView from './components/ProxiesView.vue'
 import SettingsView from './components/SettingsView.vue'
 import StatusPill from './components/StatusPill.vue'
@@ -20,6 +21,7 @@ import LoginView from './components/LoginView.vue'
 
 const nav = [
   { id: 'pro', label: 'Pro 管理', icon: Crown, group: '账号' },
+  { id: 'ejh', label: 'EJH 卡台', icon: Crown, group: '卡片与回款' },
   { id: 'space-merge', label: '空间合并', icon: ArrowLeftRight, group: '空间合并' },
   { id: 'mail', label: '邮件管理', icon: Inbox, group: '账号流水线' },
   { id: 'free', label: 'Team 轮转', icon: Waypoints, group: '账号流水线' },
@@ -42,6 +44,12 @@ const freeAccounts = ref([])
 const proAccounts = ref([])
 const referenceLoaded = reactive({ admins: false, proxies: false, pro: false })
 const teamEntryEmail = ref('')
+const ejhEntry = ref(null)
+function openEJHCard(entry) {
+  if (!entry?.cardID || !entry?.email) return
+  ejhEntry.value = { ...entry }
+  selectTab('ejh')
+}
 const loadingError = ref('')
 const health = ref(true)
 const jobs = reactive({ full: false, enter: false, transfer: false, kick: false })
@@ -146,7 +154,8 @@ onMounted(checkAuth)
 
     <main class="app-main">
       <div v-if="loadingError" class="global-alert"><strong>数据加载失败</strong><span>{{ loadingError }}</span><button type="button" @click="loadingError = ''; load()">重试</button></div>
-      <ProManagementView v-if="settings && current === 'pro'" :accounts="proAccounts" :admin-accounts="adminAccounts" :default-page-size="settings.default_page_size || 10" @reload="syncProAccounts" />
+      <ProManagementView v-if="settings && current === 'pro'" :accounts="proAccounts" :admin-accounts="adminAccounts" :default-page-size="settings.default_page_size || 10" @reload="syncProAccounts" @open-ejh-card="openEJHCard" />
+      <EJHManagementView v-if="settings && current === 'ejh'" :entry="ejhEntry" @entry-applied="ejhEntry=null" />
       <template v-if="spaceMergeVisited">
         <WorkflowView v-show="current === 'full'" mode="full" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />
         <WorkflowView v-show="current === 'enter'" mode="enter" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />

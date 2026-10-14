@@ -37,6 +37,8 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 		}
 	}
 	v.QuotaEnabled, v.AutoMergeEnabled = input.QuotaEnabled, input.AutoMergeEnabled
+	v.EJHAutoOpen, v.EJHTemplateID, v.EJHDailyOpenLimit, v.EJHDailyAmountLimit = input.EJHAutoOpen, input.EJHTemplateID, input.EJHDailyOpenLimit, input.EJHDailyAmountLimit
+	v.ForceMergeEnabled, v.ForceMergeMinutes = input.ForceMergeEnabled, input.ForceMergeMinutes
 	v.ScheduledEnabled, v.MaxUnmerged, v.ScheduleIntervalSeconds = input.ScheduledEnabled, input.MaxUnmerged, input.ScheduleIntervalSeconds
 	v.QuotaUsedThreshold, v.QuotaCheckIntervalSeconds = input.QuotaUsedThreshold, input.QuotaCheckIntervalSeconds
 	v.TargetAdminID, v.TargetSeatType = strings.TrimSpace(input.TargetAdminID), input.TargetSeatType

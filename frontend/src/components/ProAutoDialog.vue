@@ -15,7 +15,7 @@ const canStart=computed(()=>!active.value&&state.value.status!=='completed'&&!st
 let timer,generation=0
 const path=()=>`/api/pro-accounts/${encodeURIComponent(email.value)}/auto-pro`
 async function loadCards(){const data=await api(`/api/gptpay/cards?page=${page.value}&page_size=${pageSize.value}&enabled=true`);cards.value=data.items||[];total.value=data.total||0;cardID.value=cards.value[0]?.id||''}
-async function open(account){if(busy.value)return;clearTimeout(timer);generation++;email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings'),loadCards()]);settings.value={...config,quota_used_threshold:pro.quota_used_threshold};state.value=current||{}}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
+async function open(account){if(busy.value)return;clearTimeout(timer);generation++;email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings'),loadCards()]);settings.value={...config,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open};state.value=current||{}}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
 function close(){if(busy.value)return;opened.value=false;generation++;clearTimeout(timer)}
 function schedule(){clearTimeout(timer);if(opened.value&&(active.value||manualRunning.value))timer=setTimeout(refresh,state.value.status==='running'||manualRunning.value?1500:5000)}
 async function refresh(){const gen=generation;try{const value=await api(path());if(gen!==generation)return;state.value=value;emit('updated')}catch(e){if(gen===generation)error.value=e.message}finally{if(gen===generation)schedule()}}
@@ -36,11 +36,11 @@ defineExpose({open})
 <p v-if="state.error" class="danger-text">{{ state.error }}</p><p v-if="error" role="alert" class="danger-text">{{ error }}</p>
 <template v-if="canStart"><p>供应商：{{ payProviderName(settings.provider) }}</p><p>套餐：{{ proPlanName(settings.plan_code) }}；7 天已用额度达到 {{ settings.quota_used_threshold || 100 }}% 后合并。</p>
 <p>开通国家：{{ paymentCountryLabel(settings.country) }}<span v-if="settings.plan_code === 'codex_point'">；购买点数：{{ settings.credit_quantity }}</span></p>
-<label class="field"><span>开通银行卡</span><select v-model="cardID" :disabled="busy"><option value="">请选择银行卡</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
+<label class="field"><span>开通银行卡</span><select v-model="cardID" :disabled="busy"><option value="">{{settings.ejh_auto_open?'自动选卡（无卡时按配置从 EJH 开卡）':'请选择银行卡'}}</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
 <Pagination v-if="total>10" :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
 <p class="muted">首次登录后保留会话等待开通，成功后沿用该会话取得新 RT/AT，再推送配置的下游。关闭窗口不影响后台流程。</p></template>
 <p v-if="state.order_id&&!active&&!resumable&&state.status!=='completed'">请先在 GPTPay 供应商页面核实原订单；原会话已释放时，请使用单项按钮处理后续步骤。</p>
-<div class="panel-actions"><button v-if="active" class="btn ghost danger-text" :disabled="busy" @click="stop">停止全自动</button><button v-if="resumable" class="btn primary" :disabled="busy" @click="start">继续后续流程</button><button v-if="canStart" class="btn primary" :disabled="busy||!cardID||!settings.key_present" @click="start">确认全自动开通 {{ proPlanName(settings.plan_code) }}</button><button class="btn ghost" :disabled="busy" @click="close">关闭</button></div>
+<div class="panel-actions"><button v-if="active" class="btn ghost danger-text" :disabled="busy" @click="stop">停止全自动</button><button v-if="resumable" class="btn primary" :disabled="busy" @click="start">继续后续流程</button><button v-if="canStart" class="btn primary" :disabled="busy||(!cardID&&!settings.ejh_auto_open)||!settings.key_present" @click="start">确认全自动开通 {{ proPlanName(settings.plan_code) }}</button><button class="btn ghost" :disabled="busy" @click="close">关闭</button></div>
 </section></div></Teleport></template>
 <style scoped>
 .pro-auto-dialog{width:min(720px,calc(100vw - 32px));max-height:90vh;overflow:auto;}

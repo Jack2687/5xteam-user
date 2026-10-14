@@ -296,6 +296,9 @@ func (s *Store) CreateGPTPayOrder(v gptpay.Order, snapshot gptpay.Snapshot) erro
 	}
 	defer tx.Rollback()
 	key := proCardKey(snapshot.Input.Number)
+	if err = s.validateIssuerCard(tx, key); err != nil {
+		return err
+	}
 	limit, err := proCardLimit(tx, key)
 	if err != nil {
 		return err
@@ -329,6 +332,9 @@ func (s *Store) CreateGPTPayOrder(v gptpay.Order, snapshot gptpay.Snapshot) erro
 	if _, err = tx.Exec(`DELETE FROM pro_card_reservations WHERE email=?`, v.Email); err != nil {
 		return err
 	}
+	if err = ejhSaveCaseTx(tx, v); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
@@ -346,6 +352,9 @@ func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
 		return err
 	}
 	if _, err = tx.Exec(`UPDATE pro_card_usage SET status=? WHERE order_id=?`, v.Status, v.ID); err != nil {
+		return err
+	}
+	if err = ejhSaveCaseTx(tx, v); err != nil {
 		return err
 	}
 	return tx.Commit()

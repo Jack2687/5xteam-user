@@ -21,6 +21,10 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	v := input.Automation
+	if err := s.validateEJHAutomation(v); err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
 	if v.ScheduledEnabled && (v.MaxUnmerged < 1 || v.MaxUnmerged > 10000 || v.ScheduleIntervalSeconds < 10 || v.ScheduleIntervalSeconds > 86400 || strings.TrimSpace(v.TargetAdminID) == "") {
 		writeAPI(w, 400, nil, "定时开通需设置目标母号、最大未合并数（1～10000）和检查间隔（10～86400 秒）")
 		return

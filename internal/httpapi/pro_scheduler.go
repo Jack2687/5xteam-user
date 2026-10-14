@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chapt-space-user/internal/gptpay"
 	"chapt-space-user/internal/model"
 	"context"
 	"encoding/json"
@@ -206,11 +207,16 @@ func (s *Server) tickProSchedule(force bool) {
 	for _, email := range emails {
 		// Recheck after every startup, including manual orders competing for cards.
 		cards, _, e := s.store.GPTPayCards(1, 0, true)
-		if e != nil || len(cards) == 0 {
+		if e != nil || (len(cards) == 0 && !cfg.EJHAutoOpen) {
 			run.Message = "银行卡无剩余可用名额"
 			break
 		}
-		card := cards[0]
+		// Empty card ID delegates buying to startProAutomation, after its
+		// per-account lock and task/credential checks have succeeded.
+		var card gptpay.Card
+		if len(cards) > 0 {
+			card = cards[0]
+		}
 		task := model.ProScheduleTask{Email: email, CardID: card.ID, Status: "queued"}
 		run.Tasks = append(run.Tasks, task)
 		if e = s.store.SaveProScheduleRun(run); e != nil {

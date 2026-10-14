@@ -207,6 +207,7 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 	if normalizeMailManagementScope(p.ManagementScope) != "pro" {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
+	wasConfirmed := p.TransferStatus == "completed" && p.ProMergeConfirmedSource != ""
 	if mutate != nil {
 		mutate(&p)
 	}
@@ -216,8 +217,24 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 	if err != nil {
 		return p, err
 	}
-	_, err = s.db.Exec("UPDATE mail_accounts SET profile=?,updated_at=? WHERE email=?", string(encoded), formatTime(p.UpdatedAt), email)
-	return p, err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return p, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE mail_accounts SET profile=?,updated_at=? WHERE email=?", string(encoded), formatTime(p.UpdatedAt), email); err != nil {
+		return p, err
+	}
+	if !wasConfirmed && p.TransferStatus == "completed" && p.ProMergeConfirmedSource != "" {
+		at := p.UpdatedAt
+		if p.SpaceMergedAt != nil {
+			at = *p.SpaceMergedAt
+		}
+		if err = ejhMarkRequestedTx(tx, p.Email, p.ProAuto.OrderID, p.ProMergeConfirmedSource, at); err != nil {
+			return p, err
+		}
+	}
+	return p, tx.Commit()
 }
 
 func (s *Store) RecoverProWorkflows() error {

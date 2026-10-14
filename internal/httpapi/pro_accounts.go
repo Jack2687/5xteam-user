@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"chapt-space-user/internal/ejh"
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/store"
 	"chapt-space-user/internal/sub2"
@@ -23,6 +24,9 @@ import (
 )
 
 type proAccountListItem struct {
+	FinancialCases     []ejh.Case `json:"financial_cases"`
+	PushElapsedMinutes int64      `json:"push_elapsed_minutes"`
+	ForceMergeDeadline *time.Time `json:"force_merge_deadline,omitempty"`
 	model.MailAccountProfile
 	ActivationCard *store.ProActivationCard `json:"activation_card,omitempty"`
 	StageProgress  model.ProStageDisplay    `json:"pro_stage_progress"`
@@ -42,8 +46,31 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 		return nil, err
 	}
 	result := make([]proAccountListItem, 0, len(items))
+	cases, err := s.store.EJHCasesForEmails(emails)
+	if err != nil {
+		return nil, err
+	}
+	byEmail := map[string][]ejh.Case{}
+	for _, c := range cases {
+		byEmail[strings.ToLower(c.Email)] = append(byEmail[strings.ToLower(c.Email)], c)
+	}
+	config, _, _, err := s.store.ProSettings()
+	if err != nil {
+		return nil, err
+	}
 	for _, item := range items {
 		row := proAccountListItem{MailAccountProfile: item, StageProgress: item.ProStages()}
+		row.FinancialCases = byEmail[strings.ToLower(item.Email)]
+		if row.FinancialCases == nil {
+			row.FinancialCases = []ejh.Case{}
+		}
+		if item.ProPushStartedAt != nil {
+			row.PushElapsedMinutes = max(0, int64(time.Since(*item.ProPushStartedAt)/time.Minute))
+			if config.ForceMergeEnabled {
+				deadline := item.ProPushStartedAt.Add(time.Duration(config.ForceMergeMinutes) * time.Minute)
+				row.ForceMergeDeadline = &deadline
+			}
+		}
 		row.ProAuto.Error = row.ProAuto.DisplayError()
 		if order, ok := orders[strings.ToLower(item.Email)]; ok && item.ProAuto.ID == "" && item.ProManualStages["recharge"].ID == "" {
 			progress := proPaymentStage(order)
@@ -637,6 +664,8 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	previousProvider := current.Provider
 	input.ScheduledEnabled, input.MaxUnmerged, input.ScheduleIntervalSeconds = current.ScheduledEnabled, current.MaxUnmerged, current.ScheduleIntervalSeconds
+	input.EJHAutoOpen, input.EJHTemplateID, input.EJHDailyOpenLimit, input.EJHDailyAmountLimit = current.EJHAutoOpen, current.EJHTemplateID, current.EJHDailyOpenLimit, current.EJHDailyAmountLimit
+	input.ForceMergeEnabled, input.ForceMergeMinutes = current.ForceMergeEnabled, current.ForceMergeMinutes
 	now := time.Now()
 	input.LastQuotaSweepAt = current.LastQuotaSweepAt
 	if input.QuotaEnabled {
@@ -761,7 +790,15 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 		}
 		s.auditProEvent(firstProProfile(out, profile), "push", status, v.Provider, message, details)
 	}()
-	_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.PushStatus, p.ProLastError = "running", "" })
+	if _, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		p.PushStatus, p.ProLastError = "running", ""
+		if p.ProPushStartedAt == nil {
+			now := time.Now()
+			p.ProPushStartedAt = &now
+		}
+	}); err != nil {
+		return profile, err
+	}
 	if v.Provider == "vm2api" {
 		return s.pushProVM(ctx, profile, credentials)
 	}

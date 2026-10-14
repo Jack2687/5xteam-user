@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -71,6 +72,20 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		if !s.validSession(r) {
 			writeAPI(w, http.StatusUnauthorized, nil, "请先登录")
 			return
+		}
+		// Financial endpoints must reject cross-origin cookie requests, including
+		// same-site sibling origins that SameSite=Lax alone does not block.
+		if strings.HasPrefix(path, "/api/ejh/") && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			origin := r.Header.Get("Origin")
+			u, err := url.Parse(origin)
+			if r.Header.Get("Sec-Fetch-Site") == "cross-site" || (origin != "" && (err != nil || u.Host != r.Host || (u.Scheme != "http" && u.Scheme != "https"))) {
+				writeAPI(w, http.StatusForbidden, nil, "拒绝跨站资金操作")
+				return
+			}
+			if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+				writeAPI(w, http.StatusUnsupportedMediaType, nil, "卡台操作只接受 JSON")
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -41,6 +41,11 @@ type Settings struct {
 }
 
 type Card struct {
+	Source            string    `json:"source,omitempty"`
+	IssuerOrderNo     string    `json:"issuer_order_no,omitempty"`
+	IssuerStatus      string    `json:"issuer_status,omitempty"`
+	IssuerLocked      bool      `json:"issuer_locked,omitempty"`
+	IssuerEnd         string    `json:"issuer_end,omitempty"`
 	MaxAccounts       *int      `json:"max_accounts,omitempty"`
 	OpenedAccounts    int       `json:"opened_accounts"`
 	PendingAccounts   int       `json:"pending_accounts"`

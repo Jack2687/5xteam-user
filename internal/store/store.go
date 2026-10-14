@@ -92,6 +92,14 @@ func Open(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := s.initializeEJH(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.EJHBackfillCases(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := s.initializeProScheduler(); err != nil {
 		_ = db.Close()
 		return nil, err

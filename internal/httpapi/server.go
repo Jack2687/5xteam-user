@@ -25,6 +25,7 @@ import (
 )
 
 type Server struct {
+	ejh                       ejhRuntime
 	downstreamMu              sync.Mutex
 	recovery                  seatRecoveryRuntime
 	qualityRunMu              sync.Mutex
@@ -165,6 +166,7 @@ func (s *Server) Close() {
 		return
 	}
 	s.auditCloseOnce.Do(func() {
+		s.stopEJH()
 		s.stopSeatRecovery()
 		s.qualityMu.Lock()
 		s.qualityClosed = true
@@ -190,6 +192,7 @@ func (s *Server) Close() {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.ejhRoutes(mux)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) { writeAPI(w, 200, map[string]string{"status": "ok"}, "") })
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPI(w, 200, map[string]string{"status": "ready"}, "")
@@ -392,6 +395,7 @@ func (s *Server) Handler() http.Handler {
 
 // StartBackground runs periodic Free account quota checks until ctx is done.
 func (s *Server) StartBackground(ctx context.Context) {
+	s.startEJH(ctx)
 	s.startSeatRecoveryMonitor(ctx)
 	s.startGPTPayOrderMonitor(ctx)
 	go s.monitorHeroActivations(ctx)

@@ -1,0 +1,71 @@
+package ejh
+
+import "time"
+
+type Operation struct {
+	ID        string    `json:"id"`
+	Method    string    `json:"method"`
+	CardID    string    `json:"card_id"`
+	OrderNo   string    `json:"order_no"`
+	Status    string    `json:"status"`
+	Error     string    `json:"error"`
+	Amount    string    `json:"amount"`
+	Currency  string    `json:"currency"`
+	Automatic bool      `json:"automatic"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Request   OpenInput `json:"request"`
+	Result    *Card     `json:"result,omitempty"`
+	Note      string    `json:"note"`
+}
+type CardRecord struct {
+	ID               string     `json:"id"`
+	Remote           Card       `json:"remote"`
+	Balance          string     `json:"balance"`
+	BalanceAt        *time.Time `json:"balance_at,omitempty"`
+	BalanceError     string     `json:"balance_error,omitempty"`
+	BalanceAttemptAt *time.Time `json:"balance_attempt_at,omitempty"`
+	SyncedAt         time.Time  `json:"synced_at"`
+	Error            string     `json:"error"`
+}
+type TradeRecord struct {
+	ID              string     `json:"id"`
+	CardID          string     `json:"card_id"`
+	Trade           Trade      `json:"trade"`
+	OrderID         string     `json:"payment_order_id"`
+	OriginalTradeID string     `json:"original_trade_id"`
+	Confirmed       bool       `json:"confirmed"`
+	Amount          string     `json:"confirmed_amount"`
+	Currency        string     `json:"confirmed_currency"`
+	Evidence        string     `json:"evidence"`
+	Source          string     `json:"source"`
+	SyncedAt        time.Time  `json:"synced_at"`
+	ConfirmedAt     *time.Time `json:"confirmed_at,omitempty"`
+}
+type Case struct {
+	EJHCardID       string            `json:"ejh_card_id,omitempty"`
+	OriginalTradeID string            `json:"original_trade_id"`
+	ID              string            `json:"id"`
+	Email           string            `json:"email"`
+	CardID          string            `json:"card_id"`
+	CardName        string            `json:"card_name"`
+	Last4           string            `json:"last4"`
+	Plan            string            `json:"plan"`
+	Provider        string            `json:"provider"`
+	PaymentStatus   string            `json:"payment_status"`
+	CreatedAt       time.Time         `json:"created_at"`
+	OpenedAt        *time.Time        `json:"opened_at,omitempty"`
+	RequestedAt     *time.Time        `json:"requested_at,omitempty"`
+	RequestSource   string            `json:"request_source"`
+	Deleted         bool              `json:"deleted"`
+	State           string            `json:"state"`
+	Returns         []TradeRecord     `json:"returns"`
+	Amounts         map[string]string `json:"amounts"`
+	Reversals       int               `json:"reversals"`
+	Refunds         int               `json:"refunds"`
+}
+type SyncState struct {
+	LastSuccess *time.Time `json:"last_success,omitempty"`
+	LastAttempt *time.Time `json:"last_attempt,omitempty"`
+	Error       string     `json:"error"`
+}

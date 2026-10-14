@@ -53,3 +53,41 @@ func TestProActivationCardsSuccessfulSnapshot(t *testing.T) {
 		t.Fatal("empty page lookup failed")
 	}
 }
+
+func TestProActivationCardEJHCanonicalNavigation(t *testing.T) {
+	s := transferStore(t)
+	canonical := ejhFixtureCard(t, s)
+	now := time.Now()
+	for i, item := range []struct{ id, email, card, number string }{
+		{"direct", "direct@example.com", canonical.ID, "4242424242424242"},
+		{"alias", "alias@example.com", "historical-alias", "4242424242424242"},
+		{"ordinary", "ordinary@example.com", "ordinary-card", "5555555555554242"},
+		{"old-ejh", "latest@example.com", canonical.ID, "4242424242424242"},
+		{"new-ordinary", "latest@example.com", "ordinary-card", "5555555555554242"},
+	} {
+		snapshot := gptpay.Snapshot{}
+		snapshot.Input.Number = item.number
+		order := gptpay.Order{ID: item.id, Email: item.email, CardID: item.card, CardName: "same card label", CardLast4: "4242", Status: "success", CreatedAt: now.Add(time.Duration(i) * time.Minute)}
+		if err := s.CreateGPTPayOrder(order, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cards, err := s.ProActivationCards([]string{"direct@example.com", "alias@example.com", "ordinary@example.com", "latest@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, email := range []string{"direct@example.com", "alias@example.com"} {
+		if cards[email].EJHCardID != canonical.ID {
+			t.Fatalf("lost canonical identity: %s %+v", email, cards[email])
+		}
+	}
+	for _, email := range []string{"ordinary@example.com", "latest@example.com"} {
+		if cards[email].EJHCardID != "" {
+			t.Fatalf("ordinary card falsely navigable: %s %+v", email, cards[email])
+		}
+	}
+	cases, err := s.EJHCasesForEmails([]string{"alias@example.com"})
+	if err != nil || len(cases) != 1 || cases[0].CardID != "historical-alias" || cases[0].EJHCardID != canonical.ID {
+		t.Fatalf("case association: %+v %v", cases, err)
+	}
+}

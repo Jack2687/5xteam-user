@@ -1,0 +1,693 @@
+package httpapi
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/big"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"chapt-space-user/internal/ejh"
+	"chapt-space-user/internal/gptpay"
+	"chapt-space-user/internal/model"
+	"chapt-space-user/internal/store"
+)
+
+type ejhRuntime struct {
+	lifecycle sync.Mutex
+	mu        sync.Mutex
+	client    *ejh.Client
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+}
+
+func (s *Server) ejhClientLocked() *ejh.Client {
+	if s.ejh.client == nil {
+		s.ejh.client = ejh.New()
+	}
+	return s.ejh.client
+}
+func (s *Server) ejhConfig() (ejh.Settings, string, error) {
+	c, k, e := s.store.EJHSettings()
+	if e != nil {
+		return c, k, e
+	}
+	if !c.Enabled || !c.SecretPresent {
+		return c, k, fmt.Errorf("请先在 EJH 卡台保存并启用接口配置")
+	}
+	return c, k, nil
+}
+func (s *Server) ejhRoutes(m *http.ServeMux) {
+	m.HandleFunc("GET /api/ejh/settings", s.getEJHSettings)
+	m.HandleFunc("PUT /api/ejh/settings", s.saveEJHSettings)
+	m.HandleFunc("POST /api/ejh/test", s.testEJH)
+	m.HandleFunc("POST /api/ejh/balance", s.testEJH)
+	m.HandleFunc("GET /api/ejh/dashboard", s.ejhDashboard)
+	m.HandleFunc("POST /api/ejh/sync", s.syncEJH)
+	m.HandleFunc("POST /api/ejh/open", s.openEJH)
+	m.HandleFunc("POST /api/ejh/cards/{id}/action", s.ejhCardAction)
+	m.HandleFunc("POST /api/ejh/operations/{id}/resolve", s.resolveEJHOperation)
+	m.HandleFunc("PUT /api/ejh/trades/{id}/match", s.matchEJHTrade)
+	m.HandleFunc("POST /api/ejh/trades/{id}/unmatch", s.unmatchEJHTrade)
+}
+func (s *Server) getEJHSettings(w http.ResponseWriter, r *http.Request) {
+	c, _, e := s.store.EJHSettings()
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	writeAPI(w, 200, c, "")
+}
+func (s *Server) saveEJHSettings(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ejh.Settings
+		Secret string `json:"app_secret"`
+	}
+	if decodeJSON(w, r, &in, 256<<10) != nil {
+		return
+	}
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	c, e := s.store.SaveEJHSettings(in.Settings, in.Secret)
+	if e != nil {
+		writeAPI(w, 400, nil, e.Error())
+		return
+	}
+	writeAPI(w, 200, c, "")
+}
+func (s *Server) testEJH(w http.ResponseWriter, r *http.Request) {
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	c, k, e := s.ejhConfig()
+	if e != nil {
+		writeAPI(w, 400, nil, e.Error())
+		return
+	}
+	var out struct {
+		AppKey   string `json:"appKey"`
+		Balances []struct {
+			Currency string `json:"currency"`
+			Name     string `json:"currencyName"`
+			Balance  string `json:"balance"`
+		} `json:"abroadList"`
+	}
+	if e = s.ejhClientLocked().Call(r.Context(), c, k, "account.balance.info", map[string]any{}, &out); e != nil {
+		writeAPI(w, 502, nil, e.Error())
+		return
+	}
+	if out.Balances == nil {
+		writeAPI(w, 502, nil, "卡台未返回账户余额，保留上次查询结果")
+		return
+	}
+	seen := map[string]bool{}
+	for _, b := range out.Balances {
+		_, err := ejh.Money(strings.TrimPrefix(b.Balance, "-"))
+		if err != nil || !ejh.ValidCurrency(b.Currency) || seen[b.Currency] {
+			writeAPI(w, 502, nil, "卡台余额或币种无效，保留上次查询结果")
+			return
+		}
+		seen[b.Currency] = true
+	}
+	if e = s.store.EJHPut("balance", "latest", map[string]any{"data": out, "at": time.Now()}); e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	writeAPI(w, 200, out, "")
+}
+func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
+	cards, e := store.EJHRecords[ejh.CardRecord](s.store, "card")
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	ops, e := store.EJHRecords[ejh.Operation](s.store, "operation")
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	trades, e := store.EJHRecords[ejh.TradeRecord](s.store, "trade")
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	cases, e := s.store.EJHCases()
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	type row struct {
+		ejh.CardRecord
+		Local *gptpay.Card `json:"local,omitempty"`
+	}
+	rows := []row{}
+	for _, c := range cards {
+		c.Remote.Number = maskEJH(c.Remote.Number)
+		c.Remote.CVV = ""
+		v := row{CardRecord: c}
+		if local, _, e := s.store.GPTPayCard(c.ID); e == nil {
+			v.Local = &local
+		}
+		rows = append(rows, v)
+	}
+	for i := range trades {
+		trades[i].Trade.Number = maskEJH(trades[i].Trade.Number)
+	}
+	for i := range ops {
+		if ops[i].Result != nil {
+			v := *ops[i].Result
+			v.Number = maskEJH(v.Number)
+			v.CVV = ""
+			ops[i].Result = &v
+		}
+	}
+	var syncState ejh.SyncState
+	_ = s.store.EJHGet("sync", "latest", &syncState)
+	var balance any
+	_ = s.store.EJHGet("balance", "latest", &balance)
+	audit, e := store.EJHRecords[map[string]any](s.store, "match_audit")
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	for _, a := range audit {
+		for _, key := range []string{"before", "after"} {
+			if obj, ok := a[key].(map[string]any); ok {
+				if t, ok := obj["trade"].(map[string]any); ok {
+					delete(t, "cardNo")
+				}
+			}
+		}
+	}
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "audit": audit, "server_time": time.Now()}, "")
+}
+func maskEJH(n string) string {
+	if len(n) > 4 {
+		return "**** " + n[len(n)-4:]
+	}
+	return "****"
+}
+func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInput, automatic bool) (ejh.Operation, error) {
+	c, k, e := s.ejhConfig()
+	if e != nil {
+		return ejh.Operation{}, e
+	}
+	if e = ejh.ValidateOpen(input, time.Now()); e != nil {
+		return ejh.Operation{}, e
+	}
+	var prior ejh.Operation
+	if err := s.store.EJHGet("operation", id, &prior); err == nil {
+		old, _ := json.Marshal(prior.Request)
+		next, _ := json.Marshal(input)
+		if string(old) != string(next) || prior.Method != "open" {
+			return prior, fmt.Errorf("请求编号已用于其他参数")
+		}
+		return prior, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return prior, fmt.Errorf("无法核实既有操作，未提交开卡: %w", err)
+	}
+	ops, e := store.EJHRecords[ejh.Operation](s.store, "operation")
+	if e != nil {
+		return prior, e
+	}
+	for _, o := range ops {
+		if o.Method == "open" && (o.Status == "submitting" || o.Status == "unknown" || o.Status == "import_pending") {
+			return prior, fmt.Errorf("存在待核实开卡操作，请先核对操作记录，禁止重复扣款")
+		}
+	}
+	op := ejh.Operation{ID: id, Method: "open", Status: "submitting", Amount: input.CardAmount, Currency: input.CardCurrency, Automatic: automatic, CreatedAt: time.Now(), UpdatedAt: time.Now(), Request: input}
+	if e = s.store.EJHBeginOperation(op); e != nil {
+		return op, e
+	}
+	var card ejh.Card
+	e = s.ejhClientLocked().Call(ctx, c, k, "card.open.info", input, &card)
+	op.UpdatedAt = time.Now()
+	if e != nil {
+		op.Status = "unknown"
+		op.Error = e.Error()
+		var apiErr *ejh.APIError
+		if errors.As(e, &apiErr) && definiteEJHReject(apiErr.Code) {
+			op.Status = "failed"
+		}
+	} else {
+		op.OrderNo = card.OrderNo
+		op.Result = &card
+		op.Status = "import_pending"
+		if e = s.store.EJHPut("operation", id, op); e != nil {
+			return op, e
+		}
+		local, ie := s.store.ImportEJHCard(card, true)
+		if ie != nil {
+			op.Error = ie.Error()
+		} else {
+			op.CardID = local.ID
+			op.Status = "completed"
+		}
+	}
+	if saveErr := s.store.EJHPut("operation", id, op); saveErr != nil {
+		return op, saveErr
+	}
+	return op, nil
+}
+func definiteEJHReject(code string) bool {
+	switch code {
+	case "000007", "000008", "100002", "100003", "100004", "100005", "100006", "100007", "100009", "100010", "100011", "100012", "100013", "100016", "100017", "100018", "100019", "100022", "100023", "100024", "100029", "800003", "800005", "800009":
+		return true
+	}
+	return false
+}
+func (s *Server) openEJH(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID    string        `json:"request_id"`
+		Input ejh.OpenInput `json:"input"`
+	}
+	if decodeJSON(w, r, &in, 32<<10) != nil {
+		return
+	}
+	if !gptPayRequestID.MatchString(in.ID) {
+		writeAPI(w, 400, nil, "请求编号无效")
+		return
+	}
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	op, e := s.ejhOpenLocked(r.Context(), in.ID, in.Input, false)
+	if e != nil {
+		writeAPI(w, 400, nil, e.Error())
+		return
+	}
+	op.Result = nil
+	writeAPI(w, 200, op, "")
+}
+func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Action  string `json:"action"`
+		Amount  string `json:"amount"`
+		ID      string `json:"request_id"`
+		Confirm bool   `json:"confirm"`
+	}
+	if decodeJSON(w, r, &in, 8<<10) != nil {
+		return
+	}
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	c, k, e := s.ejhConfig()
+	if e != nil {
+		writeAPI(w, 400, nil, e.Error())
+		return
+	}
+	var card ejh.CardRecord
+	if e = s.store.EJHGet("card", r.PathValue("id"), &card); e != nil {
+		writeAPI(w, 404, nil, "卡片不存在")
+		return
+	}
+	data := map[string]any{"orderNo": card.Remote.OrderNo}
+	switch in.Action {
+	case "details", "refresh":
+		var remote ejh.Card
+		e = s.ejhClientLocked().Call(r.Context(), c, k, "card.query.info", data, &remote)
+		if e == nil && remote.OrderNo != card.Remote.OrderNo {
+			e = fmt.Errorf("卡台返回订单号不一致，未更新卡片")
+		}
+		if e == nil {
+			_, e = s.store.ImportEJHCard(remote, false)
+		}
+		if e != nil {
+			writeAPI(w, 502, nil, e.Error())
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		if in.Action == "refresh" {
+			remote.Number = maskEJH(remote.Number)
+			remote.CVV = ""
+		}
+		writeAPI(w, 200, remote, "")
+		return
+	case "balance":
+		var out struct {
+			Balance string `json:"balance"`
+		}
+		e = s.ejhClientLocked().Call(r.Context(), c, k, "card.balance.info", data, &out)
+		if e == nil {
+			_, e = ejh.Money(strings.TrimPrefix(out.Balance, "-"))
+		}
+		now := time.Now()
+		card.BalanceAttemptAt = &now
+		if e == nil {
+			card.Balance, card.BalanceAt = out.Balance, &now
+			card.BalanceError = ""
+		} else {
+			card.BalanceError = e.Error()
+		}
+		if saveErr := s.store.EJHPut("card", card.ID, card); saveErr != nil {
+			writeAPI(w, 500, nil, "余额查询记录保存失败")
+			return
+		}
+		if e != nil {
+			writeAPI(w, 502, nil, e.Error())
+			return
+		}
+		writeAPI(w, 200, out, "")
+		return
+	case "increase", "cancel":
+	default:
+		writeAPI(w, 400, nil, "操作不可用；供应商冻结、解冻尚未开放")
+		return
+	}
+	if !in.Confirm || !gptPayRequestID.MatchString(in.ID) {
+		writeAPI(w, 400, nil, "资金操作需要确认和请求编号")
+		return
+	}
+	if in.Action == "increase" {
+		if e = ejh.Positive(in.Amount); e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+		data["cardAmount"] = in.Amount
+	}
+	var previous ejh.Operation
+	if err := s.store.EJHGet("operation", in.ID, &previous); err == nil {
+		if previous.Method != in.Action || previous.CardID != card.ID || previous.Amount != in.Amount {
+			writeAPI(w, 409, nil, "请求编号已被其他操作占用")
+			return
+		}
+		previous.Result = nil
+		writeAPI(w, 200, previous, "")
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		writeAPI(w, 500, nil, "无法核实既有操作，未提交资金操作")
+		return
+	}
+	ops, e := store.EJHRecords[ejh.Operation](s.store, "operation")
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	for _, o := range ops {
+		if o.CardID == card.ID && (o.Status == "unknown" || o.Status == "submitting") {
+			writeAPI(w, 409, nil, "该卡有待确认操作，请先核对，禁止重复提额或销卡")
+			return
+		}
+	}
+	op := ejh.Operation{ID: in.ID, Method: in.Action, CardID: card.ID, OrderNo: card.Remote.OrderNo, Amount: in.Amount, Currency: card.Remote.CardCurrency, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if e = s.store.EJHBeginOperation(op); e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	method := "card.change.info"
+	if in.Action == "cancel" {
+		method = "card.cancel.info"
+	}
+	var out struct {
+		OrderNo string `json:"orderNo"`
+		Status  string `json:"status"`
+		Balance string `json:"billAmount"`
+	}
+	e = s.ejhClientLocked().Call(r.Context(), c, k, method, data, &out)
+	op.Status = "completed"
+	if e != nil {
+		op.Status, op.Error = "unknown", e.Error()
+	} else if out.OrderNo != card.Remote.OrderNo || (in.Action == "cancel" && out.Status != "SUCCESS") {
+		op.Status, op.Error = "unknown", "返回状态或订单号不匹配，请核对"
+	} else if in.Action == "increase" {
+		if _, e = ejh.Money(out.Balance); e != nil {
+			op.Status, op.Error = "unknown", "提额未返回有效余额，请核对"
+		}
+	} else {
+		card.Remote.Status = "2"
+		_, e = s.store.ImportEJHCard(card.Remote, false)
+		if e != nil {
+			op.Error = e.Error()
+		}
+	}
+	op.UpdatedAt = time.Now()
+	if e = s.store.EJHPut("operation", op.ID, op); e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	if e = s.store.EJHPut("card", card.ID, card); e != nil {
+		writeAPI(w, 500, nil, "操作记录已保存，但卡片状态保存失败，请刷新卡片后核对")
+		return
+	}
+	writeAPI(w, 200, op, "")
+}
+func (s *Server) resolveEJHOperation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		OrderNo  string `json:"order_no"`
+		Outcome  string `json:"outcome"`
+		Evidence string `json:"evidence"`
+	}
+	if decodeJSON(w, r, &in, 8<<10) != nil {
+		return
+	}
+	if len(strings.TrimSpace(in.Evidence)) < 3 {
+		writeAPI(w, 400, nil, "请填写卡台核实依据")
+		return
+	}
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	var op ejh.Operation
+	if s.store.EJHGet("operation", r.PathValue("id"), &op) != nil {
+		writeAPI(w, 404, nil, "操作不存在")
+		return
+	}
+	if op.Status == "completed" || op.Status == "resolved" || op.Status == "failed" {
+		writeAPI(w, 409, nil, "操作已结束")
+		return
+	}
+	if op.Method == "open" && in.Outcome == "completed" {
+		c, k, e := s.ejhConfig()
+		if e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+		if in.OrderNo == "" {
+			in.OrderNo = op.OrderNo
+		}
+		if in.OrderNo == "" {
+			writeAPI(w, 400, nil, "请填写真实开卡订单号")
+			return
+		}
+		ops, e := store.EJHRecords[ejh.Operation](s.store, "operation")
+		if e != nil {
+			writeAPI(w, 500, nil, e.Error())
+			return
+		}
+		for _, other := range ops {
+			if other.ID != op.ID && other.Method == "open" && other.OrderNo == in.OrderNo {
+				writeAPI(w, 409, nil, "这个开卡订单已属于其他操作，不能重复核销")
+				return
+			}
+		}
+		var remote ejh.Card
+		if e = s.ejhClientLocked().Call(r.Context(), c, k, "card.query.info", map[string]string{"orderNo": in.OrderNo}, &remote); e != nil {
+			writeAPI(w, 502, nil, e.Error())
+			return
+		}
+		if remote.OrderNo != in.OrderNo {
+			writeAPI(w, 502, nil, "卡台返回订单号不一致")
+			return
+		}
+		local, e := s.store.ImportEJHCard(remote, true)
+		if e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+		op.CardID, op.OrderNo, op.Status = local.ID, remote.OrderNo, "completed"
+	} else if in.Outcome == "not_executed" {
+		op.Status = "failed"
+	} else if in.Outcome == "completed" {
+		c, k, e := s.ejhConfig()
+		if e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+		var remote ejh.Card
+		if e = s.ejhClientLocked().Call(r.Context(), c, k, "card.query.info", map[string]string{"orderNo": op.OrderNo}, &remote); e != nil {
+			writeAPI(w, 502, nil, e.Error())
+			return
+		}
+		if remote.OrderNo != op.OrderNo {
+			writeAPI(w, 502, nil, "卡台返回订单号不一致，仍保留待核实")
+			return
+		}
+		if op.Method == "cancel" && remote.Status != "2" {
+			writeAPI(w, 409, nil, "卡台尚未显示已销卡，仍保留待核实")
+			return
+		}
+		if _, e = s.store.ImportEJHCard(remote, false); e != nil {
+			writeAPI(w, 502, nil, e.Error())
+			return
+		}
+		op.Status = "resolved"
+	} else {
+		writeAPI(w, 400, nil, "请选择实际处理结果")
+		return
+	}
+	op.Note, op.Error, op.UpdatedAt = in.Evidence, "", time.Now()
+	if e := s.store.EJHPut("operation", op.ID, op); e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	op.Result = nil
+	writeAPI(w, 200, op, "")
+}
+func (s *Server) matchEJHTrade(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		OrderID    string `json:"payment_order_id"`
+		OriginalID string `json:"original_trade_id"`
+		Amount     string `json:"amount"`
+		Currency   string `json:"currency"`
+		Evidence   string `json:"evidence"`
+		Confirmed  bool   `json:"confirmed"`
+	}
+	if decodeJSON(w, r, &in, 8<<10) != nil {
+		return
+	}
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	e := s.store.EJHMatchTrade(r.PathValue("id"), in.OrderID, in.OriginalID, in.Amount, strings.ToUpper(in.Currency), in.Evidence, in.Confirmed)
+	if e != nil {
+		writeAPI(w, 400, nil, e.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]bool{"saved": true}, "")
+}
+func (s *Server) unmatchEJHTrade(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if decodeJSON(w, r, &in, 8<<10) != nil {
+		return
+	}
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	if e := s.store.EJHUnmatch(r.PathValue("id"), in.Reason); e != nil {
+		writeAPI(w, 400, nil, e.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]bool{"saved": true}, "")
+}
+func (s *Server) validateEJHAutomation(v model.ProSettings) error {
+	if v.ForceMergeEnabled && (v.ForceMergeMinutes < 1 || v.ForceMergeMinutes > 525600 || v.TargetAdminID == "") {
+		return fmt.Errorf("超时合并需设置 1～525600 分钟及目标母号")
+	}
+	if v.EJHAutoOpen {
+		if v.EJHDailyOpenLimit < 1 || v.EJHDailyOpenLimit > 1000 {
+			return fmt.Errorf("自动开卡每日数量须为 1～1000")
+		}
+		if e := ejh.Positive(v.EJHDailyAmountLimit); e != nil {
+			return e
+		}
+		cfg, _, e := s.ejhConfig()
+		if e != nil {
+			return e
+		}
+		for _, t := range cfg.Templates {
+			if t.ID == v.EJHTemplateID {
+				return nil
+			}
+		}
+		return fmt.Errorf("请选择已保存的 EJH 开卡模板")
+	}
+	return nil
+}
+func (s *Server) ensureEJHCard(ctx context.Context) (gptpay.Card, error) {
+	s.ejh.mu.Lock()
+	defer s.ejh.mu.Unlock()
+	cards, _, e := s.store.GPTPayCards(10000, 0, true)
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	if len(cards) > 0 {
+		return cards[0], nil
+	}
+	pro, _, _, e := s.store.ProSettings()
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	if !pro.EJHAutoOpen {
+		return gptpay.Card{}, fmt.Errorf("无可用银行卡；EJH 自动补卡未启用")
+	}
+	if e = s.validateEJHAutomation(pro); e != nil {
+		return gptpay.Card{}, e
+	}
+	cfg, _, e := s.ejhConfig()
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	var template ejh.Template
+	for _, t := range cfg.Templates {
+		if t.ID == pro.EJHTemplateID {
+			template = t
+		}
+	}
+	input := template.Input(time.Now())
+	if e = ejh.ValidateOpen(input, time.Now()); e != nil {
+		return gptpay.Card{}, e
+	}
+	ops, e := store.EJHRecords[ejh.Operation](s.store, "operation")
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	count := 0
+	total := new(big.Rat)
+	zone := time.FixedZone("CST", 8*3600)
+	today := time.Now().In(zone).Format("2006-01-02")
+	for _, o := range ops {
+		if o.Automatic && o.Status == "failed" && time.Since(o.UpdatedAt) < 5*time.Minute {
+			return gptpay.Card{}, fmt.Errorf("自动开卡失败后冷却 5 分钟，请先核对失败原因")
+		}
+		if o.Automatic && o.Status == "completed" && o.CardID != "" {
+			prior, _, err := s.store.GPTPayCard(o.CardID)
+			if err != nil || (prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && !prior.Available) {
+				return gptpay.Card{}, fmt.Errorf("已有自动开卡尚未使用且不可用，请先核实该卡，暂停自动补卡")
+			}
+		}
+		if o.Method == "open" && (o.Status == "submitting" || o.Status == "unknown" || o.Status == "import_pending") {
+			return gptpay.Card{}, fmt.Errorf("存在未核实开卡，先在 EJH 操作记录核对，禁止重复扣款")
+		}
+		if o.Automatic && o.CreatedAt.In(zone).Format("2006-01-02") == today && o.Status != "failed" {
+			count++
+			if o.Currency != input.CardCurrency {
+				return gptpay.Card{}, fmt.Errorf("今日自动开卡预算币种发生变化，请核对后明日继续")
+			}
+			n, e := ejh.Money(o.Amount)
+			if e != nil {
+				return gptpay.Card{}, e
+			}
+			total.Add(total, n)
+		}
+	}
+	n, e := ejh.Money(input.CardAmount)
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	total.Add(total, n)
+	cap, e := ejh.Money(pro.EJHDailyAmountLimit)
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	if count >= pro.EJHDailyOpenLimit || total.Cmp(cap) > 0 {
+		return gptpay.Card{}, fmt.Errorf("自动开卡达到每日数量或刷卡额度预算上限")
+	}
+	sum := sha256.Sum256([]byte(time.Now().String()))
+	id := fmt.Sprintf("auto-ejh-%x", sum[:12])
+	input.Note = "Space " + id
+	op, e := s.ejhOpenLocked(ctx, id, input, true)
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	if op.Status != "completed" {
+		return gptpay.Card{}, fmt.Errorf("自动开卡 %s：%s", op.Status, op.Error)
+	}
+	card, _, e := s.store.GPTPayCard(op.CardID)
+	if e == nil && !card.Available {
+		e = fmt.Errorf("开卡已完成，但卡片尚不可用，请刷新卡片核实后继续")
+	}
+	return card, e
+}

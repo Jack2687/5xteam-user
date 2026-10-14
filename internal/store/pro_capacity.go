@@ -97,6 +97,17 @@ func proCardLimit(q proCapacityQuery, key string) (int, error) {
 		return custom, err
 	}
 	var limit int
+	var issuer int
+	if e := q.QueryRow(`SELECT count(*) FROM ejh_card_links WHERE card_key=?`, key).Scan(&issuer); e != nil {
+		return 0, e
+	}
+	if issuer > 0 {
+		e := q.QueryRow(`SELECT coalesce(json_extract(profile,'$.default_max_accounts'),3) FROM ejh_settings WHERE id=1`).Scan(&limit)
+		if errors.Is(e, sql.ErrNoRows) {
+			return 3, nil
+		}
+		return max(1, limit), e
+	}
 	err = q.QueryRow(`SELECT coalesce(json_extract(profile,'$.card_account_limit'),3) FROM gptpay_settings WHERE id=1`).Scan(&limit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 3, nil
@@ -108,6 +119,13 @@ func proCardLimit(q proCapacityQuery, key string) (int, error) {
 }
 func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecret) error {
 	key := proCardKey(secret.Number)
+	issuer, e := s.issuerForPhysicalCard(s.db, key)
+	if e != nil {
+		return e
+	}
+	if issuer != nil {
+		card.Source, card.IssuerOrderNo, card.IssuerStatus, card.IssuerLocked, card.IssuerEnd = issuer.Source, issuer.IssuerOrderNo, issuer.IssuerStatus, issuer.IssuerLocked, issuer.IssuerEnd
+	}
 	limit, err := proCardLimit(s.db, key)
 	if err != nil {
 		return err
@@ -126,7 +144,7 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 	}
 	card.AccountLimit, card.OpenedAccounts, card.PendingAccounts = limit, opened, pending
 	card.RemainingAccounts = max(0, limit-opened-pending)
-	card.Available = card.Enabled && card.RemainingAccounts > 0 && gptpay.ValidateCard(secret, time.Now()) == nil
+	card.Available = card.Enabled && card.RemainingAccounts > 0 && gptpay.ValidateCard(secret, time.Now()) == nil && issuerCardUsable(*card)
 	return nil
 }
 
@@ -159,10 +177,16 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool) error 
 	if !card.Enabled {
 		return errors.New("银行卡已禁用")
 	}
+	if !issuerCardUsable(card) {
+		return errors.New("卡台卡片未激活、冻结、过期或状态不可用")
+	}
 	if err = gptpay.ValidateCard(secret, time.Now()); err != nil {
 		return err
 	}
 	key := proCardKey(secret.Number)
+	if err = s.validateIssuerCard(tx, key); err != nil {
+		return err
+	}
 	limit, err := proCardLimit(tx, key)
 	if err != nil {
 		return err

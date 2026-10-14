@@ -168,17 +168,22 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, 409, nil, "供应商、套餐、国家或点数配置已变化，请重新打开窗口")
 			return
 		}
-		card, secret, err = s.store.GPTPayCard(input.CardID)
-		if err != nil || !card.Enabled {
-			writeAPI(w, 400, nil, "请选择已启用的银行卡")
-			return
-		}
-		if err = gptpay.ValidateCard(secret, time.Now()); err != nil {
-			writeAPI(w, 400, nil, err.Error())
-			return
-		}
-		if !card.Available {
-			writeAPI(w, 409, nil, "银行卡没有剩余开通名额")
+		if input.CardID != "" {
+			card, secret, err = s.store.GPTPayCard(input.CardID)
+			if err != nil || !card.Enabled {
+				writeAPI(w, 400, nil, "请选择已启用的银行卡")
+				return
+			}
+			if err = gptpay.ValidateCard(secret, time.Now()); err != nil {
+				writeAPI(w, 400, nil, err.Error())
+				return
+			}
+			if !card.Available {
+				writeAPI(w, 409, nil, "银行卡没有剩余开通名额")
+				return
+			}
+		} else if !pro.EJHAutoOpen {
+			writeAPI(w, 400, nil, "请选择银行卡，或启用 EJH 自动补卡")
 			return
 		}
 		if existing, e := s.store.ActiveGPTPayOrder(email); e == nil {
@@ -191,6 +196,28 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	if !lock.TryLock() {
 		writeAPI(w, 409, nil, "账号正在执行其他操作")
 		return
+	}
+	if !resume && input.CardID == "" {
+		latest, _, checkErr := s.store.MailAccountCredential(email)
+		if checkErr != nil || latest.ProWorkflowRunning || latest.ProAuto.OrderID != "" || latest.SpaceMergedOnce || s.proAutomationRunning(email) || s.proLoginAlreadyRunning(email) {
+			lock.Unlock()
+			writeAPI(w, 409, nil, "账号已有任务或已开通，未购买新卡")
+			return
+		}
+		if _, e := s.store.ActiveGPTPayOrder(email); e == nil {
+			lock.Unlock()
+			writeAPI(w, 409, nil, "账号已有未结束订单，未购买新卡")
+			return
+		}
+		card, err = s.ensureEJHCard(r.Context())
+		if err == nil {
+			card, secret, err = s.store.GPTPayCard(card.ID)
+		}
+		if err != nil {
+			lock.Unlock()
+			writeAPI(w, 409, nil, err.Error())
+			return
+		}
 	}
 	s.proAutoMu.Lock()
 	if s.proAutoClosed || s.proAutoJobs[email] != nil || s.proLoginAlreadyRunning(email) {
@@ -617,6 +644,32 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	if err != nil {
 		return err
 	}
+	forceSettings, _, _, forceErr := s.store.ProSettings()
+	if forceErr != nil {
+		return forceErr
+	}
+	forceProfile := p
+	forceProfile.ProWorkflowRunning = false
+	if p.ProMergeTrigger == "push_timeout" && p.ProAuto.Steps["quota"] == "skipped" && !forceMergeDue(forceProfile, forceSettings, time.Now()) {
+		if err = s.autoProUpdate(email, "quota", "waiting", "超时条件已关闭或不可执行，恢复额度检测"); err != nil {
+			return err
+		}
+		p.ProAuto.Steps["quota"] = "waiting"
+	}
+	if forceMergeDue(forceProfile, forceSettings, time.Now()) && p.ProAuto.Steps["quota"] != "completed" {
+		if _, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+			p.ProMergeTrigger = "push_timeout"
+			p.ProForceMergeAttempts++
+			next := time.Now().Add(time.Duration(max(30, forceSettings.RetryIntervalSeconds)) * time.Second)
+			p.ProForceMergeNextAt = &next
+		}); err != nil {
+			return err
+		}
+		if err = s.autoProUpdate(email, "quota", "skipped", "推送超时，跳过额度等待"); err != nil {
+			return err
+		}
+		p.ProAuto.Steps["quota"] = "skipped"
+	}
 	if p.ProAuto.Steps["quota"] != "completed" && p.ProAuto.Steps["quota"] != "skipped" {
 		if err = s.autoProUpdate(email, "quota", "running", "检测 7 天已用额度"); err != nil {
 			return err
@@ -644,6 +697,12 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 			}
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				next := time.Now().UTC().Add(time.Duration(max(10, p.ProAuto.QuotaIntervalSeconds)) * time.Second)
+				if forceSettings.ForceMergeEnabled && p.ProPushStartedAt != nil {
+					due := p.ProPushStartedAt.Add(time.Duration(forceSettings.ForceMergeMinutes) * time.Minute)
+					if due.After(time.Now()) && due.Before(next) {
+						next = due
+					}
+				}
 				p.ProAuto.Status = "waiting_quota"
 				p.ProAuto.Steps["quota"] = "waiting"
 				p.ProAuto.NextCheckAt = &next
@@ -660,6 +719,20 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 		return err
 	}
 	if _, err = merge(ctx, email); err != nil {
+		// Preserve original merge semantics, only reschedule a safe failed tail.
+		latest, _, readErr := s.store.MailAccountCredential(email)
+		if readErr == nil && ctx.Err() == nil && latest.ProMergeTrigger == "push_timeout" && forceSettings.ForceMergeEnabled && latest.ProForceMergeAttempts <= forceSettings.RetryCount && !proTransferNeedsConfirmation(latest) && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
+			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+				p.ProAuto.Status = "waiting_quota"
+				p.ProAuto.Steps["merge"] = "failed"
+				p.ProAuto.Steps["quota"] = "waiting"
+				next := time.Now().Add(time.Duration(max(30, forceSettings.RetryIntervalSeconds)) * time.Second)
+				p.ProAuto.NextCheckAt = &next
+				p.ProForceMergeNextAt = &next
+				p.ProAuto.Error = err.Error()
+			})
+			return saveErr
+		}
 		return err
 	}
 	if err = s.autoProUpdate(email, "merge", "completed", "空间四步流程完成"); err != nil {

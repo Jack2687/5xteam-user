@@ -102,6 +102,9 @@ func (s *Server) updateProAccountStage(w http.ResponseWriter, r *http.Request) {
 	}
 	profile, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		setProStage(p, input.Stage, input.Status)
+		if input.Stage == "transfer" && input.Status == "completed" {
+			p.ProMergeConfirmedSource = "manual"
+		}
 		p.ProWorkflowRunning = false
 		p.ProLastError = ""
 		if input.Status == "failed" {
@@ -250,6 +253,9 @@ func (s *Server) runProMergeStep(ctx context.Context, p model.MailAccountProfile
 	}
 	_, saveErr := s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {
 		setProStage(p, stage, status)
+		if stage == "transfer" && status == "completed" {
+			p.ProMergeConfirmedSource = "remote"
+		}
 		if err != nil {
 			p.ProLastError = err.Error()
 		}

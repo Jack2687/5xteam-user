@@ -24,6 +24,12 @@ type ProAutoState struct {
 // ProSettings is intentionally independent from Team rotation push settings.
 // Its providers are mutually exclusive through Provider.
 type ProSettings struct {
+	EJHAutoOpen               bool           `json:"ejh_auto_open"`
+	EJHTemplateID             string         `json:"ejh_template_id"`
+	EJHDailyOpenLimit         int            `json:"ejh_daily_open_limit"`
+	EJHDailyAmountLimit       string         `json:"ejh_daily_amount_limit"`
+	ForceMergeEnabled         bool           `json:"force_merge_enabled"`
+	ForceMergeMinutes         int            `json:"force_merge_minutes"`
 	PostMergeGroupIDs         []int64        `json:"post_merge_group_ids"`
 	PostMergeGroupNames       []string       `json:"post_merge_group_names"`
 	ScheduledEnabled          bool           `json:"scheduled_enabled"`
@@ -48,6 +54,7 @@ type ProSettings struct {
 
 func DefaultProSettings() ProSettings {
 	return ProSettings{
+		EJHDailyOpenLimit: 1, ForceMergeMinutes: 60,
 		MaxUnmerged: 5, ScheduleIntervalSeconds: 120,
 		Provider: "sub2", Sub2: DefaultSub2Settings(), CPA: DefaultCPASettings(), VM2API: DefaultVM2APISettings(),
 		QuotaUsedThreshold: 100, QuotaCheckIntervalSeconds: 120, TargetSeatType: "default",

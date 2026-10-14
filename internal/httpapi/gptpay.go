@@ -132,6 +132,10 @@ func (s *Server) saveGPTPayCard(w http.ResponseWriter, r *http.Request) {
 	}
 	// Omitted on enable/disable/name-only updates; zero explicitly resets it.
 	v.MaxAccounts = input.MaxAccounts
+	if v.Source == "ejh" && (input.Raw != "" || input.Number != "" || input.CVV != "" || (input.Month != 0 && input.Month != secret.Month) || (input.Year != 0 && input.Year != secret.Year)) {
+		writeAPI(w, 400, nil, "EJH 卡密只能从卡台刷新，不允许手动替换")
+		return
+	}
 	if input.Raw != "" {
 		var err error
 		secret, err = gptpay.ParseCard(input.Raw, time.Now())
