@@ -151,7 +151,7 @@ func TestCMSNavPlanValidation(t *testing.T) {
 	if err != nil || cfg.URL != CMSNavURL || cfg.Country != "PH" {
 		t.Fatal(cfg, err)
 	}
-	for _, cfg := range []Settings{{PlanCode: "pro50"}, {Provider: "other"}, {Provider: CMSNav, Country: "USA"}} {
+	for _, cfg := range []Settings{{PlanCode: "pro500"}, {Provider: "other"}, {Provider: CMSNav, Country: "USA"}} {
 		if _, err := NormalizeSettings(cfg); err == nil {
 			t.Fatal("accepted unsupported config")
 		}

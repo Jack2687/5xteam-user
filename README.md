@@ -1,5 +1,7 @@
 # ChatGPT Space Merge
 
+Tokenseek 已支持国家选择、Go/Plus/Pro 三档、Plus 升级和 Codex 点数，见 [国家与套餐配置](docs/tokenseek-plans.md)。
+
 本机可视化的 ChatGPT Team/Business 空间合并工具。既可在任务台执行完整流程，也可按天拆分执行：
 
 1. 母号邀请子号加入团队。

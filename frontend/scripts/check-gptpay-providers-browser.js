@@ -10,7 +10,8 @@
   const fill = async (text, value) => { const el = field(text); assert(el, 'Missing field: ' + text); el.value = value; el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); await pause(120) }
   await click('Pro 全自动配置')
   await wait(() => field('开通供应商') && !field('开通供应商').disabled)
-  assert(field('开通套餐').querySelector('[value="pro50"]').disabled, 'Tokenseek should not offer unsupported 50x')
+  await wait(() => !field('开通套餐').disabled)
+  assert(!field('开通套餐').querySelector('[value="pro50"]').disabled && field('支付国家'), 'Tokenseek must offer 50x and countries')
   await fill('银行卡默认最大开通数', '7')
   await fill('开通供应商', 'cmsnav')
   await wait(() => field('支付国家') && !field('支付国家').disabled)

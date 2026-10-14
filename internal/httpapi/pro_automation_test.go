@@ -58,8 +58,14 @@ func TestProAutoContinuousPaymentToCompletion(t *testing.T) {
 		loseSession  bool
 		cancellation string
 		cmsnav       bool
+		plan         string
+		quantity     int
 	}{
 		{name: "complete", status: "completed", quota: 100},
+		{name: "tokenseek_go_country", plan: "go", status: "completed", quota: 100},
+		{name: "tokenseek_pro50_country", plan: "pro50", status: "completed", quota: 100},
+		{name: "tokenseek_upgrade", plan: "pro50_up", status: "completed", quota: 100},
+		{name: "tokenseek_points", plan: "codex_point", quantity: 1250, status: "completed", quota: 100},
 		{name: "cancel_failed_still_complete", status: "completed", quota: 100, cancellation: "failed"},
 		{name: "cancel_pending_still_complete", status: "completed", quota: 100, cancellation: "pending"},
 		{name: "wait_quota", status: "waiting_quota", quota: 30},
@@ -119,10 +125,27 @@ func TestProAutoContinuousPaymentToCompletion(t *testing.T) {
 					fmt.Fprintf(w, `{"code":%d01}`, tc.paymentCode)
 					return
 				}
+				if tc.plan != "" {
+					var input gptpay.CreateInput
+					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+						t.Error(err)
+					}
+					if input.PlanCode != tc.plan || input.Country != "EG" || input.CreditQuantity != tc.quantity {
+						t.Error("automatic Tokenseek purchase fields lost")
+					}
+				}
 				fmt.Fprint(w, `{"code":0,"data":{"id":"auto-remote","status":"processing"}}`)
 			})
 			configureProAutoFixture(t, s)
 			provider, plan := gptpay.Tokenseek, "pro20"
+			if tc.plan != "" {
+				cfg, _, _ := st.GPTPaySettings()
+				plan = tc.plan
+				cfg.PlanCode, cfg.Country, cfg.CreditQuantity = plan, "EG", tc.quantity
+				if _, err := st.SaveGPTPaySettings(cfg, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if tc.cmsnav {
 				cfg, _, _ := st.GPTPaySettings()
 				provider, plan = gptpay.CMSNav, "pro50"

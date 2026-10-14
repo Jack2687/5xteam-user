@@ -2,12 +2,12 @@
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { LoaderCircle, X } from 'lucide-vue-next'
 import { api } from '../api'
-import { needsPayPoll, payRequestID, payStatusName, proPlanName, payProviderName } from '../gptpay'
+import { needsPayPoll, payRequestID, payStatusName, proPlanName, payProviderName, paymentCountryLabel } from '../gptpay'
 import Pagination from './Pagination.vue'
 
 const emit = defineEmits(['updated', 'progress'])
 const opened = ref(false), busy = ref(false), error = ref(''), email = ref(''), cards = ref([]), cardID = ref(''), order = ref(null)
-const settings = reactive({ provider: 'tokenseek', plan_code: 'pro5', key_present: false })
+const settings = reactive({ provider: 'tokenseek', plan_code: 'pro5', country: '', credit_quantity: 0, key_present: false })
 const page = ref(1), pageSize = ref(10), total = ref(0)
 const chosen = computed(() => cards.value.find(card => card.id === cardID.value))
 let requestID = '', timer, disposed = false, generation = 0
@@ -40,7 +40,7 @@ async function submit(retry = false) {
   busy.value = true; error.value = ''; clearTimeout(timer)
   emit('progress', { email: email.value, running: true })
   try {
-    order.value = await api(retry ? `/api/gptpay/orders/${encodeURIComponent(order.value.id)}/retry` : `/api/pro-accounts/${encodeURIComponent(email.value)}/recharge`, { method: 'POST', body: retry ? {} : { provider: settings.provider, card_id: cardID.value, plan_code: settings.plan_code, request_id: requestID } })
+    order.value = await api(retry ? `/api/gptpay/orders/${encodeURIComponent(order.value.id)}/retry` : `/api/pro-accounts/${encodeURIComponent(email.value)}/recharge`, { method: 'POST', body: retry ? {} : { provider: settings.provider, card_id: cardID.value, plan_code: settings.plan_code, country: settings.country, credit_quantity: settings.credit_quantity || 0, request_id: requestID } })
     emit('updated')
   } catch(e) {
     error.value = e.message
@@ -59,6 +59,7 @@ defineExpose({ open })
     <p v-if="error" class="danger-text" role="alert">{{ error }}</p>
     <template v-if="!order">
       <p>供应商：{{ payProviderName(settings.provider) }}</p><p>开通套餐：<strong>{{ proPlanName(settings.plan_code) }}</strong></p>
+      <p>开通国家：{{ paymentCountryLabel(settings.country) }}<span v-if="settings.plan_code === 'codex_point'">；购买点数：{{ settings.credit_quantity }}</span></p>
       <p v-if="!settings.key_present" class="danger-text">请先在“Pro 全自动配置”中保存 GPTPay API Key。</p>
       <label class="field"><span>选择银行卡</span><select v-model="cardID" :disabled="busy"><option value="">请选择已启用银行卡</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · {{ card.exp_year }}/{{ String(card.exp_month).padStart(2, '0') }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
       <Pagination v-if="total > 10" :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
@@ -68,6 +69,7 @@ defineExpose({ open })
     </template>
     <template v-else>
       <h3 :class="{ 'danger-text': order.status === 'failed' }">{{ proPlanName(order.plan_code) }} · {{ payStatusName(order.status) }}</h3>
+      <p>开通国家：{{ paymentCountryLabel(order.country || order.remote?.country) }}<span v-if="order.plan_code === 'codex_point'">；购买点数：{{ order.credit_quantity || order.remote?.creditQuantity }}</span></p>
       <p>{{ payProviderName(order.provider) }}</p><dl><dt>订单编号</dt><dd>{{ order.remote?.orderNo || order.id }}</dd><dt>供应商订单 ID</dt><dd>{{ order.remote?.id || '尚未返回' }}</dd><dt>银行卡</dt><dd>{{ order.card_name }} · 尾号 {{ order.card_last4 }}</dd><dt>结算 / 取消续费</dt><dd>{{ payStatusName(order.remote?.settlementStatus) }} / {{ payStatusName(order.remote?.cancellationStatus) }}</dd><dt>扣除 Credits</dt><dd>{{ order.remote?.chargedCredits || 0 }}</dd></dl>
       <p v-if="order.error" class="danger-text">{{ order.error }}</p>
       <p v-if="order.status_check_error" class="danger-text">订单同步：{{ order.status_check_error }}；后台会继续查询。</p>

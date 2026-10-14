@@ -241,11 +241,7 @@ func (c *Client) AccountForProvider(ctx context.Context, provider, base, key str
 	a.Level.Code, a.Level.Name = data.Membership.Level, data.Membership.Name
 	for _, code := range []string{"plus", "pro5x", "pro20x", "pro50x", "team"} {
 		if price, ok := data.Prices[code]; ok {
-			a.Plans = append(a.Plans, struct {
-				PlanCode       string `json:"planCode"`
-				SuccessCredits int64  `json:"successCredits"`
-				FailureCredits int64  `json:"failureCredits"`
-			}{code, price, 0})
+			a.Plans = append(a.Plans, AccountPlan{PlanCode: code, SuccessCredits: price})
 		}
 	}
 	return a, err

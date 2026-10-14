@@ -203,11 +203,15 @@ func gptPaySession(p model.MailAccountProfile, c model.MailAccountCredentials) (
 			return v, fmt.Errorf("AT 邮箱与当前账号不一致")
 		}
 		v.Account.ID = info.AccountID
+		v.Account.PlanType = info.PlanType
 	}
 	if c.ChatGPTSession != "" {
 		var saved gptpay.Session
 		if json.Unmarshal([]byte(c.ChatGPTSession), &saved) == nil && saved.AccessToken == v.AccessToken && strings.EqualFold(saved.User.Email, p.Email) {
 			v.Raw = saved.Raw
+			if saved.Account.PlanType != "" {
+				v.Account.PlanType = saved.Account.PlanType
+			}
 			if v.Account.ID == "" {
 				v.Account.ID = saved.Account.ID
 			}
@@ -233,10 +237,12 @@ func validateGPTPaySession(provider string, session gptpay.Session) error {
 
 func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		CardID    string `json:"card_id"`
-		RequestID string `json:"request_id"`
-		PlanCode  string `json:"plan_code"`
-		Provider  string `json:"provider"`
+		CardID         string  `json:"card_id"`
+		RequestID      string  `json:"request_id"`
+		PlanCode       string  `json:"plan_code"`
+		Provider       string  `json:"provider"`
+		Country        *string `json:"country"`
+		CreditQuantity *int    `json:"credit_quantity"`
 	}
 	if decodeJSON(w, r, &input, 8<<10) != nil {
 		return
@@ -259,7 +265,9 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	id := "pro-" + input.RequestID
 	if existing, _, e := s.store.GPTPayOrder(id); e == nil {
-		if existing.Email != email || existing.CardID != input.CardID || existing.PlanCode != input.PlanCode || gptpay.Provider(existing.Provider) != gptpay.Provider(input.Provider) {
+		if existing.Email != email || existing.CardID != input.CardID || existing.PlanCode != input.PlanCode || gptpay.Provider(existing.Provider) != gptpay.Provider(input.Provider) ||
+			(input.Country != nil && strings.ToUpper(strings.TrimSpace(*input.Country)) != existing.Country) ||
+			(input.CreditQuantity != nil && *input.CreditQuantity != existing.CreditQuantity) {
 			writeAPI(w, 409, nil, "请求编号已用于不同的开通参数")
 			return
 		}
@@ -283,8 +291,10 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, "请先在 Pro 全自动配置中保存 GPTPay API Key")
 		return
 	}
-	if input.PlanCode != v.PlanCode || gptpay.Provider(input.Provider) != v.Provider {
-		writeAPI(w, 409, nil, "供应商或开通套餐配置已变化，请重新打开开通窗口确认")
+	if input.PlanCode != v.PlanCode || gptpay.Provider(input.Provider) != v.Provider ||
+		(input.Country != nil && strings.ToUpper(strings.TrimSpace(*input.Country)) != v.Country) ||
+		(input.CreditQuantity != nil && *input.CreditQuantity != v.CreditQuantity) {
+		writeAPI(w, 409, nil, "供应商、套餐、国家或点数配置已变化，请重新打开开通窗口确认")
 		return
 	}
 	card, secret, err := s.store.GPTPayCard(input.CardID)
@@ -300,12 +310,15 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = validateGPTPaySession(v.Provider, session)
 	}
+	if err == nil {
+		err = gptpay.ValidatePlanSession(v, session)
+	}
 	if err != nil {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	snapshot := gptpay.Snapshot{Provider: v.Provider, Country: v.Country, URL: v.URL, APIKey: key, Input: gptpay.CreateInput{PlanCode: v.PlanCode, CardSecret: secret, Session: session}}
-	order := gptpay.Order{Provider: v.Provider, ID: id, Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: v.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	snapshot := gptpay.NewSnapshot(v, key, secret, session)
+	order := gptpay.Order{Provider: v.Provider, Country: v.Country, CreditQuantity: v.CreditQuantity, ID: id, Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: v.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err = s.store.CreateGPTPayOrder(order, snapshot); err != nil {
 		writeAPI(w, 409, nil, "未提交开通订单："+err.Error())
 		return

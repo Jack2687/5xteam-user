@@ -96,9 +96,11 @@ func (s *Server) autoProUpdate(email, stage, status, message string) error {
 func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	var input struct {
-		CardID   string `json:"card_id"`
-		PlanCode string `json:"plan_code"`
-		Provider string `json:"provider"`
+		CardID         string  `json:"card_id"`
+		PlanCode       string  `json:"plan_code"`
+		Provider       string  `json:"provider"`
+		Country        *string `json:"country"`
+		CreditQuantity *int    `json:"credit_quantity"`
 	}
 	if decodeJSON(w, r, &input, 8<<10) != nil {
 		return
@@ -160,8 +162,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, 400, nil, "请先保存 GPTPay API Key")
 			return
 		}
-		if input.PlanCode != cfg.PlanCode || gptpay.Provider(input.Provider) != cfg.Provider {
-			writeAPI(w, 409, nil, "供应商或套餐配置已变化，请重新打开窗口")
+		if input.PlanCode != cfg.PlanCode || gptpay.Provider(input.Provider) != cfg.Provider ||
+			(input.Country != nil && strings.ToUpper(strings.TrimSpace(*input.Country)) != cfg.Country) ||
+			(input.CreditQuantity != nil && *input.CreditQuantity != cfg.CreditQuantity) {
+			writeAPI(w, 409, nil, "供应商、套餐、国家或点数配置已变化，请重新打开窗口")
 			return
 		}
 		card, secret, err = s.store.GPTPayCard(input.CardID)
@@ -385,8 +389,11 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 		if err = validateGPTPaySession(cfg.Provider, session); err != nil {
 			return nil, err
 		}
-		order := gptpay.Order{Provider: cfg.Provider, ID: "pro-auto-" + p.ProAuto.ID, Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: cfg.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
-		snap := gptpay.Snapshot{Provider: cfg.Provider, Country: cfg.Country, URL: cfg.URL, APIKey: key, Input: gptpay.CreateInput{PlanCode: cfg.PlanCode, CardSecret: secret, Session: session}}
+		if err = gptpay.ValidatePlanSession(cfg, session); err != nil {
+			return nil, err
+		}
+		order := gptpay.Order{Provider: cfg.Provider, Country: cfg.Country, CreditQuantity: cfg.CreditQuantity, ID: "pro-auto-" + p.ProAuto.ID, Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: cfg.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+		snap := gptpay.NewSnapshot(cfg, key, secret, session)
 		// Reserve the payment atomically before attaching its stable ID. A crash
 		// between these writes still leaves an active order, preventing repayment.
 		if err = s.store.CreateGPTPayOrder(order, snap); err != nil {

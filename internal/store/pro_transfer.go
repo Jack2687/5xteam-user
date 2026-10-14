@@ -208,7 +208,11 @@ func ValidateProTransfer(file ProTransferFile) error {
 			if gptpay.Provider(o.Order.Provider) != gptpay.Provider(o.Snapshot.Provider) {
 				return errors.New("订单供应商与快照不一致")
 			}
-			if _, err = gptpay.NormalizeSettings(gptpay.Settings{Provider: o.Snapshot.Provider, Country: o.Snapshot.Country, URL: o.Snapshot.URL, PlanCode: o.Order.PlanCode}); err != nil {
+			if o.Order.PlanCode != o.Snapshot.Input.PlanCode || o.Order.CreditQuantity != o.Snapshot.Input.CreditQuantity ||
+				(o.Snapshot.Input.Country != "" && (o.Order.Country != o.Snapshot.Input.Country || o.Snapshot.Country != o.Snapshot.Input.Country)) {
+				return errors.New("订单套餐、国家或点数与快照不一致")
+			}
+			if _, err = gptpay.NormalizeSettings(gptpay.Settings{Provider: o.Snapshot.Provider, Country: o.Snapshot.Country, URL: o.Snapshot.URL, PlanCode: o.Order.PlanCode, CreditQuantity: o.Snapshot.Input.CreditQuantity}); err != nil {
 				return errors.New("订单供应商地址或套餐无效")
 			}
 		}

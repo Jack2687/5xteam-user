@@ -35,6 +35,7 @@ type Settings struct {
 	CardAccountLimit      int    `json:"card_account_limit"`
 	URL                   string `json:"url"`
 	PlanCode              string `json:"plan_code"`
+	CreditQuantity        int    `json:"credit_quantity"`
 	KeyPresent            bool   `json:"key_present"`
 	SessionTimeoutMinutes int    `json:"session_timeout_minutes"`
 }
@@ -69,13 +70,16 @@ type Session struct {
 		Email string `json:"email"`
 	} `json:"user"`
 	Account struct {
-		ID string `json:"id"`
+		ID       string `json:"id"`
+		PlanType string `json:"planType,omitempty"`
 	} `json:"account"`
 	AccessToken string `json:"accessToken"`
 }
 
 type CreateInput struct {
-	PlanCode string `json:"planCode"`
+	PlanCode       string `json:"planCode"`
+	Country        string `json:"country,omitempty"`
+	CreditQuantity int    `json:"creditQuantity,omitempty"`
 	CardSecret
 	Session Session `json:"session"`
 }
@@ -91,6 +95,8 @@ type Snapshot struct {
 }
 
 type RemoteOrder struct {
+	Country            string `json:"country,omitempty"`
+	CreditQuantity     int    `json:"creditQuantity,omitempty"`
 	ID                 string `json:"id"`
 	OrderNo            string `json:"orderNo"`
 	Status             string `json:"status"`
@@ -108,6 +114,8 @@ type RemoteOrder struct {
 }
 
 type Order struct {
+	Country           string      `json:"country,omitempty"`
+	CreditQuantity    int         `json:"credit_quantity,omitempty"`
 	Provider          string      `json:"provider,omitempty"`
 	LastStatusCheckAt *time.Time  `json:"last_status_check_at,omitempty"`
 	NextStatusCheckAt *time.Time  `json:"next_status_check_at,omitempty"`
@@ -132,8 +140,18 @@ func (o Order) NeedsStatusPoll() bool {
 	return o.Remote.ID != "" && (o.Active() || o.Remote.CancellationStatus == "waiting" || o.Remote.CancellationStatus == "pending")
 }
 
+type AccountPlan struct {
+	PlanCode           string   `json:"planCode"`
+	SuccessCredits     int64    `json:"successCredits"`
+	FailureCredits     int64    `json:"failureCredits"`
+	AvailableCountries []string `json:"availableCountries"`
+	DefaultCountry     string   `json:"defaultCountry,omitempty"`
+	PriceVersion       int64    `json:"priceVersion,omitempty"`
+}
+
 type Account struct {
-	User struct {
+	DefaultCountry string `json:"defaultCountry,omitempty"`
+	User           struct {
 		ID    string `json:"id"`
 		Email string `json:"email"`
 	} `json:"user"`
@@ -145,11 +163,7 @@ type Account struct {
 		Code string `json:"code"`
 		Name string `json:"name"`
 	} `json:"level"`
-	Plans []struct {
-		PlanCode       string `json:"planCode"`
-		SuccessCredits int64  `json:"successCredits"`
-		FailureCredits int64  `json:"failureCredits"`
-	} `json:"plans"`
+	Plans  []AccountPlan `json:"plans"`
 	APIKey struct {
 		ExpiresAt  *string        `json:"expiresAt"`
 		RateLimits map[string]int `json:"rateLimits"`
@@ -161,9 +175,32 @@ func NormalizeSettings(v Settings) (Settings, error) {
 	if v.Provider != Tokenseek && v.Provider != CMSNav {
 		return v, fmt.Errorf("请选择有效供应商")
 	}
+	v.PlanCode = strings.TrimSpace(v.PlanCode)
+	if v.PlanCode == "" {
+		v.PlanCode = "pro5"
+	}
+	if !SupportedPlan(v.Provider, v.PlanCode) {
+		return v, fmt.Errorf("请选择供应商支持的套餐")
+	}
+	if v.PlanCode == "codex_point" {
+		if v.CreditQuantity < 250 || v.CreditQuantity > 250000 || v.CreditQuantity%250 != 0 {
+			return v, fmt.Errorf("Codex 点数须为 250～250000 的整数，且为 250 的倍数")
+		}
+	} else {
+		v.CreditQuantity = 0
+	}
 	v.Country = strings.ToUpper(strings.TrimSpace(v.Country))
 	if v.Country == "" {
 		v.Country = "US"
+		if v.Provider == Tokenseek {
+			v.Country = "PH"
+			if v.PlanCode == "pro50" {
+				v.Country = "CL"
+			}
+		}
+	}
+	if v.Provider == Tokenseek && !TokenseekCountry(v.Country) {
+		return v, fmt.Errorf("Tokenseek 开通国家仅支持 PH、EG、CL、US、JP")
 	}
 	if !regexp.MustCompile(`^[A-Z]{2}$`).MatchString(v.Country) {
 		return v, fmt.Errorf("支付国家须为两位国家代码，如 US")
@@ -190,12 +227,6 @@ func NormalizeSettings(v Settings) (Settings, error) {
 	}
 	if u.Path == "" {
 		v.URL += "/api/v1"
-	}
-	if v.PlanCode == "" {
-		v.PlanCode = "pro5"
-	}
-	if v.PlanCode != "pro5" && v.PlanCode != "pro20" && !(v.Provider == CMSNav && v.PlanCode == "pro50") {
-		return v, fmt.Errorf("请选择供应商支持的套餐：Pro 5x、20x；CMSNav 还支持 Pro 50x")
 	}
 	if v.SessionTimeoutMinutes == 0 {
 		v.SessionTimeoutMinutes = 30
@@ -333,7 +364,7 @@ func (c *Client) call(ctx context.Context, base, key, method, path, idem string,
 }
 func (c *Client) Account(ctx context.Context, base, key string) (Account, error) {
 	var v Account
-	_, err := c.call(ctx, base, key, "GET", "/user", "", nil, &v)
+	_, err := c.call(ctx, base, key, "GET", "/user?view=extended", "", nil, &v)
 	return v, err
 }
 func (c *Client) Create(ctx context.Context, snapshot Snapshot, id string) (RemoteOrder, string, error) {
@@ -343,7 +374,10 @@ func (c *Client) Create(ctx context.Context, snapshot Snapshot, id string) (Remo
 	var v RemoteOrder
 	input := snapshot.Input
 	input.Session.Raw = nil // Preserve Tokenseek's existing minimal session payload.
-	rid, err := c.call(ctx, snapshot.URL, snapshot.APIKey, "POST", "/gpt-recharge/orders", id, input, &v)
+	if input.Country == "" {
+		input.Session.Account.PlanType = ""
+	} // Legacy replay sent no subscription metadata.
+	rid, err := c.call(ctx, snapshot.URL, snapshot.APIKey, "POST", "/gpt-recharge/orders?view=extended", id, input, &v)
 	if err == nil && (v.ID == "" || !ValidStatus(v.Status)) {
 		err = &APIError{Uncertain: true, RequestID: rid}
 	}
@@ -357,7 +391,7 @@ func (c *Client) Status(ctx context.Context, base, key string, ids []string) ([]
 	var v struct {
 		Orders []RemoteOrder `json:"orders"`
 	}
-	_, err := c.call(ctx, base, key, "POST", "/gpt-recharge/orders/status", "", map[string]any{"orderIds": ids}, &v)
+	_, err := c.call(ctx, base, key, "POST", "/gpt-recharge/orders/status?view=extended", "", map[string]any{"orderIds": ids}, &v)
 	return v.Orders, err
 }
 func ValidStatus(s string) bool {

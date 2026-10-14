@@ -18,6 +18,7 @@
   assert(reads().length === 1 && !reads()[0].query.includes('api_key'), 'Unexpected initial catalog requests')
   await fill('支付国家', 'PH'); await fill('开通套餐', 'pro50'); await click('保存 Pro 配置')
   await wait(() => fixture.config.country === 'PH' && fixture.config.plan_code === 'pro50')
+  await wait(() => !field('支付国家').disabled)
   assert(document.body.innerText.includes('结算币种：PHP'), 'Selected currency not updated')
   fixture.catalog.productAvailability.pro50x = false
   await click('刷新国家与套餐'); await wait(() => !button('刷新国家与套餐').disabled)
@@ -38,7 +39,7 @@
   await click('刷新国家与套餐')
   await fill('开通供应商', 'tokenseek')
   await pause(750)
-  assert(!field('支付国家') && !button('保存 Pro 配置').disabled, 'Late catalog response affected old supplier')
+  assert(field('支付国家') && field('开通套餐').querySelector('[value="go"]') && !button('保存 Pro 配置').disabled, 'Late catalog response affected Tokenseek')
   fixture.catalogDelay = 0
   await fill('开通供应商', 'cmsnav'); await wait(() => field('支付国家') && !field('支付国家').disabled)
   await fill('GPTPay API 地址', 'https://catalog-draft.example/api/v1')
