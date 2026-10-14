@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { currencies, currencyOptions } from '../src/ejh-currencies.js'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
@@ -74,7 +75,7 @@ for(const field of requiredTemplateFields){
  const label=templateLabels.find(value=>value.includes('="t.'+field+'"'))
  assert.ok(label,field+' has a field label')
  assert.ok(label.includes('class="ejh-required" aria-hidden="true">*</span>'),field+' has a visible required marker')
- assert.match(label,/<(?:input|select)\b[^>]*\srequired(?:\s|\/?>)/,field+' has native required semantics')
+ assert.match(label,/<(?:input|select|EJHCurrencySelect)\b[^>]*\srequired(?:\s|\/?>)/,field+' has native required semantics')
 }
 for(const field of ['companyRate','extInfoyx','authCount']){
  const label=templateLabels.find(value=>value.includes('="t.'+field+'"'))
@@ -86,3 +87,40 @@ assert.equal(templateLabels.filter(value=>value.includes('ejh-required')).length
 assert.ok(templateSection.includes('为必填项'))
 assert.ok(source.includes('.ejh-required{color:var(--red);'),'Required markers follow the theme error color')
 console.log('Passed: eight required template markers, native required semantics and optional fields remain optional')
+
+// Currency dictionary is the supplier's published 157-code set, not generic ISO.
+const expectedCodes = 'AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP CNH CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLL SOS SRD SSP STD STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL'.split(' ')
+assert.deepEqual(currencies.map(item=>item.code), expectedCodes)
+assert.equal(new Set(currencies.map(item=>item.code)).size,157)
+for(const item of currencies) { assert.ok(item.name);assert.ok(item.region) }
+for(const code of ['CNH','ANG','HRK','SLL','STD','ZWL']) assert.ok(currencies.some(item=>item.code===code))
+assert.equal(currencyOptions().length,157)
+assert.equal(currencyOptions('USD').filter(item=>item.value==='USD').length,1)
+assert.equal(currencyOptions('ZZZ')[0].value,'ZZZ')
+assert.ok(currencyOptions('ZZZ')[0].label.includes('原值'))
+assert.ok(currencyOptions('CNH').find(item=>item.value==='CNH').label.includes('离岸人民币'))
+assert.equal(currencyOptions().length,157,'A legacy value must not mutate the official dictionary')
+for(const field of ['t.cardCurrency','t.billCurrency','matchForm.currency']) {
+ assert.ok(source.includes('<EJHCurrencySelect v-model="'+field+'"'))
+ assert.ok(!source.includes('<input v-model="'+field+'"'),'Currency must not accept arbitrary typing')
+}
+const currencyComponent=readFileSync(new URL('../src/components/EJHCurrencySelect.vue',import.meta.url),'utf8')
+assert.ok(currencyComponent.includes('<select :value="modelValue"'))
+assert.ok(currencyComponent.includes("emit('update:modelValue', $event.target.value)"))
+assert.ok(currencyComponent.includes('<option value="">请选择币种</option>'))
+assert.ok(currencyComponent.includes(':value="option.value"'),'Submit codes, not localized labels')
+const currencyMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['save','action','show','chooseTemplate','cardStatus'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
+const settings={templates:[{id:'currency-template',name:'币种测试',valid_days:30,cardType:'fixture',cardAmount:'20',cardCurrency:'CNH',billCurrency:'EUR'}]}
+const calls=[]
+const currencyContext=vm.createContext({settings,openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
+vm.runInContext(currencyMethods+'\nthis.run={save,chooseTemplate,cardStatus}',currencyContext)
+await currencyContext.run.save()
+assert.equal(calls[0].path,'/api/ejh/settings')
+assert.equal(calls[0].body.templates[0].cardCurrency,'CNH')
+assert.equal(calls[0].body.templates[0].billCurrency,'EUR')
+currencyContext.run.chooseTemplate()
+assert.equal(currencyContext.openForm.input.cardCurrency,'CNH')
+assert.equal(currencyContext.openForm.input.billCurrency,'EUR')
+for(const status of ['1','2','3','4','5','6','7','8']) assert.notEqual(currencyContext.run.cardStatus({remote:{status}}),'状态待核实')
+assert.equal(currencyContext.run.cardStatus({remote:{status:'unknown'}}),'状态待核实')
+console.log('Passed: all 157 official currencies, historical-value preservation, dropdown bindings, save/issue payload codes and eight card statuses')
