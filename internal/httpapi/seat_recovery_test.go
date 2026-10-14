@@ -15,6 +15,7 @@ import (
 
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/store"
+	"chapt-space-user/internal/workflow"
 )
 
 type recoveryFixture struct {
@@ -71,7 +72,7 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 			if source == "mother" && token != "mother-at" {
 				t.Errorf("wrong mother credential %q", token)
 			}
-			if source == "child" && !strings.HasPrefix(token, "child-at-") {
+			if source == "child" && !strings.HasPrefix(token, "child-at-") && !strings.HasPrefix(token, "eyJ") {
 				t.Error("child did not use freshly saved AT")
 			}
 			if r.Header.Get("chatgpt-account-id") != "team" && r.Header.Get("chatgpt-account-id") != "team-two" {
@@ -147,6 +148,13 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 			f.mutations = append(f.mutations, source+":"+r.Method+":"+path)
 			f.bodies = append(f.bodies, body)
 			name := strings.TrimPrefix(token, "child-at-")
+			if strings.HasPrefix(token, "eyJ") {
+				info, err := workflow.DecodeUserInfo(token)
+				if err != nil {
+					t.Fatal(err)
+				}
+				name = info.UserID
+			}
 			switch {
 			case r.Method == "POST" && strings.HasSuffix(path, "/invites/request"):
 				if source != "child" || body != nil {

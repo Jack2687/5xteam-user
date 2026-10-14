@@ -1,4 +1,7 @@
 <script setup>
+import ConfigNav from './ConfigNav.vue'
+import { useConfigSections } from '../useConfigSections'
+const { configSection, revealConfigInvalid } = useConfigSections('schedule')
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Play, Save, RefreshCw, ChevronRight } from 'lucide-vue-next'
 import { api } from '../api'
@@ -124,17 +127,17 @@ onBeforeUnmount(() => window.clearInterval(countdownTimer))
   <section class="page-section auto-rotation-view">
     <div class="panel-title responsive"><div><span>AUTO ROTATION</span><h2>全自动轮转</h2><p class="panel-description">额度低于阈值后，优先处理已加入轮转但尚未邀请的账号，不足时再从邮件管理导入。</p></div><div class="heading-actions"><span class="auto-countdown">下次检查 <strong>{{ countdownText() }}</strong></span><StatusPill :tone="settings.enabled ? 'success' : 'pending'">{{ settings.enabled ? '已开启' : '已关闭' }}</StatusPill><button class="btn ghost" :disabled="!!busy" @click="load"><RefreshCw :size="15" />刷新</button><button class="btn primary" :disabled="!!busy" @click="trigger"><Play :size="15" />立即执行</button></div></div>
     <MessageBar :message="message" />
-    <form class="panel auto-config" @submit.prevent="save">
-      <div class="auto-fields">
+    <form class="auto-config config-workspace ops-config" @invalid.capture="revealConfigInvalid" @submit.prevent="save">
+<ConfigNav v-model="configSection" :items="[['schedule','启用与检查','开关 · 阈值 · 周期'],['execution','执行控制','并发 · 数量 · 重试'],['removal','移出策略','退出方式与换席'],['login','进入与登录','邀请 · OAuth']]" /><section v-show="configSection === 'schedule'" data-config-section="schedule" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>启用与检查</h3><p>控制何时检查和补充账号；保存后才会生效。</p></header><div class="auto-fields">
         <label class="field checkbox-field"><span>自动轮转开关<small>后台定时检查并补充账号</small></span><input v-model="settings.enabled" type="checkbox" /></label>
         <label class="field checkbox-field"><span>允许一子多母复用</span><input v-model="settings.allow_multi_mother_reuse" type="checkbox" /></label>
         <label class="field"><span>7天平均剩余额度阈值（%）</span><input v-model.number="settings.threshold_percent" type="number" min="1" max="100" required /></label>
         <label class="field"><span>检查间隔（秒）</span><input v-model.number="settings.interval_seconds" type="number" min="10" max="86400" required /></label>
-        <label class="field"><span>同母号操作间隔（秒）<small>邀请、确认、移出按母号串行，成功后等待</small></span><input v-model.number="settings.team_operation_interval_seconds" type="number" min="0" max="120" required /></label>
+</div></section><section v-show="configSection === 'execution'" data-config-section="execution" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>并发与重试</h3><p>限制同时执行量，并为同母号操作保留间隔。</p></header><div class="auto-fields">        <label class="field"><span>同母号操作间隔（秒）<small>邀请、确认、移出按母号串行，成功后等待</small></span><input v-model.number="settings.team_operation_interval_seconds" type="number" min="0" max="120" required /></label>
         <label class="field"><span>最大并发数</span><input v-model.number="settings.concurrency" type="number" min="1" max="20" required /></label>
         <label class="field"><span>每轮最大补充数（0 不限制）</span><input v-model.number="settings.max_per_run" type="number" min="0" max="500" required /></label>
         <label class="field"><span>单账号重试次数</span><input v-model.number="settings.retry_count" type="number" min="0" max="10" required /></label>
-        <label class="field"><span>移出方式</span><select v-model="settings.remove_method"><option value="mother_kick">母号踢出</option><option value="child_leave">子号自己退出</option></select></label>
+</div></section><section v-show="configSection === 'removal'" data-config-section="removal" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>移出策略</h3><p>保留原有移出规则；切换显示分组不会执行任何操作。</p></header><div class="auto-fields">        <label class="field"><span>移出方式</span><select v-model="settings.remove_method"><option value="mother_kick">母号踢出</option><option value="child_leave">子号自己退出</option></select></label>
         <label class="field checkbox-field"><span>移出前转普通<small>仅所选母号，默认关闭</small></span><input v-model="settings.switch_before_remove" type="checkbox" /></label>
         <div v-if="settings.switch_before_remove" class="switch-admins field">
           <span>转普通的母号 · 已选 {{ settings.switch_before_remove_admin_ids?.length || 0 }} 个</span>
@@ -142,10 +145,9 @@ onBeforeUnmount(() => window.clearInterval(countdownTimer))
           <div class="switch-admin-list"><label v-for="admin in switchAdmins" :key="admin.id"><input v-model="settings.switch_before_remove_admin_ids" type="checkbox" :value="admin.id" />{{ admin.name }}</label></div>
           <small>本轮进入前固定规则，在途账号不受修改影响。手动移出和死号先转普通再由母号踢出；普通席位不足时等待。</small>
         </div>
-        <label class="field"><span>进入方式</span><select v-model="settings.join_method"><option value="mother_invite">母号邀请，子号同意（默认）</option><option value="child_request">子号申请，母号同意（分配 5x）</option></select></label>
+</div></section><section v-show="configSection === 'login'" data-config-section="login" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>进入与登录</h3><p>选择进入空间及 OAuth 登录方式。</p></header><div class="auto-fields">        <label class="field"><span>进入方式</span><select v-model="settings.join_method"><option value="mother_invite">母号邀请，子号同意（默认）</option><option value="child_request">子号申请，母号同意（分配 5x）</option></select></label>
         <label class="field"><span>全局 OAuth 登录方式</span><select v-model="settings.oauth_login_mode"><option value="email_otp">邮箱验证码登录（默认）</option><option value="password_totp">优先密码 + OpenAI 2FA 登录</option></select></label>
-      </div>
-      <div class="panel-actions"><button class="btn primary" :disabled="!!busy" type="submit"><Save :size="15" />保存配置</button></div>
+      </div></section>      <div class="panel-actions config-footer"><button class="btn primary" :disabled="!!busy" type="submit"><Save :size="15" />保存配置</button></div>
     </form>
     <section class="panel list-panel"><div class="panel-title"><div><span>RUN HISTORY</span><h2>轮转执行记录</h2></div><StatusPill tone="pending">{{ runTotal }} 个批次</StatusPill></div><div class="table-shell"><table><thead><tr><th>开始时间</th><th>触发原因</th><th>平均剩余</th><th>席位（剩余/总数）</th><th>目标/准备/启动/成功/失败</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-if="!runs.length"><td colspan="7" class="empty-cell">暂无自动轮转记录</td></tr><tr v-for="run in runs" :key="run.id"><td>{{ formatTime(run.started_at) }}</td><td>{{ run.reason || '-' }}</td><td>{{ run.average_percent < 0 ? '未统计' : `${run.average_percent.toFixed(1)}%` }}</td><td>{{ runSeatText(run) }}</td><td>{{ runProgressText(run) }}</td><td><StatusPill :tone="runStatus(run.status)">{{ run.status }}</StatusPill></td><td><button class="btn ghost compact" @click="viewRun(run)"><ChevronRight :size="14" />查看详情</button></td></tr></tbody></table></div><Pagination :page="runPage" :page-size="runPageSize" :total="runTotal" @update:page="setRunPage" @update:page-size="setRunPageSize" /></section>
     <section v-if="selectedRun" class="panel list-panel"><div class="panel-title"><div><span>BATCH DETAILS</span><h2>批次 {{ selectedRun.id }}</h2></div><button class="btn ghost" @click="selectedRun = null">关闭</button></div><div class="table-shell"><table><thead><tr><th>账号</th><th>来源</th><th>母号</th><th>当前步骤</th><th>邀请在途</th><th>状态</th><th>错误</th></tr></thead><tbody><template v-for="task in tasks" :key="task.id"><tr><td>{{ task.email }}</td><td>{{ task.source }}</td><td>{{ task.admin_account_id || '-' }}</td><td>{{ task.current_step || '-' }}</td><td>{{ task.invite_triggered ? '是' : '否' }}</td><td><StatusPill :tone="runStatus(task.status)">{{ task.status }}</StatusPill></td><td>{{ task.error || '-' }}</td></tr><tr><td colspan="7"><div class="task-steps"><span v-for="step in task.steps" :key="step.key" :class="['task-step', `step-${runStatus(step.status)}`]" :title="step.message || step.name">{{ step.name }}：{{ step.status }}</span></div></td></tr></template><tr v-if="!tasks.length"><td colspan="7" class="empty-cell">暂无账号任务</td></tr></tbody></table></div><Pagination :page="taskPage" :page-size="taskPageSize" :total="taskTotal" @update:page="setTaskPage" @update:page-size="setTaskPageSize" /></section>

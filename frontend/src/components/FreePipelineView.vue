@@ -1,4 +1,7 @@
 <script setup>
+import ConfigNav from './ConfigNav.vue'
+import { useConfigSections } from '../useConfigSections'
+const { configSection, revealConfigInvalid } = useConfigSections('sub2')
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   BadgeCheck, Cable, DoorOpen, Download, FileJson, FolderOpen, Gauge, KeyRound, Link2,
@@ -1081,8 +1084,9 @@ onBeforeUnmount(() => motherSelectionController?.abort())
       </form>
     </div>
 
-    <form v-if="teamMenu === 'sub2'" class="push-settings-grid" @submit.prevent="savePushSettings">
-      <div class="panel sub2-config-panel">
+    <form v-if="teamMenu === 'sub2'" class="push-settings-grid config-workspace ops-config" @invalid.capture="revealConfigInvalid" @submit.prevent="savePushSettings">
+      <ConfigNav v-model="configSection" :items="[['sub2','Sub2','分组与推送参数'],['cpa','CPA','Management API'],['vm2api','vm2api','槽位与运行规格']]" />
+<div class="panel sub2-config-panel" v-show="configSection === 'sub2'" data-config-section="sub2">
       <div class="panel-title"><div><span>SUB2 CONNECTION</span><h2>Sub2 设置</h2><p class="panel-description">配置 Sub2 地址、管理员账号、分组和推送参数</p></div><label class="mini-toggle"><input v-model="pushProvider" value="sub2" type="radio" name="push-provider" /><i></i><span>{{ pushProvider === 'sub2' ? '当前启用' : '启用 Sub2' }}</span></label></div>
       <div class="sub2-fields">
         <label class="field wide"><span>Sub2 地址</span><input v-model="sub2Form.url" type="url" placeholder="https://sub2.example.com" :required="pushProvider === 'sub2'" /></label>
@@ -1105,7 +1109,7 @@ onBeforeUnmount(() => motherSelectionController?.abort())
       <Sub2ProxyPicker v-model:enabled="sub2Form.bindProxy" v-model:ids="sub2Form.proxyIDs" :url="sub2Form.url" :email="sub2Form.email" :password="sub2Form.password" :active="pushProvider === 'sub2'" :disabled="!!busy" endpoint="/api/sub2-settings/proxies" />
       <div class="split-actions"><button class="btn ghost" type="button" :disabled="!!busy" @click="connectSub2"><Cable :size="15" />连接并读取分组</button></div>
       </div>
-      <div class="panel cpa-config-panel">
+      <div class="panel cpa-config-panel" v-show="configSection === 'cpa'" data-config-section="cpa">
         <div class="panel-title"><div><span>CPA MANAGEMENT</span><h2>CPA 设置</h2><p class="panel-description">配置 CPA Management API 和 Codex auth 文件推送</p></div><label class="mini-toggle"><input v-model="pushProvider" value="cpa" type="radio" name="push-provider" /><i></i><span>{{ pushProvider === 'cpa' ? '当前启用' : '启用 CPA' }}</span></label></div>
         <div class="sub2-fields">
           <label class="field wide"><span>CPA 地址</span><input v-model="cpaForm.url" type="url" placeholder="http://127.0.0.1:8317" /></label>
@@ -1121,7 +1125,7 @@ onBeforeUnmount(() => motherSelectionController?.abort())
         </div>
         <div class="split-actions"><button class="btn ghost" type="button" :disabled="!!busy" @click="testCPA"><Cable :size="15" />测试 CPA 连接</button></div>
       </div>
-      <div class="panel vm-config-panel">
+      <div class="panel vm-config-panel" v-show="configSection === 'vm2api'" data-config-section="vm2api">
         <div class="panel-title"><div><span>VM2API MANAGEMENT</span><h2>vm2api 设置</h2><p class="panel-description">GPT · 本机 Docker / KVM · 一账号一槽位一独立 Codex 内核 · 支持账号分组</p></div><label class="mini-toggle"><input v-model="pushProvider" value="vm2api" type="radio" name="push-provider" /><i></i><span>{{ pushProvider === 'vm2api' ? '当前启用' : '启用 vm2api' }}</span></label></div>
         <div class="sub2-fields">
           <label class="field wide"><span>vm2api 地址</span><input v-model="vmForm.url" type="url" placeholder="https://vm2api.example.com（不带 /v1）" :required="pushProvider === 'vm2api'" /></label>
@@ -1148,7 +1152,7 @@ onBeforeUnmount(() => motherSelectionController?.abort())
         <VM2ProxyPicker v-model:enabled="vmForm.bind_proxy" v-model:ids="vmForm.proxy_ids" :url="vmForm.url" :management-key="vmForm.key" :active="pushProvider === 'vm2api'" :disabled="!!busy" />
         <button class="btn ghost" type="button" :disabled="!!busy" @click="testVM"><Cable :size="15" />测试已保存的管理连接</button>
       </div>
-      <div class="push-settings-actions"><p class="panel-description">仅启用一套作为新账号默认。已绑定账号继续使用原连接和轮次配置，切换设置不会迁移或踢出账号。</p><button class="btn primary" type="submit" :disabled="!!busy"><Save :size="15" />保存推送设置（仅启用一套）</button></div>
+      <div class="push-settings-actions config-footer"><p class="panel-description">仅启用一套作为新账号默认。已绑定账号继续使用原连接和轮次配置，切换设置不会迁移或踢出账号。</p><button class="btn primary" type="submit" :disabled="!!busy"><Save :size="15" />保存推送设置（仅启用一套）</button></div>
     </form>
 
     <AutoRotationView v-if="teamMenu === 'auto'" :admin-accounts="adminAccounts" :default-page-size="defaultPageSize" />

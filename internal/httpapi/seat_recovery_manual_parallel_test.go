@@ -65,6 +65,9 @@ func TestSeatRecoveryManualExitMissingTokenCanSwitchToKick(t *testing.T) {
 		t.Fatal(err)
 	}
 	recoveryControl(t, f, p.ID, "child_leave")
+	f.s.recovery.login = func(string, func(string), func(protocolOAuthDiagnostic)) (map[string]any, error) {
+		return map[string]any{"success": false, "error": "fixture login unavailable"}, nil
+	}
 	f.s.runSeatRecoveryStep(t.Context(), p.ID)
 	if f.get(t, p.ID).Status != "failed" || len(f.mutations) != 2 {
 		t.Fatal("missing AT exit mutated membership")

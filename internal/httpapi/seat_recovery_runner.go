@@ -221,6 +221,9 @@ func (s *Server) executeSeatRecoveryStep(ctx context.Context, p *model.SeatRecov
 		return s.recoveryAdvance(p, "join", message+"，等待串行拉回原空间")
 	}
 	// Never hold this lock for login or the dwell timer.
+	if err := s.prepareSeatRecoveryChildExit(ctx, *p, c, token); err != nil {
+		return err
+	}
 	v, _ := s.teamRemoveLocks.LoadOrStore(p.TeamID, &sync.Mutex{})
 	teamLock := v.(*sync.Mutex)
 	if !teamLock.TryLock() {

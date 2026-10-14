@@ -34,6 +34,9 @@ func (s *Server) executeSeatRecoveryManualRemoval(ctx context.Context, p *model.
 	if p.UserID == admin.UserID || strings.EqualFold(p.Email, admin.Email) {
 		return errors.New("禁止操作空间所有者")
 	}
+	if err := s.prepareSeatRecoveryChildExit(ctx, *p, c, token); err != nil {
+		return err
+	}
 	v, _ := s.teamRemoveLocks.LoadOrStore(p.TeamID, &sync.Mutex{})
 	lock := v.(*sync.Mutex)
 	if !lock.TryLock() {

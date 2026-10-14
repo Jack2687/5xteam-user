@@ -215,7 +215,7 @@ onMounted(loadPage)
 </script>
 
 <template>
-  <section class="view-stack">
+  <section class="view-stack proxies-view">
     <header class="page-heading">
       <div><span class="overline">NETWORK ROUTING</span><h1>代理管理</h1><p>保存线路、检测出口 IP 与 OpenAI 质量，并选择全局出口</p></div>
       <StatusPill :tone="selectedURL ? 'success' : 'pending'">{{ selectedURL ? '代理已启用' : '服务器直连' }}</StatusPill>
@@ -300,6 +300,7 @@ onMounted(loadPage)
 </template>
 
 <style scoped>
+.proxies-view .proxy-layout{display:grid;grid-template-columns:minmax(0,1fr)!important;gap:24px}.proxies-view .editor-panel{display:grid;grid-template-columns:minmax(160px,.6fr) minmax(240px,1.4fr) auto;gap:18px;align-items:start;padding:24px;border-radius:16px}.proxies-view .editor-panel>.panel-title{grid-column:1/-1;margin:0}.proxies-view .editor-panel>.field{margin:0}.proxies-view .editor-panel>.compact-actions{padding-top:24px;flex-wrap:wrap}.proxies-view .editor-panel>.message-bar{grid-column:1/-1;margin:0}.proxies-view .editor-panel>.panel-actions{grid-column:1/-1;margin:0;border-top:1px solid var(--line);padding-top:16px}.proxies-view .list-panel{border-radius:16px;padding:24px;min-width:0}.proxies-view .table-shell{overflow:auto}.proxies-view .table-note{max-width:230px;white-space:normal;line-height:1.7}.proxies-view .proxy-list-table td{padding-top:18px;padding-bottom:18px}.proxies-view .proxy-list-table td.mono{max-width:260px;overflow-wrap:anywhere;white-space:normal}.proxies-view .panel-title.responsive{gap:16px;flex-wrap:wrap}@media(max-width:900px){.proxies-view .editor-panel{grid-template-columns:minmax(0,1fr)}.proxies-view .editor-panel>.compact-actions{padding-top:0}.proxies-view .editor-panel,.proxies-view .list-panel{padding:18px}}
 .proxy-list-table { min-width: 1120px !important; }
 .proxy-result { display: grid; min-width: 125px; max-width: 190px; gap: 3px; }
 .proxy-result strong, .proxy-result small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

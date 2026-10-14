@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { currencies, currencyOptions } from '../src/ejh-currencies.js'
+import { currencies, currencyOptions, searchCurrencyOptions } from '../src/ejh-currencies.js'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
@@ -101,14 +101,23 @@ assert.ok(currencyOptions('ZZZ')[0].label.includes('原值'))
 assert.ok(currencyOptions('CNH').find(item=>item.value==='CNH').label.includes('离岸人民币'))
 assert.equal(currencyOptions().length,157,'A legacy value must not mutate the official dictionary')
 for(const field of ['t.cardCurrency','t.billCurrency','matchForm.currency']) {
- assert.ok(source.includes('<EJHCurrencySelect v-model="'+field+'"'))
+ assert.ok(source.includes('v-model="'+field+'"'))
  assert.ok(!source.includes('<input v-model="'+field+'"'),'Currency must not accept arbitrary typing')
 }
 const currencyComponent=readFileSync(new URL('../src/components/EJHCurrencySelect.vue',import.meta.url),'utf8')
-assert.ok(currencyComponent.includes('<select :value="modelValue"'))
-assert.ok(currencyComponent.includes("emit('update:modelValue', $event.target.value)"))
+assert.ok(currencyComponent.includes('<select v-bind="$attrs" :aria-label="label" :value="modelValue"'))
+assert.ok(currencyComponent.includes("emit('update:modelValue', event.target.value)"))
 assert.ok(currencyComponent.includes('<option value="">请选择币种</option>'))
 assert.ok(currencyComponent.includes(':value="option.value"'),'Submit codes, not localized labels')
+assert.equal(searchCurrencyOptions('', ' usd ').options[0].value, 'USD')
+assert.ok(searchCurrencyOptions('', '人民币').options.some(v=>v.value==='CNY'))
+assert.ok(searchCurrencyOptions('', '日本').options.some(v=>v.value==='JPY'))
+assert.equal(searchCurrencyOptions('EUR', 'usd').options[0].value, 'EUR', 'Search preserves the selected value')
+assert.equal(searchCurrencyOptions('EUR', 'not-a-currency').matchCount, 0)
+assert.equal(searchCurrencyOptions('ZZZ', 'usd').options[0].value, 'ZZZ', 'Legacy selection is preserved')
+assert.equal(searchCurrencyOptions('', '').options.length, 157)
+assert.ok(currencyComponent.includes('defineOptions({ inheritAttrs: false })'), 'Required and disabled attributes must reach the select')
+console.log('Passed: searchable currencies, code/name/region matching, legacy and selected-value preservation, required-select forwarding')
 const currencyMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['save','action','show','chooseTemplate','cardStatus'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 const settings={templates:[{id:'currency-template',name:'币种测试',valid_days:30,cardType:'fixture',cardAmount:'20',cardCurrency:'CNH',billCurrency:'EUR'}]}
 const calls=[]
@@ -140,3 +149,24 @@ assert.ok(cardViewSource.includes("card_type: card?.card_type || 'other'"))
 assert.ok(cardViewSource.includes('card_type: card.card_type'))
 assert.ok(cardViewSource.includes('/api/gptpay/card-cases'))
 console.log('Passed: EJH switch false/true payloads, card type column/default/selector, separate associations and unlinked-card action guard')
+
+// Entering EJH refreshes supplier read endpoints once; cache remains usable on errors.
+const entryMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','load','refreshAllBalances','refreshPage','initialize'].includes(s.name?.text)).map(s=>s.getText(parsed)).join(';')
+for(const enabled of [false,true]) for(const syncFails of [false,true]) {
+ const calls=[], cards=[{id:'one',remote:{orderNo:'one'}},{id:'local',issuer_linked:false,remote:{}}]
+ const ctx=vm.createContext({message:{text:'',type:''},busy:{value:false},ready:{value:false},settings:{enabled:false},disposed:false,data:{value:{cards:[]}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{
+  calls.push({path,options});if(path==='/api/ejh/settings')return {enabled};if(path==='/api/ejh/dashboard')return {cards};if(path==='/api/ejh/sync'&&syncFails)throw Error('sync unavailable');return {}
+ }})
+ vm.runInContext(entryMethods+';this.initialize=initialize;this.refreshPage=refreshPage',ctx)
+ await ctx.initialize()
+ assert.equal(ctx.ready.value,true);assert.equal(ctx.data.value.cards.length,2)
+ assert.equal(calls.filter(c=>c.path==='/api/ejh/sync').length,enabled?1:0)
+ assert.equal(calls.filter(c=>c.path==='/api/ejh/balance').length,enabled?1:0)
+ assert.equal(calls.filter(c=>c.options?.body?.action==='balance').length,enabled?1:0)
+ assert.ok(!calls.some(c=>c.options?.body?.action&&c.options.body.action!=='balance'),'No automatic card mutation or sensitive detail request')
+ assert.equal(ctx.balanceFailures.value.length,enabled&&syncFails?1:0)
+ const count=calls.length;ctx.busy.value=true;await ctx.refreshPage();assert.equal(calls.length,count,'Busy refresh cannot overlap')
+ ctx.busy.value=false;ctx.disposed=true;await ctx.refreshPage();assert.equal(calls.length,count,'Disposed view cannot refresh')
+}
+assert.ok(source.includes('onMounted(initialize)'))
+console.log('Passed: EJH entry refresh, disabled guard, read-only endpoints, partial-failure retention, busy and disposal guards')

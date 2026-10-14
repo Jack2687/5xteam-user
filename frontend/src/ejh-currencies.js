@@ -167,3 +167,14 @@ export function currencyOptions(current = '') {
   if (current && !codes.has(current)) options.unshift({ value: current, label: current + '（原值，EJH 文档未收录，请核实）' })
   return options
 }
+
+export function searchCurrencyOptions(current = '', query = '') {
+  const all = currencyOptions(current)
+  const term = query.trim().toLocaleLowerCase()
+  const matches = all.filter(option => option.label.toLocaleLowerCase().includes(term))
+  const selected = all.find(option => option.value === current)
+  // Keep the native select's current value while filtering; typing never changes it.
+  const options = selected && !matches.some(option => option.value === current)
+    ? [{ ...selected, label: selected.label + ' · 当前选择' }, ...matches] : matches
+  return { options, matchCount: matches.length }
+}

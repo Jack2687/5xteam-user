@@ -1,4 +1,7 @@
 <script setup>
+import ConfigNav from './ConfigNav.vue'
+import { useConfigSections } from '../useConfigSections'
+const { configSection, revealConfigInvalid } = useConfigSections('query')
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RefreshCw, Save, Download, Play } from 'lucide-vue-next'
 import { api } from '../api'
@@ -33,18 +36,17 @@ watch(() => props.provider, load)
  <p v-if="!supported" class="danger-text">结果查询仅支持 Sub2 和 vm2api，请先保存推送设置。</p>
  <p v-else class="panel-description">当前结果来源：{{ sourceLabel }}，跟随已保存的推送设置。</p>
  <p v-if="isVM" class="panel-description">题目、模型和定时检测在 vm2api 配置，Space 读取自动及手动检测结果。默认仅获取情况；选择强制踢出后，最新有效红色（单次检测不通过）才会触发移出并删除槽位和容器。黄色失败、无结果或过期均不踢出。已开始的移出清理会继续完成。</p>
- <form v-if="loaded" @submit.prevent="save">
-  <label class="field check"><input v-model="form.enabled" type="checkbox" :disabled="!supported"><span>启用定时查询，按所选方式处理</span></label>
-  <div class="quality-grid">
+ <form v-if="loaded" class="config-workspace ops-config" @invalid.capture="revealConfigInvalid" @submit.prevent="save">
+<ConfigNav v-model="configSection" :items="[['query','查询设置','开关 · 间隔 · 有效期'],['policy','判断与处理','检测条件与动作'],['groups','分组与恢复','Sub2 分组策略'],['limits','处理限制','并发与历史记录']]" /><section v-show="configSection === 'query'" data-config-section="query" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>定时查询</h3><p>读取已保存的检测结果，保持原有检测与处理规则。</p></header>  <label class="field check"><input v-model="form.enabled" type="checkbox" :disabled="!supported"><span>启用定时查询，按所选方式处理</span></label><div class="quality-grid">
    <label class="field"><span>查询间隔（秒）</span><input v-model.number="form.poll_interval_seconds" type="number" min="10" max="86400" required></label>
    <label class="field"><span>检测结果有效期（秒）</span><input v-model.number="form.max_result_age_seconds" type="number" min="30" max="86400" required></label>
-   <label v-if="!isVM" class="field check"><input v-model="form.question_enabled" type="checkbox"><span>答题已确认异常</span></label>
+</div></section><section v-show="configSection === 'policy'" data-config-section="policy" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>判断与处理</h3><p>选择触发条件和处理方式；立即执行仍需要原有确认。</p></header><div class="quality-grid">   <label v-if="!isVM" class="field check"><input v-model="form.question_enabled" type="checkbox"><span>答题已确认异常</span></label>
    <label v-if="!isVM" class="field check"><input v-model="form.model_audit_enabled" type="checkbox"><span>模型已确认不一致</span></label>
    <label v-if="!isVM" class="field"><span>处理条件</span><select v-model="form.condition_mode"><option value="any">任一勾选条件满足</option><option value="all">所有勾选条件同时满足</option></select></label>
    <label class="field"><span>符合条件后的处理</span><select v-model="form.action"><option v-if="isVM" value="observe">仅获取降智情况，不踢出</option><option value="kick">母号强制踢出并停止复用</option><option v-if="!isVM" value="groups">保留在空间，切换 Sub2 分组</option></select></label>
-   <label class="field"><span>处理并发数</span><input v-model.number="form.concurrency" type="number" min="1" max="8" required></label>
+</div></section><section v-show="configSection === 'limits'" data-config-section="limits" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>处理限制</h3><p>设置并发和记录保留数量。</p></header><div class="quality-grid">   <label class="field"><span>处理并发数</span><input v-model.number="form.concurrency" type="number" min="1" max="8" required></label>
    <label class="field"><span>每账号处理记录显示上限</span><input v-model.number="form.history_limit" type="number" min="1" max="1000" required></label>
-   <template v-if="!isVM && form.action === 'groups'">
+</div></section><section v-show="configSection === 'groups'" data-config-section="groups" ><header class="config-block-heading"><span>CONFIGURATION</span><h3>分组与恢复</h3><p>仅 Sub2 的分组处理模式使用本页设置。</p></header><p v-if="isVM || form.action !== 'groups'" class="panel-description">当前模式无需设置分组，请在「判断与处理」选择 Sub2 分组处理后配置。</p><div class="quality-grid">   <template v-if="!isVM && form.action === 'groups'">
     <div class="wide"><button class="btn ghost" type="button" :disabled="busy" @click="loadGroups"><RefreshCw :size="15" />读取 Sub2 分组</button></div>
     <div v-for="field in [{ key: 'normal_group_ids', label: '移除的正常分组' }, { key: 'degraded_group_ids', label: '加入的降智分组' }]" :key="field.key" class="field">
      <span :id="field.key + '-label'">{{ field.label }} <small>已选 {{ form[field.key].length }} 个</small></span>
@@ -60,8 +62,7 @@ watch(() => props.provider, load)
     <label class="field check"><input v-model="form.auto_restore" type="checkbox"><span>所有勾选检测恢复正常后自动恢复分组</span></label>
     <label v-if="form.auto_restore" class="field"><span>恢复至少需要连续正常次数</span><input v-model.number="form.recovery_limit" type="number" min="1" max="20" required></label>
    </template>
-  </div>
-  <div class="heading-actions"><button class="btn primary" type="submit" :disabled="busy || !supported"><Save :size="15" />保存设置</button><button class="btn ghost" type="button" :disabled="busy || !form.enabled || !supported" @click="run"><Play :size="15" />立即查询并处理</button><button class="btn ghost" type="button" @click="exportLegacy"><Download :size="15" />导出配置</button></div>
+  </div></section>  <div class="heading-actions config-footer"><button class="btn primary" type="submit" :disabled="busy || !supported"><Save :size="15" />保存设置</button><button class="btn ghost" type="button" :disabled="busy || !form.enabled || !supported" @click="run"><Play :size="15" />立即查询并处理</button><button class="btn ghost" type="button" @click="exportLegacy"><Download :size="15" />导出配置</button></div>
  </form>
 </section>
 </template>

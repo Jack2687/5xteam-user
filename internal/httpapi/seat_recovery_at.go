@@ -82,3 +82,30 @@ func (s *Server) saveRecoveryATCheck(p model.SeatRecoveryTask, check model.Admin
 	_, err := s.store.UpdateMailAccountATStatus(p.Email, check.CheckedAt, check.Valid, check.HTTPStatus, redactSensitiveText(check.Message))
 	return err
 }
+
+// Validate again immediately before child-initiated removal, not just before
+// joining. Login must not hold the mother operation lock; callers re-read live
+// membership under that lock before sending any removal mutation.
+func (s *Server) prepareSeatRecoveryChildExit(ctx context.Context, p model.SeatRecoveryTask, c *workflow.Client, token string) error {
+	manual := p.Stage == "manual_remove" && p.ManualRemoveMethod == "child_leave"
+	automatic := p.Stage == "leave" && p.Settings.RemoveMethod == "child_leave"
+	if !manual && !automatic {
+		return nil
+	}
+	if (manual && p.ManualRemoveSent || automatic && p.LeaveSent) && !p.RetryMutation {
+		return nil
+	}
+	if automatic && (!p.Lane || !p.SwitchSent) {
+		return errors.New("缺少本任务普通席位切换记录，未移出")
+	}
+	m, err := s.recoveryMember(ctx, p, c, token)
+	if err != nil || m == nil {
+		return err
+	}
+	if automatic && m.SeatType != "default" {
+		return errors.New("退出前不再是普通席位，未移出以免重新产生 5x 临停")
+	}
+	s.recoveryLog(p, "子号退出前重新检测 AT；无效时登录更新后再退出")
+	_, err = s.prepareSeatRecoveryAT(ctx, p)
+	return err
+}
