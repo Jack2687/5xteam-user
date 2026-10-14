@@ -66,3 +66,23 @@ for(const [file,component] of [['ProFinancialCell.vue','ReturnStatusBadge'],['Pr
 }
 assert.ok(source.includes("cardView==='cards'"));assert.ok(source.includes('class="ejh-card-table"'))
 console.log('Passed: canonical/alias card lookup, account-email search, exact navigation, non-EJH exclusion, persistent view selection and shared status badges')
+const templateSection=source.match(/<section[^>]*data-settings-tab="templates"[^>]*>([\s\S]*?)<\/section>/)?.[1]
+assert.ok(templateSection,'Template settings section is present')
+const templateLabels=[...templateSection.matchAll(/<label\b[^>]*>([\s\S]*?)<\/label>/g)].map(match=>match[1])
+const requiredTemplateFields=['name','cardType','cardAmount','cardCurrency','billCurrency','valid_days','useTime','supportedMccGroup']
+for(const field of requiredTemplateFields){
+ const label=templateLabels.find(value=>value.includes('="t.'+field+'"'))
+ assert.ok(label,field+' has a field label')
+ assert.ok(label.includes('class="ejh-required" aria-hidden="true">*</span>'),field+' has a visible required marker')
+ assert.match(label,/<(?:input|select)\b[^>]*\srequired(?:\s|\/?>)/,field+' has native required semantics')
+}
+for(const field of ['companyRate','extInfoyx','authCount']){
+ const label=templateLabels.find(value=>value.includes('="t.'+field+'"'))
+ assert.ok(label,field+' is present')
+ assert.ok(!label.includes('ejh-required'),field+' remains optional')
+}
+assert.ok(!templateLabels.find(value=>value.includes('v-model="t[key]"')).includes('ejh-required'),'Optional order parameters remain optional')
+assert.equal(templateLabels.filter(value=>value.includes('ejh-required')).length,8)
+assert.ok(templateSection.includes('为必填项'))
+assert.ok(source.includes('.ejh-required{color:var(--red);'),'Required markers follow the theme error color')
+console.log('Passed: eight required template markers, native required semantics and optional fields remain optional')
