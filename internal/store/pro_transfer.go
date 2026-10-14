@@ -27,8 +27,10 @@ type ProTransferFile struct {
 	Accounts   []ProTransferAccount `json:"accounts"`
 }
 type ProTransferOrder struct {
-	Order    gptpay.Order    `json:"order"`
-	Snapshot gptpay.Snapshot `json:"snapshot"`
+	CardType          string          `json:"card_type,omitempty"`
+	OccupancyReleased *bool           `json:"occupancy_released,omitempty"`
+	Order             gptpay.Order    `json:"order"`
+	Snapshot          gptpay.Snapshot `json:"snapshot"`
 }
 type ProTransferAccount struct {
 	Profile      model.MailAccountProfile     `json:"profile"`
@@ -116,16 +118,18 @@ func (s *Store) ExportProAccounts(emails []string, downstream model.ProDownstrea
 			entry.VM2Target = &target
 			entry.Downstream = model.ProDownstream(model.ProSettings{Provider: "vm2api", VM2API: target.VM2API})
 		}
-		rows, e := tx.Query("SELECT profile,encrypted_snapshot FROM gptpay_orders WHERE email=? ORDER BY created_at,id", email)
+		rows, e := tx.Query(`SELECT o.profile,o.encrypted_snapshot,COALESCE(k.card_type,'other'),EXISTS(SELECT 1 FROM pro_card_order_releases r WHERE r.order_id=o.id) FROM gptpay_orders o LEFT JOIN pro_card_usage u ON u.order_id=o.id LEFT JOIN pro_card_types k ON k.card_key=u.card_key WHERE o.email=? ORDER BY o.created_at,o.id`, email)
 		if e != nil {
 			return out, e
 		}
 		foundOrder := entry.Profile.ProAuto.OrderID == ""
 		for rows.Next() {
 			var order ProTransferOrder
-			if e = rows.Scan(&raw, &sealed); e != nil {
+			var released bool
+			if e = rows.Scan(&raw, &sealed, &order.CardType, &released); e != nil {
 				break
 			}
+			order.OccupancyReleased = &released
 			if e = json.Unmarshal([]byte(raw), &order.Order); e != nil {
 				break
 			}
@@ -186,6 +190,9 @@ func ValidateProTransfer(file ProTransferFile) error {
 		orderIDs := map[string]bool{}
 		active := 0
 		for _, o := range a.Orders {
+			if o.CardType != "" && o.CardType != "ejh" && o.CardType != "other" {
+				return errors.New("迁移订单银行卡类型无效")
+			}
 			if o.Order.ID == "" || len(o.Order.ID) > 160 || orderIDs[o.Order.ID] || !strings.EqualFold(o.Order.Email, email) {
 				return errors.New("迁移文件订单编号或邮箱不匹配")
 			}
@@ -509,6 +516,23 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 		}
 		if _, err = tx.Exec(`INSERT INTO pro_card_usage VALUES(?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET status=excluded.status`, o.Order.ID, proCardKey(o.Snapshot.Input.Number), p.Email, o.Order.Status); err != nil {
 			return result, err
+		}
+		kind := o.CardType
+		if kind == "" {
+			kind = "other"
+		}
+		if _, err = tx.Exec(`INSERT OR IGNORE INTO pro_card_types VALUES(?,?)`, proCardKey(o.Snapshot.Input.Number), kind); err != nil {
+			return result, err
+		}
+		// Per-order release state prevents a later purchase inheriting old removal.
+		released := o.OccupancyReleased != nil && *o.OccupancyReleased
+		if o.OccupancyReleased == nil && len(entry.Orders) == 1 && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") {
+			released = true
+		}
+		if released && o.Order.Status == "success" {
+			if _, err = tx.Exec(`INSERT OR IGNORE INTO pro_card_order_releases VALUES(?,?)`, o.Order.ID, formatTime(now)); err != nil {
+				return result, err
+			}
 		}
 	}
 	if err = tx.Commit(); err != nil {

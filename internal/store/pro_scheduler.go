@@ -107,7 +107,8 @@ func (s *Store) RecoverProSchedule() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Only process-start recovery releases login reservations. Submitted orders
-	// remain occupied until the supplier confirms success or failure.
+	// keep their reservation/usage history. Successful EJH orders remain
+	// occupied until removal; only confirmed payment failures free them early.
 	_, err := s.db.Exec(`DELETE FROM pro_card_reservations`)
 	return err
 }

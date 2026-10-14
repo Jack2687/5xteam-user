@@ -42,7 +42,11 @@ func (s *Server) proScheduleStatus() (model.ProScheduleStatus, error) {
 		}
 		seen[secret.Number] = true
 		v.AvailableCards++
-		v.CardCapacity += card.RemainingAccounts
+		if card.SingleActiveAccount {
+			v.CardCapacity++
+		} else {
+			v.CardCapacity += card.RemainingAccounts
+		}
 	}
 	v.NextCheckAt, err = s.store.ProScheduleNext()
 	if err != nil {

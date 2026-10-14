@@ -115,7 +115,7 @@ async function load() {
   const result = await api(`/api/gptpay/${props.mode === 'cards' ? 'cards' : 'orders'}?${params}`)
   if (disposed || id !== requestID) return
   rows.value = result.items || []; total.value = result.total || 0
-  if(props.mode==='cards'){const d=await api('/api/ejh/dashboard');if(!disposed&&id===requestID)cardCases.value=d.cases||[]}
+  if(props.mode==='cards'){const d=await api('/api/gptpay/card-cases');if(!disposed&&id===requestID)cardCases.value=d||[]}
   if (page.value > Math.max(1, Math.ceil(total.value / pageSize.value))) { page.value = Math.max(1, Math.ceil(total.value / pageSize.value)); await load() }
 }
 function changePage(v) { page.value = v; action(load) }
@@ -131,7 +131,7 @@ async function saveSettings() {
 }
 async function queryAccount() { await action(async () => { account.value = await api('/api/gptpay/account?provider=' + queryProvider.value); notify('供应商账户信息已更新', 'success') }) }
 function edit(card = null) {
-  editor.value = { id: card?.id || '', name: card?.name || '', enabled: card?.enabled ?? true, number: '', cvv: '', exp_month: card?.exp_month || 0, exp_year: card?.exp_year || 0, last4: card?.last4 || '', max_accounts: card?.max_accounts || 0 }
+  editor.value = { id: card?.id || '', card_type: card?.card_type || 'other', name: card?.name || '', enabled: card?.enabled ?? true, number: '', cvv: '', exp_month: card?.exp_month || 0, exp_year: card?.exp_year || 0, last4: card?.last4 || '', max_accounts: card?.max_accounts || 0 }
   rawCard.value = ''; notify()
 }
 function parseCard() { try { Object.assign(editor.value, parseCardText(rawCard.value)); rawCard.value = ''; notify('已解析，请核对有效期后保存', 'success') } catch (e) { notify(e.message, 'error') } }
@@ -141,7 +141,7 @@ async function saveCard() {
     if (rawCard.value.trim()) Object.assign(card, parseCardText(rawCard.value))
     const maxAccounts = Number(card.max_accounts || 0)
     if (!Number.isInteger(maxAccounts) || maxAccounts < 0 || maxAccounts > 10000) throw new Error('最大开通数须为 1～10000，或填 0 沿用全局上限')
-    await api('/api/gptpay/cards' + (card.id ? '/' + encodeURIComponent(card.id) : ''), { method: card.id ? 'PUT' : 'POST', body: { name: card.name, enabled: card.enabled, number: card.number, cvv: card.cvv, exp_month: card.exp_month, exp_year: card.exp_year, ...(card.id || maxAccounts > 0 ? { max_accounts: maxAccounts } : {}) } })
+    await api('/api/gptpay/cards' + (card.id ? '/' + encodeURIComponent(card.id) : ''), { method: card.id ? 'PUT' : 'POST', body: { card_type: card.card_type, name: card.name, enabled: card.enabled, number: card.number, cvv: card.cvv, exp_month: card.exp_month, exp_year: card.exp_year, ...(card.id || maxAccounts > 0 ? { max_accounts: maxAccounts } : {}) } })
     editor.value = null; rawCard.value = ''; await load(); notify('银行卡已保存', 'success')
   })
 }
@@ -265,9 +265,9 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
     <template v-else-if="mode === 'cards'">
       <section class="panel">
         <div class="panel-title"><div><span>PAYMENT CARDS</span><h2>银行卡信息</h2><p>仅启用且未过期的卡可用于新开通订单。</p></div><button class="btn primary" :disabled="busy" @click="edit()">添加银行卡</button></div>
-        <div class="table-shell"><table><thead><tr><th>名称</th><th>银行卡</th><th>已开通账号</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>
-          <tr v-if="!rows.length"><td colspan="6" class="empty-cell">暂无银行卡</td></tr>
-          <tr v-for="card in rows" :key="card.id"><td>{{ card.name }}</td><td>•••• {{ card.last4 }}</td><td><CardAccountPreview :rows="associated(card)"><button class="btn ghost compact" @click="cardDetail=card">{{card.opened_accounts||0}} / {{card.account_limit||3}}</button></CardAccountPreview><small class="order-id">{{ card.max_accounts ? '单独设置' : card.source==='ejh'?'EJH 默认':'沿用全局' }}</small><small class="order-id">在途 {{card.pending_accounts||0}} · 剩余 {{card.remaining_accounts??0}}</small></td><td>{{ card.exp_year }}-{{ String(card.exp_month).padStart(2, '0') }}</td><td>{{ card.enabled ? '已启用' : '已禁用' }}</td><td><div class="row-actions"><button class="btn ghost compact" :disabled="busy" @click="toggle(card)">{{ card.enabled ? '禁用' : '启用' }}</button><button class="btn ghost compact" :disabled="busy" @click="edit(card)">编辑</button><button class="btn ghost compact danger-text" :disabled="busy" @click="remove(card)">删除</button></div></td></tr>
+        <div class="table-shell"><table><thead><tr><th>名称</th><th>类型</th><th>银行卡</th><th>已开通账号</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>
+          <tr v-if="!rows.length"><td colspan="7" class="empty-cell">暂无银行卡</td></tr>
+          <tr v-for="card in rows" :key="card.id"><td>{{ card.name }}</td><td>{{card.card_type==='ejh'?'EJH':'其他'}}</td><td>•••• {{ card.last4 }}</td><td><CardAccountPreview :rows="associated(card)"><button class="btn ghost compact" @click="cardDetail=card">{{card.opened_accounts||0}} / {{card.account_limit||3}}</button></CardAccountPreview><small class="order-id">{{ card.max_accounts ? '单独设置' : card.card_type==='ejh'?'EJH 默认':'沿用全局' }}</small><small class="order-id">在途 {{card.pending_accounts||0}} · 剩余 {{card.remaining_accounts??0}}</small><small v-if="card.card_type==='ejh'" class="order-id">{{card.active_accounts ? `运行中 ${card.active_accounts} 个 · ${card.active_email}` : '当前空闲'}}{{card.single_active_account?' · 一卡一号':''}}</small></td><td>{{ card.exp_year }}-{{ String(card.exp_month).padStart(2, '0') }}</td><td>{{ card.enabled ? '已启用' : '已禁用' }}</td><td><div class="row-actions"><button class="btn ghost compact" :disabled="busy" @click="toggle(card)">{{ card.enabled ? '禁用' : '启用' }}</button><button class="btn ghost compact" :disabled="busy" @click="edit(card)">编辑</button><button class="btn ghost compact danger-text" :disabled="busy" @click="remove(card)">删除</button></div></td></tr>
         </tbody></table></div>
         <Pagination :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
       </section>
@@ -276,7 +276,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <label class="field"><span>粘贴银行卡信息</span><input v-model="rawCard" type="password" autocomplete="off" placeholder="银行卡号----202812----CVV" /><small>年月支持 202812、2028-12、12/28；四位连续数字按 YYMM 解析。</small></label>
         <button class="btn ghost compact" type="button" :disabled="!rawCard.trim() || busy" @click="parseCard">解析填入</button>
         <div class="settings-fields">
-          <label class="field"><span>名称</span><input v-model="editor.name" maxlength="60" placeholder="可选，默认使用银行卡尾号" /></label>
+          <label class="field"><span>类型</span><select v-model="editor.card_type" required><option value="other">其他</option><option value="ejh">EJH</option></select><small>同一卡号共用类型；EJH 类型适用单卡占用开关。运行中的 EJH 卡不可改为其他。</small></label><label class="field"><span>名称</span><input v-model="editor.name" maxlength="60" placeholder="可选，默认使用银行卡尾号" /></label>
           <label class="field"><span>卡号</span><input v-model="editor.number" type="password" autocomplete="off" :required="!editor.id" :placeholder="editor.id ? `尾号 ${editor.last4}，留空不修改` : '银行卡号'" /></label>
           <label class="field"><span>到期年份</span><input v-model.number="editor.exp_year" required type="number" min="2000" max="9999" /></label>
           <label class="field"><span>到期月份</span><input v-model.number="editor.exp_month" required type="number" min="1" max="12" /></label>

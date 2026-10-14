@@ -100,6 +100,7 @@ func (s *Server) listGPTPayCards(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveGPTPayCard(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		MaxAccounts *int    `json:"max_accounts"`
+		CardType    *string `json:"card_type"`
 		Name        *string `json:"name"`
 		Enabled     *bool   `json:"enabled"`
 		Raw         string  `json:"raw"`
@@ -131,6 +132,14 @@ func (s *Server) saveGPTPayCard(w http.ResponseWriter, r *http.Request) {
 		v.Enabled = *input.Enabled
 	}
 	// Omitted on enable/disable/name-only updates; zero explicitly resets it.
+	v.CardType = ""
+	if input.CardType != nil {
+		v.CardType = *input.CardType
+		if v.CardType != "ejh" && v.CardType != "other" {
+			writeAPI(w, 400, nil, "银行卡类型只能是 EJH 或其他")
+			return
+		}
+	}
 	v.MaxAccounts = input.MaxAccounts
 	if v.Source == "ejh" && (input.Raw != "" || input.Number != "" || input.CVV != "" || (input.Month != 0 && input.Month != secret.Month) || (input.Year != 0 && input.Year != secret.Year)) {
 		writeAPI(w, 400, nil, "EJH 卡密只能从卡台刷新，不允许手动替换")
@@ -172,6 +181,17 @@ func (s *Server) saveGPTPayCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAPI(w, 200, updated, "")
+}
+
+// The Pro card list retains associations for both types; the EJH dashboard
+// deliberately returns EJH-only cases and must not serve this general list.
+func (s *Server) listGPTPayCardCases(w http.ResponseWriter, r *http.Request) {
+	cases, err := s.store.EJHCases()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, cases, "")
 }
 func (s *Server) deleteGPTPayCard(w http.ResponseWriter, r *http.Request) {
 	unlock := s.lockFreeAccount("gptpay-card:" + r.PathValue("id"))

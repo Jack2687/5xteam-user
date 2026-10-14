@@ -124,3 +124,19 @@ assert.equal(currencyContext.openForm.input.billCurrency,'EUR')
 for(const status of ['1','2','3','4','5','6','7','8']) assert.notEqual(currencyContext.run.cardStatus({remote:{status}}),'状态待核实')
 assert.equal(currencyContext.run.cardStatus({remote:{status:'unknown'}}),'状态待核实')
 console.log('Passed: all 157 official currencies, historical-value preservation, dropdown bindings, save/issue payload codes and eight card statuses')
+
+assert.ok(source.includes('v-model="settings.single_active_account"'))
+for(const enabled of [false,true]) {
+ settings.single_active_account=enabled
+ await currencyContext.run.save()
+ assert.equal(calls.at(-1).body.single_active_account,enabled)
+}
+assert.ok(source.includes('card.issuer_linked!==false'))
+const unlinked=fixture({});await unlinked.ctx.methods.cardAction({issuer_linked:false},'increase');assert.equal(unlinked.calls.length,0)
+const cardViewSource=readFileSync(new URL('../src/components/ProGPTPayPanel.vue',import.meta.url),'utf8')
+assert.ok(cardViewSource.includes('<th>类型</th>'))
+assert.ok(cardViewSource.includes('v-model="editor.card_type"'))
+assert.ok(cardViewSource.includes("card_type: card?.card_type || 'other'"))
+assert.ok(cardViewSource.includes('card_type: card.card_type'))
+assert.ok(cardViewSource.includes('/api/gptpay/card-cases'))
+console.log('Passed: EJH switch false/true payloads, card type column/default/selector, separate associations and unlinked-card action guard')

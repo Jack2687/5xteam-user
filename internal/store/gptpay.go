@@ -182,6 +182,12 @@ func (s *Store) SaveGPTPayCard(v gptpay.Card, secret gptpay.CardSecret) (gptpay.
 			return v, err
 		}
 	}
+	if err = lockProCardAdmission(tx); err != nil {
+		return v, err
+	}
+	if err = saveProCardTypeTx(tx, v.ID, proCardKey(secret.Number), v.CardType); err != nil {
+		return v, err
+	}
 	// The override belongs to the physical card, independently of duplicate rows.
 	stored := v
 	stored.MaxAccounts = nil
@@ -295,6 +301,9 @@ func (s *Store) CreateGPTPayOrder(v gptpay.Order, snapshot gptpay.Snapshot) erro
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockProCardAdmission(tx); err != nil {
+		return err
+	}
 	key := proCardKey(snapshot.Input.Number)
 	if err = s.validateIssuerCard(tx, key); err != nil {
 		return err
@@ -310,6 +319,13 @@ func (s *Store) CreateGPTPayOrder(v gptpay.Order, snapshot gptpay.Snapshot) erro
 	var reserved bool
 	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_card_reservations WHERE email=? AND card_key=?)`, v.Email, key).Scan(&reserved); err != nil {
 		return err
+	}
+	// Switching the EJH policy on blocks new admissions, not work already
+	// admitted while it was off. Conversion preserves that durable reservation.
+	if !reserved {
+		if err = validateEJHOccupancy(tx, key, v.Email); err != nil {
+			return err
+		}
 	}
 	// Lowering a limit only blocks new work; an admitted automatic login keeps
 	// its existing place when converting the reservation into a payment order.

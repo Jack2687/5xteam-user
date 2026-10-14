@@ -15,6 +15,7 @@ type Settings struct {
 	AppKey              string     `json:"app_key"`
 	SecretPresent       bool       `json:"secret_present"`
 	DefaultMaxAccounts  int        `json:"default_max_accounts"`
+	SingleActiveAccount bool       `json:"single_active_account"`
 	SyncEnabled         bool       `json:"sync_enabled"`
 	SyncIntervalSeconds int        `json:"sync_interval_seconds"`
 	AlertHours          int        `json:"alert_hours"`
@@ -103,7 +104,7 @@ func (t Trade) Kind() string {
 	return "other"
 }
 func DefaultSettings() Settings {
-	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SyncIntervalSeconds: 300, AlertHours: 24, Templates: []Template{}}
+	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SingleActiveAccount: true, SyncIntervalSeconds: 300, AlertHours: 24, Templates: []Template{}}
 }
 
 var decimal = regexp.MustCompile(`^\d{1,12}(\.\d{1,6})?$`)

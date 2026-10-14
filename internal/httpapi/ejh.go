@@ -69,6 +69,13 @@ func (s *Server) saveEJHSettings(w http.ResponseWriter, r *http.Request) {
 		ejh.Settings
 		Secret string `json:"app_secret"`
 	}
+	// Older clients omit the new switch; preserve the saved/default policy.
+	current, _, err := s.store.EJHSettings()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	in.SingleActiveAccount = current.SingleActiveAccount
 	if decodeJSON(w, r, &in, 256<<10) != nil {
 		return
 	}
@@ -143,18 +150,63 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	type row struct {
 		ejh.CardRecord
-		Local *gptpay.Card `json:"local,omitempty"`
+		Local  *gptpay.Card `json:"local,omitempty"`
+		Linked bool         `json:"issuer_linked"`
 	}
 	rows := []row{}
+	visibleCards := map[string]bool{}
 	for _, c := range cards {
+		kind, err := s.store.ProCardTypeForNumber(c.Remote.Number)
+		if err != nil {
+			writeAPI(w, 500, nil, err.Error())
+			return
+		}
+		if kind != "ejh" {
+			continue
+		}
 		c.Remote.Number = maskEJH(c.Remote.Number)
 		c.Remote.CVV = ""
-		v := row{CardRecord: c}
+		v := row{CardRecord: c, Linked: true}
 		if local, _, e := s.store.GPTPayCard(c.ID); e == nil {
 			v.Local = &local
 		}
 		rows = append(rows, v)
+		visibleCards[c.ID] = true
 	}
+	locals, _, e := s.store.GPTPayCards(1000000, 0, false)
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	for _, local := range locals {
+		if local.CardType != "ejh" || visibleCards[local.ID] || local.Source == "ejh" {
+			continue
+		}
+		copy := local
+		rows = append(rows, row{CardRecord: ejh.CardRecord{ID: local.ID, Remote: ejh.Card{Number: "**** " + local.Last4, Validity: fmt.Sprintf("%02d%02d", local.ExpMonth, local.ExpYear%100)}}, Local: &copy})
+		visibleCards[local.ID] = true
+	}
+	filteredCases := []ejh.Case{}
+	for _, v := range cases {
+		if v.CardType == "ejh" {
+			filteredCases = append(filteredCases, v)
+		}
+	}
+	cases = filteredCases
+	filteredTrades := []ejh.TradeRecord{}
+	for _, v := range trades {
+		if visibleCards[v.CardID] {
+			filteredTrades = append(filteredTrades, v)
+		}
+	}
+	trades = filteredTrades
+	filteredOps := []ejh.Operation{}
+	for _, v := range ops {
+		if v.CardID == "" || visibleCards[v.CardID] {
+			filteredOps = append(filteredOps, v)
+		}
+	}
+	ops = filteredOps
 	for i := range trades {
 		trades[i].Trade.Number = maskEJH(trades[i].Trade.Number)
 	}
@@ -184,6 +236,21 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	filteredAudit := []map[string]any{}
+	for _, a := range audit {
+		include := false
+		for _, key := range []string{"before", "after"} {
+			if obj, ok := a[key].(map[string]any); ok {
+				if id, ok := obj["card_id"].(string); ok && visibleCards[id] {
+					include = true
+				}
+			}
+		}
+		if include {
+			filteredAudit = append(filteredAudit, a)
+		}
+	}
+	audit = filteredAudit
 	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {

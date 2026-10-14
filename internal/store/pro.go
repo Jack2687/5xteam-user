@@ -208,6 +208,7 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 		return p, errors.New("账号不在 Pro 管理中")
 	}
 	wasConfirmed := p.TransferStatus == "completed" && p.ProMergeConfirmedSource != ""
+	wasRemoved := p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed"
 	if mutate != nil {
 		mutate(&p)
 	}
@@ -224,6 +225,11 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 	defer tx.Rollback()
 	if _, err = tx.Exec("UPDATE mail_accounts SET profile=?,updated_at=? WHERE email=?", string(encoded), formatTime(p.UpdatedAt), email); err != nil {
 		return p, err
+	}
+	if !wasRemoved && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") {
+		if err = releaseProCardOrdersTx(tx, email, formatTime(p.UpdatedAt)); err != nil {
+			return p, err
+		}
 	}
 	if !wasConfirmed && p.TransferStatus == "completed" && p.ProMergeConfirmedSource != "" {
 		at := p.UpdatedAt

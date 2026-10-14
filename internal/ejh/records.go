@@ -43,6 +43,7 @@ type TradeRecord struct {
 	ConfirmedAt     *time.Time `json:"confirmed_at,omitempty"`
 }
 type Case struct {
+	CardType        string            `json:"card_type"`
 	EJHCardID       string            `json:"ejh_card_id,omitempty"`
 	OriginalTradeID string            `json:"original_trade_id"`
 	ID              string            `json:"id"`

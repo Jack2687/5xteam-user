@@ -63,7 +63,7 @@ defineExpose({ open })
       <p v-if="!settings.key_present" class="danger-text">请先在“Pro 全自动配置”中保存 GPTPay API Key。</p>
       <label class="field"><span>选择银行卡</span><select v-model="cardID" :disabled="busy"><option value="">请选择已启用银行卡</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · {{ card.exp_year }}/{{ String(card.exp_month).padStart(2, '0') }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
       <Pagination v-if="total > 10" :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
-      <p v-if="!cards.length && !busy">请先到“银行卡信息”添加并启用银行卡。</p>
+      <p v-if="!cards.length && !busy">暂无可选卡：请添加或启用银行卡；已占用的 EJH 卡须等待移出成功，累计名额用尽的卡不可再用。</p>
       <p class="muted">将使用此账号已保存的 AT 和所选银行卡向 GPTPay 提交开通订单，费用按供应商配置扣除。</p>
       <div class="panel-actions"><button class="btn ghost" :disabled="busy" @click="close">取消</button><button class="btn primary" :disabled="busy || !chosen || !settings.key_present" @click="submit(false)"><LoaderCircle v-if="busy" class="spin" :size="15" />{{ busy ? '正在提交…' : '确认开通 ' + proPlanName(settings.plan_code) }}</button></div>
     </template>

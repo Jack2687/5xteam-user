@@ -97,11 +97,11 @@ func proCardLimit(q proCapacityQuery, key string) (int, error) {
 		return custom, err
 	}
 	var limit int
-	var issuer int
-	if e := q.QueryRow(`SELECT count(*) FROM ejh_card_links WHERE card_key=?`, key).Scan(&issuer); e != nil {
+	kind, e := proCardType(q, key)
+	if e != nil {
 		return 0, e
 	}
-	if issuer > 0 {
+	if kind == "ejh" {
 		e := q.QueryRow(`SELECT coalesce(json_extract(profile,'$.default_max_accounts'),3) FROM ejh_settings WHERE id=1`).Scan(&limit)
 		if errors.Is(e, sql.ErrNoRows) {
 			return 3, nil
@@ -119,6 +119,11 @@ func proCardLimit(q proCapacityQuery, key string) (int, error) {
 }
 func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecret) error {
 	key := proCardKey(secret.Number)
+	var err error
+	card.CardType, err = proCardType(s.db, key)
+	if err != nil {
+		return err
+	}
 	issuer, e := s.issuerForPhysicalCard(s.db, key)
 	if e != nil {
 		return e
@@ -144,7 +149,21 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 	}
 	card.AccountLimit, card.OpenedAccounts, card.PendingAccounts = limit, opened, pending
 	card.RemainingAccounts = max(0, limit-opened-pending)
+	card.ActiveAccounts, card.ActiveEmail, card.SingleActiveAccount = 0, "", false
+	if card.CardType == "ejh" {
+		card.ActiveAccounts, card.ActiveEmail, err = ejhCardOccupancy(s.db, key, "")
+		if err != nil {
+			return err
+		}
+		card.SingleActiveAccount, err = ejhSingleActive(s.db, key)
+		if err != nil {
+			return err
+		}
+	}
 	card.Available = card.Enabled && card.RemainingAccounts > 0 && gptpay.ValidateCard(secret, time.Now()) == nil && issuerCardUsable(*card)
+	if card.SingleActiveAccount && card.ActiveAccounts > 0 {
+		card.Available = false
+	}
 	return nil
 }
 
@@ -158,6 +177,9 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool) error 
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockProCardAdmission(tx); err != nil {
+		return err
+	}
 	var raw, sealed string
 	if err = tx.QueryRow(`SELECT profile,encrypted_secret FROM gptpay_cards WHERE id=?`, cardID).Scan(&raw, &sealed); err != nil {
 		return errors.New("银行卡不存在")
@@ -185,6 +207,9 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool) error 
 	}
 	key := proCardKey(secret.Number)
 	if err = s.validateIssuerCard(tx, key); err != nil {
+		return err
+	}
+	if err = validateEJHOccupancy(tx, key, email); err != nil {
 		return err
 	}
 	limit, err := proCardLimit(tx, key)
@@ -217,6 +242,8 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool) error 
 	return tx.Commit()
 }
 func (s *Store) ReleaseProCard(email string) error {
+	// Only release the login/pre-payment reservation. Order creation atomically
+	// replaces it with persistent usage; paid occupancy survives worker cleanup.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.Exec(`DELETE FROM pro_card_reservations WHERE email=?`, email)

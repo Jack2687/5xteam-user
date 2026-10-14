@@ -179,6 +179,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !card.Available {
+				if card.SingleActiveAccount && card.ActiveAccounts > 0 {
+					writeAPI(w, 409, nil, "EJH 银行卡正在被 "+card.ActiveEmail+" 占用（一卡同时一个号），请等待移出成功")
+					return
+				}
 				writeAPI(w, 409, nil, "银行卡没有剩余开通名额")
 				return
 			}

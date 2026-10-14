@@ -57,6 +57,14 @@ func TestProActivationCardsSuccessfulSnapshot(t *testing.T) {
 func TestProActivationCardEJHCanonicalNavigation(t *testing.T) {
 	s := transferStore(t)
 	canonical := ejhFixtureCard(t, s)
+	cfg, _, err := s.EJHSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SingleActiveAccount = false
+	if _, err = s.SaveEJHSettings(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	for i, item := range []struct{ id, email, card, number string }{
 		{"direct", "direct@example.com", canonical.ID, "4242424242424242"},

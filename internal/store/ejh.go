@@ -240,6 +240,16 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 		return empty, fmt.Errorf("卡号长度无效")
 	}
 	card := gptpay.Card{ID: id, Name: "EJH " + secret.Number[len(secret.Number)-4:], Enabled: enabled, Source: "ejh", IssuerOrderNo: remote.OrderNo}
+	// Newly issued cards are EJH; refreshing an existing card must preserve its
+	// explicit classification (including legacy Other).
+	s.mu.Lock()
+	typeErr := s.db.QueryRow(`SELECT card_type FROM pro_card_types WHERE card_key=?`, proCardKey(secret.Number)).Scan(&card.CardType)
+	s.mu.Unlock()
+	if errors.Is(typeErr, sql.ErrNoRows) {
+		card.CardType = "ejh"
+	} else if typeErr != nil {
+		return empty, typeErr
+	}
 	if existing, _, e := s.GPTPayCard(id); e == nil {
 		card = existing
 		card.MaxAccounts = nil
@@ -455,11 +465,13 @@ func (s *Store) EJHCasesForEmails(emails []string) ([]ejh.Case, error) {
 	if e != nil {
 		return nil, e
 	}
-	rows, e := s.db.Query(`SELECT c.profile,m.email,COALESCE(l.card_id,r.id,'') FROM ejh_cases c
+	rows, e := s.db.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other') FROM ejh_cases c
 		LEFT JOIN mail_accounts m ON m.email=c.email
 		LEFT JOIN pro_card_usage u ON u.order_id=c.id
+  LEFT JOIN pro_card_identities i ON i.card_id=c.card_id
+  LEFT JOIN pro_card_types k ON k.card_key=COALESCE(u.card_key,i.card_key)
 		LEFT JOIN ejh_card_links l ON l.card_key=u.card_key
-		LEFT JOIN ejh_records r ON r.kind='card' AND r.id=c.card_id`+where+` ORDER BY json_extract(c.profile,'$.created_at') DESC`, args...)
+  `+where+` ORDER BY json_extract(c.profile,'$.created_at') DESC`, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -468,8 +480,8 @@ func (s *Store) EJHCasesForEmails(emails []string) ([]ejh.Case, error) {
 	for rows.Next() {
 		var raw string
 		var exists sql.NullString
-		var ejhCardID string
-		if e = rows.Scan(&raw, &exists, &ejhCardID); e != nil {
+		var ejhCardID, cardType string
+		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType); e != nil {
 			return nil, e
 		}
 		var v ejh.Case
@@ -477,6 +489,7 @@ func (s *Store) EJHCasesForEmails(emails []string) ([]ejh.Case, error) {
 			return nil, e
 		}
 		v.EJHCardID = ejhCardID
+		v.CardType = cardType
 		v.Deleted = !exists.Valid
 		v.State = "unopened"
 		if v.PaymentStatus == "success" {
