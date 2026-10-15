@@ -25,6 +25,8 @@ import (
 )
 
 type Server struct {
+	proRestock                proRestockRuntime
+	proCardAdmissionMu        sync.Mutex
 	ejh                       ejhRuntime
 	downstreamMu              sync.Mutex
 	recovery                  seatRecoveryRuntime
@@ -318,6 +320,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pro-accounts/{email}/recharge", s.createGPTPayOrder)
 	mux.HandleFunc("POST /api/pro-accounts/{email}/auto-pro", s.startProAutomation)
 	mux.HandleFunc("GET /api/pro-schedule", s.getProSchedule)
+	s.registerProRestock(mux)
 	mux.HandleFunc("POST /api/pro-schedule/run", s.runProScheduleNow)
 	mux.HandleFunc("GET /api/pro-schedule/runs", s.listProScheduleRuns)
 	mux.HandleFunc("GET /api/pro-accounts/{email}/auto-pro", s.getProAutomation)

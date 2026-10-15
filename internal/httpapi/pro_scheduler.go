@@ -218,7 +218,7 @@ func (s *Server) tickProSchedule(force bool) {
 		// Empty card ID delegates buying to startProAutomation, after its
 		// per-account lock and task/credential checks have succeeded.
 		var card gptpay.Card
-		if len(cards) > 0 {
+		if len(cards) > 0 && !cfg.EJHAutoOpen {
 			card = cards[0]
 		}
 		task := model.ProScheduleTask{Email: email, CardID: card.ID, Status: "queued"}
@@ -241,6 +241,9 @@ func (s *Server) tickProSchedule(force bool) {
 			last.Error = firstNonEmpty(reply.Error, "账号未启动，请检查配置或账号占用情况")
 		} else {
 			last.Status = "running"
+			if account, _, err := s.store.MailAccountCredential(email); err == nil {
+				last.CardID = account.ProAuto.CardID
+			}
 		}
 		if e = s.store.SaveProScheduleRun(run); e != nil {
 			return

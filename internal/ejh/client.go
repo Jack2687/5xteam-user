@@ -94,10 +94,23 @@ func (c *Client) post(ctx context.Context, address, token string, body any) (jso
 		}
 		return nil, &APIError{Code: code, Message: knownMessage(code)}
 	}
-	if len(env.Data) == 0 || string(env.Data) == "null" {
+	data := bytes.TrimSpace(env.Data)
+	// Some supplier responses encode data as a JSON string instead of an object.
+	// Normalize it here so authentication and every business method share support.
+	if len(data) > 0 && data[0] == '"' {
+		var inner string
+		if json.Unmarshal(data, &inner) != nil {
+			return nil, fmt.Errorf("卡台业务结果字符串解析失败，结果待核对")
+		}
+		data = bytes.TrimSpace([]byte(inner))
+	}
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
 		return nil, fmt.Errorf("卡台缺少业务结果，结果待核对")
 	}
-	return env.Data, nil
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("卡台业务结果不是有效 JSON，结果待核对")
+	}
+	return json.RawMessage(data), nil
 }
 func knownMessage(code string) string {
 	m := map[string]string{"000007": "验签失败", "000008": "参数缺失", "100004": "开卡余额不足", "100012": "不支持此结算币种", "100018": "卡类型权限未开通", "100022": "开卡过于频繁，请稍后核对", "100023": "开卡超过最大金额", "100024": "开卡金额过小", "300003": "存在未清算授权，无法销卡", "800003": "账户可用余额不足"}
@@ -125,7 +138,10 @@ func (c *Client) Token(ctx context.Context, cfg Settings, secret string) (string
 		Token    string          `json:"authToken"`
 		Validity json.RawMessage `json:"validity"`
 	}
-	if json.Unmarshal(raw, &v) != nil || v.Token == "" {
+	if json.Unmarshal(raw, &v) != nil {
+		return "", fmt.Errorf("认证响应格式异常，无法解析认证结果")
+	}
+	if v.Token == "" {
 		return "", fmt.Errorf("认证未返回 authToken")
 	}
 	ms, _ := strconv.ParseInt(strings.Trim(string(v.Validity), "\""), 10, 64)

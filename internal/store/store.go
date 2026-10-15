@@ -104,6 +104,10 @@ func Open(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := s.initializeProRestock(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := s.initializeProCardTypes(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -446,7 +450,11 @@ func (s *Store) SaveMailAccount(profile model.MailAccountProfile, credentials mo
 				profile.CreatedAt = now
 			}
 		case errors.Is(err, sql.ErrNoRows):
-			profile.ID = strconv.FormatInt(now.UnixNano(), 36)
+			var identity [16]byte
+			if _, err = rand.Read(identity[:]); err != nil {
+				return model.MailAccountProfile{}, err
+			}
+			profile.ID = fmt.Sprintf("mail-%x", identity)
 			profile.CreatedAt = now
 		default:
 			return model.MailAccountProfile{}, err
@@ -525,6 +533,9 @@ func preserveMailPlanCheck(profile *model.MailAccountProfile, old model.MailAcco
 }
 
 func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccountProfile) {
+	profile.ProRestockTaskID, profile.ProRestockTargetID = old.ProRestockTaskID, old.ProRestockTargetID
+	profile.ProPushStartedAt = old.ProPushStartedAt
+	profile.ProForceMergeNextAt, profile.ProForceMergeAttempts = old.ProForceMergeNextAt, old.ProForceMergeAttempts
 	profile.ProAuto = old.ProAuto
 	profile.ProMigration = old.ProMigration
 	profile.ProManualStages = old.ProManualStages
@@ -827,6 +838,9 @@ func (s *Store) DeleteMailAccount(email string) error {
 
 func (s *Store) deleteMailAccountLocked(email string, pro bool) error {
 	email = strings.ToLower(strings.TrimSpace(email))
+	if err := s.checkActiveRestockDeletionLocked(email); err != nil {
+		return err
+	}
 	var raw string
 	if err := s.db.QueryRow("SELECT profile FROM mail_accounts WHERE email=?", email).Scan(&raw); err == nil {
 		var p model.MailAccountProfile

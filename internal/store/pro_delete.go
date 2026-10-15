@@ -49,6 +49,9 @@ func (s *Store) checkProAccountDeletionLocked(email string) error {
 	if normalizeMailManagementScope(p.ManagementScope) != "pro" {
 		return errors.New("账号不在 Pro 管理中，未删除")
 	}
+	if err := s.checkActiveRestockDeletionLocked(email); err != nil {
+		return err
+	}
 	if p.ProWorkflowRunning || p.ProAuto.Status == "running" {
 		return errors.New("账号正在执行全自动或空间合并，请完成或停止后再删除")
 	}
@@ -63,6 +66,17 @@ func (s *Store) checkProAccountDeletionLocked(email string) error {
 	}
 	if pending > 0 {
 		return errors.New("账号有未结束的开通订单或在途占位，请确认开通结果后再删除")
+	}
+	return nil
+}
+
+func (s *Store) checkActiveRestockDeletionLocked(email string) error {
+	var active bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_restock_tasks WHERE email=? AND status NOT IN ('ready','failed','cancelled'))`, email).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return errors.New("账号存在未结束的自动补货任务，请先暂停并等待未提交预留撤销，或核验已提交任务")
 	}
 	return nil
 }

@@ -26,6 +26,8 @@ type Settings struct {
 // MailAccountProfile is the local mailbox projection used by registration.
 // Secrets are encrypted in Store and never returned by list APIs.
 type MailAccountProfile struct {
+	ProRestockTaskID        string                      `json:"pro_restock_task_id,omitempty"`
+	ProRestockTargetID      string                      `json:"pro_restock_target_id,omitempty"`
 	ProPushStartedAt        *time.Time                  `json:"pro_push_started_at,omitempty"`
 	ProForceMergeNextAt     *time.Time                  `json:"pro_force_merge_next_at,omitempty"`
 	ProForceMergeAttempts   int                         `json:"pro_force_merge_attempts,omitempty"`

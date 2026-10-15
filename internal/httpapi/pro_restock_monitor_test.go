@@ -1,0 +1,126 @@
+package httpapi
+
+import (
+	"chapt-space-user/internal/model"
+	"chapt-space-user/internal/restock"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+func TestProRestockMonitorQuality(t *testing.T) {
+	s, _, _ := gptPayFixture(t, func(http.ResponseWriter, *http.Request) {})
+	s.proAutoCancel()
+	s.proRestock.quotaNext = time.Now().Add(time.Hour)
+	mode := "zero"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data any
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			data = map[string]any{"access_token": "test-token"}
+		case "/api/v1/admin/groups/all":
+			data = []any{map[string]any{"id": 1, "name": "Pro", "platform": "openai"}}
+		case "/api/v1/admin/accounts":
+			account := map[string]any{"id": 1, "platform": "openai", "status": "active", "schedulable": true, "concurrency": 10, "group_ids": []int{1}}
+			if mode == "foreign_member" {
+				account["group_ids"] = []int{2}
+			}
+			items := []any{account}
+			total := 1
+			if mode == "duplicate" {
+				items = append(items, account)
+				total = 2
+			}
+			if mode == "upstream_fault" {
+				account["status"] = "error"
+			}
+			data = map[string]any{"items": items, "total": total}
+		case "/api/v1/admin/ops/concurrency":
+			if r.URL.Query().Get("strict") != "true" {
+				t.Error("missing strict query")
+			}
+			at := time.Now()
+			if mode == "stale" {
+				at = at.Add(-time.Hour)
+			}
+			load := map[string]any{"account_id": 1, "current_in_use": 0, "waiting_in_queue": 0, "max_capacity": 10, "load_known": true}
+			if mode == "unknown" {
+				delete(load, "load_known")
+			}
+			if mode == "capacity_changed" {
+				load["max_capacity"] = 20
+			}
+			quality := map[string]any{"complete": true, "expected": 1, "succeeded": 1, "failed": 0}
+			payload := map[string]any{"enabled": true, "timestamp": at, "quality": quality, "account": map[string]any{"1": load}}
+			if mode == "no_quality" {
+				delete(payload, "quality")
+			}
+			if mode == "missing_load" {
+				payload["account"] = map[string]any{}
+			}
+			data = payload
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
+	}))
+	defer server.Close()
+	c := restock.DefaultConfig()
+	c.GroupID = 1
+	c.Reserve = 1
+	p := model.ProSettings{Provider: "sub2", Sub2: model.Sub2Settings{URL: server.URL, Email: "admin@test.com", GroupIDs: []int64{1}, AccountConcurrency: 10}}
+	s.proRestock.quotaBinding = restockBinding(p)
+	for _, name := range []string{"zero", "no_quality", "unknown", "missing_load", "foreign_member", "duplicate", "stale", "capacity_changed", "upstream_fault"} {
+		t.Run(name, func(t *testing.T) {
+			mode = name
+			snap, err := s.collectProRestock(context.Background(), c, p, "test-secret")
+			if err != nil {
+				snap.Valid = false
+			}
+			d := restock.Evaluate(c, snap, nil, restock.Limits{}, 2, 10, 5, time.Now())
+			if name == "zero" {
+				if err != nil || !snap.Valid || !snap.LoadValid || !d.DemandKnown || d.Used != 0 {
+					t.Fatalf("legitimate zero rejected: %+v %v", snap, err)
+				}
+			} else if d.DemandKnown || d.Suggested != 0 {
+				t.Fatalf("unknown or faulty data used as demand: %+v", d)
+			}
+		})
+	}
+	mode = "zero"
+	for _, age := range []time.Duration{time.Minute, time.Hour, -time.Minute} {
+		s.proRestock.quota = map[int64][]restock.Window{1: {{Seconds: 3600, ResetAt: time.Now().Add(time.Hour).Unix(), Used: 100, At: time.Now().Add(-age)}}}
+		snap, err := s.collectProRestock(context.Background(), c, p, "test-secret")
+		if err != nil || len(snap.Accounts) != 1 {
+			t.Fatalf("quota monitor: %v", err)
+		}
+		wantReady := age != time.Minute
+		if snap.Accounts[0].Ready != wantReady {
+			t.Errorf("quota age %v: ready=%v want=%v", age, snap.Accounts[0].Ready, wantReady)
+		}
+	}
+}
+
+func TestProRestockStageETAIsAnchored(t *testing.T) {
+	now := time.Now()
+	started := now.Add(-4 * time.Minute)
+	oauth := now.Add(-time.Minute)
+	task := restock.Task{Binding: "pool", Plan: "pro", SubmittedAt: &started, Stages: map[string]time.Time{"oauth:running": oauth}}
+	ready := now.Add(2 * time.Minute)
+	historical := restock.Task{Binding: "pool", Plan: "pro", ReadyAt: &ready, Stages: map[string]time.Time{"oauth:running": now}}
+	history := []restock.Task{historical, historical}
+	if got := restockRemainingLead(task, history, 2, 10, now); got != 1 {
+		t.Fatalf("stage estimate %v", got)
+	}
+	if got := restockRemainingLead(task, history, 2, 10, now.Add(2*time.Minute)); got >= 0 {
+		t.Fatal("stalled ETA drifted")
+	}
+	historical.Plan = "other"
+	if got := restockRemainingLead(task, []restock.Task{historical}, 2, 10, now); got != 6 {
+		t.Fatal("untrusted history did not fall back")
+	}
+}

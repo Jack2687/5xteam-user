@@ -1,0 +1,133 @@
+package sub2
+
+import (
+	"chapt-space-user/internal/model"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+// MonitorAccount deliberately excludes tokens and raw credential payloads.
+type MonitorAccount struct {
+	ID               int64      `json:"id"`
+	Name             string     `json:"name"`
+	Platform         string     `json:"platform"`
+	Status           string     `json:"status"`
+	Schedulable      bool       `json:"schedulable"`
+	Concurrency      int        `json:"concurrency"`
+	GroupIDs         []int64    `json:"group_ids"`
+	Groups           []Group    `json:"groups"`
+	ExpiresAt        *int64     `json:"expires_at"`
+	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`
+	OverloadUntil    *time.Time `json:"overload_until"`
+	TempUntil        *time.Time `json:"temp_unschedulable_until"`
+	Credentials      struct {
+		Plan   string            `json:"plan_type"`
+		Models map[string]string `json:"model_mapping"`
+	} `json:"credentials"`
+}
+
+func (a MonitorAccount) Ready(now time.Time, models []string) bool {
+	if a.Platform != "openai" || a.Status != "active" || !a.Schedulable || a.Concurrency < 1 || (a.ExpiresAt != nil && *a.ExpiresAt <= now.Unix()) {
+		return false
+	}
+	for _, t := range []*time.Time{a.RateLimitResetAt, a.OverloadUntil, a.TempUntil} {
+		if t != nil && t.After(now) {
+			return false
+		}
+	}
+	if len(a.Credentials.Models) > 0 {
+		for _, m := range models {
+			if _, ok := a.Credentials.Models[m]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+func (c *Client) MonitorAccounts(ctx context.Context, v model.Sub2Settings, password string, group int64) ([]MonitorAccount, error) {
+	out := []MonitorAccount{}
+	seen := map[int64]bool{}
+	for page := 1; page <= 100; page++ {
+		raw, e := c.doJSON(ctx, v, password, http.MethodGet, fmt.Sprintf("/api/v1/admin/accounts?platform=openai&group_id=%d&page=%d&page_size=100", group, page), nil, nil)
+		if e != nil {
+			return nil, e
+		}
+		var result struct {
+			Items []MonitorAccount `json:"items"`
+			Total *int             `json:"total"`
+		}
+		if e = json.Unmarshal(raw, &result); e != nil {
+			return nil, e
+		}
+		if result.Total == nil {
+			return nil, errors.New("Sub2 账号分页缺少总数")
+		}
+		if len(result.Items) == 0 && len(out) < *result.Total {
+			return nil, errors.New("Sub2 账号分页不完整")
+		}
+		for _, a := range result.Items {
+			if a.ID < 1 || seen[a.ID] {
+				return nil, errors.New("Sub2 账号分页重复或 ID 无效")
+			}
+			seen[a.ID] = true
+			if len(a.GroupIDs) == 0 {
+				for _, g := range a.Groups {
+					a.GroupIDs = append(a.GroupIDs, g.ID)
+				}
+			}
+			member := false
+			for _, id := range a.GroupIDs {
+				if id == group {
+					member = true
+				}
+			}
+			if !member {
+				return nil, errors.New("Sub2 返回了不属于监控组的账号")
+			}
+			out = append(out, a)
+		}
+		if len(out) == *result.Total {
+			return out, nil
+		}
+		if len(out) > *result.Total {
+			return nil, errors.New("Sub2 账号总数在采集期间变化，请重新采样")
+		}
+	}
+	return nil, errors.New("Sub2 账号分页超出采集上限")
+}
+
+type MonitorLoad struct {
+	AccountID int64 `json:"account_id"`
+	Used      int   `json:"current_in_use"`
+	Waiting   int   `json:"waiting_in_queue"`
+	Capacity  int   `json:"max_capacity"`
+	Known     *bool `json:"load_known"`
+}
+type MonitorLoads struct {
+	Enabled bool                  `json:"enabled"`
+	At      time.Time             `json:"timestamp"`
+	Account map[int64]MonitorLoad `json:"account"`
+	Quality *struct {
+		Complete  bool `json:"complete"`
+		Expected  int  `json:"expected"`
+		Succeeded int  `json:"succeeded"`
+		Failed    int  `json:"failed"`
+	} `json:"quality"`
+}
+
+func (c *Client) MonitorConcurrency(ctx context.Context, v model.Sub2Settings, password string, group int64) (MonitorLoads, error) {
+	var result MonitorLoads
+	raw, e := c.doJSON(ctx, v, password, http.MethodGet, fmt.Sprintf("/api/v1/admin/ops/concurrency?platform=openai&group_id=%d&strict=true", group), nil, nil)
+	if e != nil {
+		return result, e
+	}
+	e = json.Unmarshal(raw, &result)
+	if e == nil && !result.Enabled {
+		e = errors.New("Sub2 实时监控未启用")
+	}
+	return result, e
+}

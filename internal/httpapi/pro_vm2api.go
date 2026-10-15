@@ -36,6 +36,14 @@ func (s *Server) proVMTarget(p model.MailAccountProfile) (model.DownstreamTarget
 
 func (s *Server) proAccountPushSettings(p model.MailAccountProfile) (model.ProSettings, string, string, error) {
 	v, password, key, err := s.store.ProSettings()
+	if err == nil && p.ProRestockTargetID != "" {
+		t, e := s.store.DownstreamTarget(p.ProRestockTargetID)
+		if e != nil {
+			return v, password, key, e
+		}
+		v.Provider, v.Sub2, password = t.Provider, t.Sub2, t.Secret
+		return v, password, key, nil
+	}
 	if err != nil || p.VM2 == nil {
 		return v, password, key, err
 	}

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"chapt-space-user/internal/model"
+	"chapt-space-user/internal/restock"
 )
 
 func TestProDeleteKeepsPaymentHistoryAndCardUsage(t *testing.T) {
@@ -34,6 +35,47 @@ func TestProDeleteKeepsPaymentHistoryAndCardUsage(t *testing.T) {
 	card, _, err := s.GPTPayCard("card")
 	if err != nil || card.OpenedAccounts != 1 {
 		t.Fatal("deleting account reset card usage", card.OpenedAccounts, err)
+	}
+}
+
+func TestProDeleteBlocksActiveRestock(t *testing.T) {
+	for _, status := range []string{"reserved", "submitting", "running", "verifying", "unknown", "attention", "ready", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			s := transferStore(t)
+			const email = "restock-delete@example.com"
+			transferSource(t, s, email)
+			c := restock.DefaultConfig()
+			c.Enabled, c.Mode, c.GroupID = true, "auto", 1
+			c, err := s.SaveProRestockConfig(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tasks, err := s.ReserveProRestock(restock.Decision{ID: "delete-guard", At: time.Now(), Version: c.Version, Suggested: 1}, "target", 0)
+			if err != nil || len(tasks) != 1 {
+				t.Fatalf("reserve: %v %v", tasks, err)
+			}
+			task := tasks[0]
+			task.Status = status
+			if err = s.SaveProRestockTask(task); err != nil {
+				t.Fatal(err)
+			}
+			if task.Active() {
+				if err = s.CheckProAccountDeletion(email); err == nil {
+					t.Error("preflight allowed active restock deletion")
+				}
+				if err = s.DeleteMailAccount(email); err == nil {
+					t.Fatal("mailbox deletion bypassed active restock guard")
+				}
+				if err = s.DeleteProAccount(email); err == nil {
+					t.Fatal("deleted active restock account")
+				}
+			} else if err = s.DeleteProAccount(email); err != nil {
+				t.Fatal(err)
+			}
+			if linked, err := s.ProRestockDecisionTasks(task.DecisionID); err != nil || len(linked) != 1 {
+				t.Fatal("restock history lost", err)
+			}
+		})
 	}
 }
 

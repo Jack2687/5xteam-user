@@ -1,0 +1,149 @@
+--- a/backend/internal/service/ops_realtime_models.go
++++ b/backend/internal/service/ops_realtime_models.go
+@@ -26,6 +26,7 @@
+ 
+ // AccountConcurrencyInfo represents real-time concurrency usage for a single account.
+ type AccountConcurrencyInfo struct {
++	LoadKnown      bool    `json:"load_known"`
+ 	AccountID      int64   `json:"account_id"`
+ 	AccountName    string  `json:"account_name"`
+ 	Platform       string  `json:"platform"`
+--- a/backend/internal/service/ops_concurrency.go
++++ b/backend/internal/service/ops_concurrency.go
+@@ -95,7 +95,7 @@
+ 		if end > len(batch) {
+ 			end = len(batch)
+ 		}
+-		part, err := s.concurrencyService.GetAccountsLoadBatch(ctx, batch[i:end])
++		part, err := s.concurrencyService.GetAccountsLoadBatchFresh(ctx, batch[i:end])
+ 		if err != nil {
+ 			// Best-effort: return zeros rather than failing the ops UI.
+ 			log.Printf("[Ops] GetAccountsLoadBatch failed: %v", err)
+@@ -179,6 +179,7 @@
+ 		if _, ok := account[acc.ID]; !ok {
+ 			info := &AccountConcurrencyInfo{
+ 				AccountID:      acc.ID,
++				LoadKnown:      load != nil && load.AccountID == acc.ID && load.CurrentConcurrency >= 0 && load.WaitingCount >= 0,
+ 				AccountName:    acc.Name,
+ 				Platform:       acc.Platform,
+ 				GroupID:        displayGroupID,
+--- a/backend/internal/handler/admin/ops_realtime_handler.go
++++ b/backend/internal/handler/admin/ops_realtime_handler.go
+@@ -56,7 +56,14 @@
+ 		return
+ 	}
+ 
++	succeeded := 0
++	for _, a := range account {
++		if a.LoadKnown {
++			succeeded++
++		}
++	}
+ 	payload := gin.H{
++		"quality":  gin.H{"complete": succeeded == len(account), "expected": len(account), "succeeded": succeeded, "failed": len(account) - succeeded},
+ 		"enabled":  true,
+ 		"platform": platform,
+ 		"group":    group,
+@@ -64,6 +71,10 @@
+ 	}
+ 	if collectedAt != nil {
+ 		payload["timestamp"] = collectedAt.UTC()
++	}
++	if c.Query("strict") == "true" && succeeded != len(account) {
++		response.Error(c, http.StatusServiceUnavailable, "Concurrency collection incomplete; do not interpret missing load as zero")
++		return
+ 	}
+ 	response.Success(c, payload)
+ }
+--- a/backend/internal/repository/concurrency_cache.go
++++ b/backend/internal/repository/concurrency_cache.go
+@@ -991,6 +991,15 @@
+ 
+ 	loadMap := make(map[int64]*service.AccountLoadInfo, len(accounts))
+ 	for _, ac := range cmds {
++		if err := ac.zcardCmd.Err(); err != nil {
++			return nil, fmt.Errorf("account slots: %w", err)
++		}
++		if err := ac.liveCmd.Err(); err != nil {
++			return nil, fmt.Errorf("account live slots: %w", err)
++		}
++		if _, err := ac.getCmd.Int(); err != nil && !errors.Is(err, redis.Nil) {
++			return nil, fmt.Errorf("account waiting: %w", err)
++		}
+ 		currentConcurrency := int(ac.zcardCmd.Val() + ac.liveCmd.Val())
+ 		waitingCount := 0
+ 		if v, err := ac.getCmd.Int(); err == nil {
+--- /dev/null
++++ b/backend/internal/repository/pro_restock_quality_test.go
+@@ -0,0 +1,35 @@
++package repository
++
++import (
++	"context"
++	"github.com/Wei-Shaw/sub2api/internal/service"
++	"github.com/alicebob/miniredis/v2"
++	"github.com/redis/go-redis/v9"
++	"strconv"
++	"testing"
++)
++
++func TestProRestockQualityRejectsHiddenPipelineFailure(t *testing.T) {
++	for _, bad := range []string{"none", "slot", "waiting"} {
++		t.Run(bad, func(t *testing.T) {
++			server := miniredis.RunT(t)
++			client := redis.NewClient(&redis.Options{Addr: server.Addr()})
++			defer client.Close()
++			cache := NewConcurrencyCache(client, 15, 900)
++			if bad == "slot" {
++				server.Set(accountSlotKeyPrefix+strconv.Itoa(2), "wrong-type")
++			}
++			if bad == "waiting" {
++				server.Set(accountWaitKeyPrefix+strconv.Itoa(2), "not-a-number")
++			}
++			loads, err := cache.GetAccountsLoadBatch(context.Background(), []service.AccountWithConcurrency{{ID: 1, MaxConcurrency: 10}, {ID: 2, MaxConcurrency: 10}})
++			if bad == "none" {
++				if err != nil || len(loads) != 2 || loads[1].CurrentConcurrency != 0 {
++					t.Fatalf("valid zero failed: %v", err)
++				}
++			} else if err == nil {
++				t.Fatal("redis.Nil on the first account hid a later failure")
++			}
++		})
++	}
++}
+--- /dev/null
++++ b/backend/internal/service/pro_restock_quality_test.go
+@@ -0,0 +1,33 @@
++package service
++
++import (
++	"context"
++	"errors"
++	"testing"
++)
++
++type restockQualityCache struct {
++	ConcurrencyCache
++	fail bool
++}
++
++func (c *restockQualityCache) GetAccountsLoadBatch(context.Context, []AccountWithConcurrency) (map[int64]*AccountLoadInfo, error) {
++	if c.fail {
++		return nil, errors.New("redis failure")
++	}
++	return map[int64]*AccountLoadInfo{1: {AccountID: 1}}, nil
++}
++func TestProRestockQualityFreshCollection(t *testing.T) {
++	cache := &restockQualityCache{}
++	svc := &OpsService{concurrencyService: NewConcurrencyService(cache)}
++	accounts := []Account{{ID: 1, Concurrency: 10}}
++	first := svc.getAccountsLoadMapBestEffort(context.Background(), accounts)
++	if first[1] == nil || first[1].CurrentConcurrency != 0 {
++		t.Fatal("valid zero lost")
++	}
++	cache.fail = true
++	second := svc.getAccountsLoadMapBestEffort(context.Background(), accounts)
++	if len(second) != 0 {
++		t.Fatal("cached or failed load claimed as current")
++	}
++}

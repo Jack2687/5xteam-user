@@ -169,7 +169,7 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 
 // Both manual purchases and automation reservations use the same serialized
 // database check; a UI selection never constitutes a capacity reservation.
-func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool) error {
+func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool, restockIDs ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
@@ -179,6 +179,13 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool) error 
 	defer tx.Rollback()
 	if err = lockProCardAdmission(tx); err != nil {
 		return err
+	}
+	var owner string
+	if err = tx.QueryRow(`SELECT coalesce(json_extract(profile,'$.pro_restock_task_id'),'') FROM mail_accounts WHERE email=?`, email).Scan(&owner); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if owner != "" && (len(restockIDs) == 0 || restockIDs[0] != owner) {
+		return errors.New("账号已由 Pro 自动补货领取")
 	}
 	var raw, sealed string
 	if err = tx.QueryRow(`SELECT profile,encrypted_secret FROM gptpay_cards WHERE id=?`, cardID).Scan(&raw, &sealed); err != nil {

@@ -12,6 +12,7 @@ import MailManagementView from './components/MailManagementView.vue'
 import SmsManagementView from './components/SmsManagementView.vue'
 import OpenAIAccountsView from './components/OpenAIAccountsView.vue'
 import ProManagementView from './components/ProManagementView.vue'
+import ProRestockView from './components/ProRestockView.vue'
 import EJHManagementView from './components/EJHManagementView.vue'
 import ProxiesView from './components/ProxiesView.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -21,6 +22,7 @@ import LoginView from './components/LoginView.vue'
 
 const nav = [
   { id: 'pro', label: 'Pro 管理', icon: Crown, group: '账号' },
+  { id: 'pro-restock', label: 'Pro 自动补货', icon: Waypoints, group: '账号' },
   { id: 'ejh', label: 'EJH 卡台', icon: Crown, group: '卡片与回款' },
   { id: 'space-merge', label: '空间合并', icon: ArrowLeftRight, group: '空间合并' },
   { id: 'mail', label: '邮件管理', icon: Inbox, group: '账号流水线' },
@@ -153,6 +155,7 @@ onMounted(checkAuth)
     <div class="topbar-actions" aria-label="账户与系统操作"><StatusPill :tone="health ? 'success' : 'danger'">{{ health ? '服务正常' : '连接异常' }}</StatusPill><button class="icon-button" type="button" title="修改密码" @click="passwordDialog = true"><KeyRound :size="17" /></button><button class="icon-button" type="button" title="退出登录" @click="logout"><LogOut :size="17" /></button><button class="icon-button theme-button" type="button" :title="theme === 'dark' ? '切换浅色主题' : '切换深色主题'" @click="theme = theme === 'dark' ? 'light' : 'dark'"><Sun v-if="theme === 'dark'" :size="17" /><Moon v-else :size="17" /></button><button class="icon-button mobile-menu" type="button" :aria-label="mobileOpen ? '关闭导航' : '打开导航'" @click="mobileOpen = !mobileOpen"><X v-if="mobileOpen" :size="18" /><Menu v-else :size="17" /></button></div>
 
     <main class="app-main">
+      <ProRestockView v-if="settings && current === 'pro-restock'" />
       <div v-if="loadingError" class="global-alert"><strong>数据加载失败</strong><span>{{ loadingError }}</span><button type="button" @click="loadingError = ''; load()">重试</button></div>
       <ProManagementView v-if="settings && current === 'pro'" :accounts="proAccounts" :admin-accounts="adminAccounts" :default-page-size="settings.default_page_size || 10" @reload="syncProAccounts" @open-ejh-card="openEJHCard" />
       <EJHManagementView v-if="settings && current === 'ejh'" :entry="ejhEntry" @entry-applied="ejhEntry=null" />

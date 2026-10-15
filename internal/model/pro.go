@@ -3,22 +3,28 @@ package model
 import "time"
 
 type ProAutoState struct {
-	ProvisionedAt        *time.Time        `json:"provisioned_at,omitempty"`
-	ID                   string            `json:"id,omitempty"`
-	Status               string            `json:"status,omitempty"`
-	Stage                string            `json:"stage,omitempty"`
-	Steps                map[string]string `json:"steps,omitempty"`
-	Error                string            `json:"error,omitempty"`
-	OrderID              string            `json:"order_id,omitempty"`
-	PlanCode             string            `json:"plan_code,omitempty"`
-	CardID               string            `json:"card_id,omitempty"`
-	ProxyName            string            `json:"proxy_name,omitempty"`
-	ExitIP               string            `json:"exit_ip,omitempty"`
-	QuotaUsedThreshold   float64           `json:"quota_used_threshold"`
-	QuotaIntervalSeconds int               `json:"quota_interval_seconds"`
-	StartedAt            time.Time         `json:"started_at,omitempty"`
-	UpdatedAt            time.Time         `json:"updated_at,omitempty"`
-	NextCheckAt          *time.Time        `json:"next_check_at,omitempty"`
+	StopRequested        bool                 `json:"stop_requested,omitempty"`
+	RestockRecoveries    int                  `json:"restock_recoveries,omitempty"`
+	RestockRecoveryAt    *time.Time           `json:"restock_recovery_at,omitempty"`
+	RestockBinding       string               `json:"restock_binding,omitempty"`
+	QuotaPlan            string               `json:"quota_plan,omitempty"`
+	StageTimes           map[string]time.Time `json:"stage_times,omitempty"`
+	ProvisionedAt        *time.Time           `json:"provisioned_at,omitempty"`
+	ID                   string               `json:"id,omitempty"`
+	Status               string               `json:"status,omitempty"`
+	Stage                string               `json:"stage,omitempty"`
+	Steps                map[string]string    `json:"steps,omitempty"`
+	Error                string               `json:"error,omitempty"`
+	OrderID              string               `json:"order_id,omitempty"`
+	PlanCode             string               `json:"plan_code,omitempty"`
+	CardID               string               `json:"card_id,omitempty"`
+	ProxyName            string               `json:"proxy_name,omitempty"`
+	ExitIP               string               `json:"exit_ip,omitempty"`
+	QuotaUsedThreshold   float64              `json:"quota_used_threshold"`
+	QuotaIntervalSeconds int                  `json:"quota_interval_seconds"`
+	StartedAt            time.Time            `json:"started_at,omitempty"`
+	UpdatedAt            time.Time            `json:"updated_at,omitempty"`
+	NextCheckAt          *time.Time           `json:"next_check_at,omitempty"`
 }
 
 // ProSettings is intentionally independent from Team rotation push settings.

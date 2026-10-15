@@ -289,7 +289,11 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	id := "pro-" + input.RequestID
 	if existing, _, e := s.store.GPTPayOrder(id); e == nil {
-		if existing.Email != email || existing.CardID != input.CardID || existing.PlanCode != input.PlanCode || gptpay.Provider(existing.Provider) != gptpay.Provider(input.Provider) ||
+		requestedCard := existing.CardID
+		if existing.RequestedCardID != nil {
+			requestedCard = *existing.RequestedCardID
+		}
+		if existing.Email != email || requestedCard != input.CardID || existing.PlanCode != input.PlanCode || gptpay.Provider(existing.Provider) != gptpay.Provider(input.Provider) ||
 			(input.Country != nil && strings.ToUpper(strings.TrimSpace(*input.Country)) != existing.Country) ||
 			(input.CreditQuantity != nil && *input.CreditQuantity != existing.CreditQuantity) {
 			writeAPI(w, 409, nil, "请求编号已用于不同的开通参数")
@@ -321,14 +325,17 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "供应商、套餐、国家或点数配置已变化，请重新打开开通窗口确认")
 		return
 	}
-	card, secret, err := s.store.GPTPayCard(input.CardID)
-	if err != nil || !card.Enabled {
-		writeAPI(w, 400, nil, "请选择已启用的银行卡")
-		return
-	}
-	if err = gptpay.ValidateCard(secret, time.Now()); err != nil {
-		writeAPI(w, 400, nil, err.Error())
-		return
+	// Preserve validation responses for an explicitly selected invalid card.
+	if input.CardID != "" {
+		selected, secret, e := s.store.GPTPayCard(input.CardID)
+		if e != nil || !selected.Enabled {
+			writeAPI(w, 400, nil, "请选择已启用的银行卡")
+			return
+		}
+		if e = gptpay.ValidateCard(secret, time.Now()); e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
 	}
 	session, err := gptPaySession(p, c)
 	if err == nil {
@@ -341,8 +348,24 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
+	pro, _, _, err := s.store.ProSettings()
+	if err != nil {
+		writeAPI(w, 500, nil, "读取自动补卡配置失败")
+		return
+	}
+	if s.proAutomationRunning(email) || s.proLoginAlreadyRunning(email) {
+		writeAPI(w, 409, nil, "账号正在执行登录或自动任务，未购买新卡")
+		return
+	}
+	card, secret, err := s.reserveProStartCard(r.Context(), email, input.CardID, pro.EJHAutoOpen, false)
+	if err != nil {
+		writeAPI(w, 409, nil, err.Error())
+		return
+	}
+	defer s.store.ReleaseProCard(email)
 	snapshot := gptpay.NewSnapshot(v, key, secret, session)
 	order := gptpay.Order{Provider: v.Provider, Country: v.Country, CreditQuantity: v.CreditQuantity, ID: id, Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: v.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	order.RequestedCardID = &input.CardID
 	if err = s.store.CreateGPTPayOrder(order, snapshot); err != nil {
 		writeAPI(w, 409, nil, "未提交开通订单："+err.Error())
 		return

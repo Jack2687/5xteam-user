@@ -96,6 +96,21 @@ func (s *Store) ExportProAccounts(emails []string, downstream model.ProDownstrea
 			}
 		}
 		entry.Downstream = downstream
+		if entry.Profile.ProRestockTargetID != "" {
+			var encrypted string
+			if err = tx.QueryRow("SELECT encrypted_payload FROM downstream_connections WHERE id=?", entry.Profile.ProRestockTargetID).Scan(&encrypted); err != nil {
+				return out, err
+			}
+			plain, e := s.decrypt(encrypted)
+			if e != nil {
+				return out, e
+			}
+			var target model.DownstreamTarget
+			if e = json.Unmarshal([]byte(plain), &target); e != nil {
+				return out, e
+			}
+			entry.Downstream = model.ProDownstream(model.ProSettings{Provider: target.Provider, Sub2: target.Sub2})
+		}
 		if entry.Profile.ProMigration != nil {
 			entry.Downstream = entry.Profile.ProMigration.Downstream
 		}
@@ -312,6 +327,13 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 		if proImportBusy(old) {
 			return result, errors.New("账号正在执行任务，不能覆盖")
 		}
+		var restockActive bool
+		if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_restock_tasks WHERE email=? AND status NOT IN ('ready','failed','cancelled'))`, result.Email).Scan(&restockActive); err != nil {
+			return result, err
+		}
+		if restockActive {
+			return result, errors.New("账号存在自动补货预留或在途任务，不能覆盖迁移快照")
+		}
 		if old.ProMigration != nil && exportedAt.Before(old.ProMigration.ExportedAt) {
 			return result, errors.New("文件比已导入版本更旧，不能回退")
 		}
@@ -326,6 +348,12 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 		return result, errors.New("该账号仍在 Team 轮转列表中，不能覆盖为 Pro 迁移账号")
 	}
 	p := entry.Profile
+	// Restock intents and encrypted target IDs belong to the source database.
+	// Imports retain the ordinary downstream identity check, never a stale lock.
+	p.ProRestockTaskID, p.ProRestockTargetID = "", ""
+	if exists {
+		p.ProRestockTaskID, p.ProRestockTargetID = old.ProRestockTaskID, old.ProRestockTargetID
+	}
 	if exists {
 		p.ID = old.ID
 	} else {

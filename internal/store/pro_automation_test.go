@@ -54,3 +54,35 @@ func TestProAutomationRecoveryAndDueSelection(t *testing.T) {
 		t.Fatal("lost post-purchase token milestone")
 	}
 }
+
+func TestProAutomationUserStopSurvivesLateWritesAndRestart(t *testing.T) {
+	s := transferStore(t)
+	const email = "stopped-restock@example.com"
+	transferSource(t, s, email)
+	_, err := s.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		p.ProAuto = model.ProAutoState{ID: "stopped", StopRequested: true, Status: "stopped", Steps: map[string]string{"oauth": "completed"}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A quota response arriving after the stop must not schedule more work.
+	p, err := s.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		next := time.Now().Add(-time.Minute)
+		p.ProAuto.Status, p.ProAuto.NextCheckAt = "waiting_quota", &next
+		p.TransferStatus = "completed"
+	})
+	if err != nil || p.ProAuto.Status != "stopped" || p.ProAuto.NextCheckAt != nil {
+		t.Fatal("late result erased stop", err)
+	}
+	if err = s.RecoverProAutomations(); err != nil {
+		t.Fatal(err)
+	}
+	p, _, err = s.MailAccountCredential(email)
+	if err != nil || p.ProAuto.Status != "stopped" || !p.ProAuto.StopRequested {
+		t.Fatal("restart erased stop", err)
+	}
+	due, err := s.DueProAutomations(time.Now())
+	if err != nil || len(due) != 0 {
+		t.Fatal("stopped workflow scheduled", err)
+	}
+}

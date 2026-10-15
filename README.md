@@ -1,5 +1,7 @@
 # ChatGPT Space Merge
 
+新增独立 [Pro 自动补货](docs/pro-auto-restock.md)：仅 Sub2、时间与并发双规则、逐号在途跟踪，复用全自动 Pro。自动执行需要 Sub2 采集质量扩展，默认关闭。
+
 Tokenseek 已支持国家选择、Go/Plus/Pro 三档、Plus 升级和 Codex 点数，见 [国家与套餐配置](docs/tokenseek-plans.md)。
 
 本机可视化的 ChatGPT Team/Business 空间合并工具。既可在任务台执行完整流程，也可按天拆分执行：

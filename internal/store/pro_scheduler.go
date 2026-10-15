@@ -8,20 +8,23 @@ import (
 	"time"
 )
 
-func (s *Store) ProScheduleCandidates(limit int) ([]string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT m.email FROM mail_accounts m WHERE json_extract(m.profile,'$.management_scope')='pro'
+const proScheduleCandidateSQL = `SELECT m.email FROM mail_accounts m WHERE json_extract(m.profile,'$.management_scope')='pro'
 	AND coalesce(json_extract(m.profile,'$.space_merged_once'),0)=0 AND coalesce(json_extract(m.profile,'$.pro_workflow_running'),0)=0
-	AND coalesce(json_extract(m.profile,'$.pro_auto.id'),'')='' AND json_type(m.profile,'$.pro_migration') IS NULL
+	AND coalesce(json_extract(m.profile,'$.pro_restock_task_id'),'')='' AND coalesce(json_extract(m.profile,'$.pro_auto.id'),'')='' AND json_type(m.profile,'$.pro_migration') IS NULL
+	AND coalesce(json_extract(m.profile,'$.pro_auto.stop_requested'),0)=0
 	AND coalesce(json_extract(m.profile,'$.chatgpt_status'),'') NOT IN ('dead','disabled','invalid')
 	AND coalesce(json_extract(m.profile,'$.push_status'),'') NOT IN ('completed','running')
 	AND coalesce(json_extract(m.profile,'$.pro_invite_status'),'') NOT IN ('completed','running')
-	AND NOT `+proOpenedCondition+`
+	AND NOT ` + proOpenedCondition + `
 	AND NOT EXISTS(SELECT 1 FROM gptpay_orders o WHERE o.email=m.email)
 	AND NOT EXISTS(SELECT 1 FROM pro_card_reservations r WHERE r.email=m.email)
 	AND NOT EXISTS(SELECT 1 FROM json_each(json_extract(m.profile,'$.pro_manual_stages')) j WHERE json_extract(j.value,'$.status')='running')
-	ORDER BY json_extract(m.profile,'$.created_at'),m.email LIMIT ?`, limit)
+	ORDER BY json_extract(m.profile,'$.created_at'),m.email LIMIT ?`
+
+func (s *Store) ProScheduleCandidates(limit int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(proScheduleCandidateSQL, limit)
 	if err != nil {
 		return nil, err
 	}

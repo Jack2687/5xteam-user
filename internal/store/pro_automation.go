@@ -47,6 +47,13 @@ func (s *Store) RecoverProAutomations() error {
 		if err = json.Unmarshal([]byte(raw), &p); err != nil {
 			break
 		}
+		if p.ProAuto.StopRequested {
+			p.ProAuto.Status = "stopped"
+			p.ProAuto.NextCheckAt = nil
+			p.ProAuto.Error = "用户已停止全自动流程"
+			updates[email] = p
+			continue
+		}
 		if p.ReconcileProAutoMerge(time.Now()) {
 			updates[email] = p
 			continue

@@ -132,6 +132,7 @@ type Order struct {
 	ID                string      `json:"id"`
 	Email             string      `json:"email"`
 	CardID            string      `json:"card_id"`
+	RequestedCardID   *string     `json:"requested_card_id,omitempty"`
 	CardName          string      `json:"card_name"`
 	CardLast4         string      `json:"card_last4"`
 	PlanCode          string      `json:"plan_code"`

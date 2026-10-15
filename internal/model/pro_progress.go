@@ -23,7 +23,7 @@ type ProStageDisplay struct {
 // automation, replay payment, resume stopped/import-paused work or repeat merge.
 func (p *MailAccountProfile) ReconcileProAutoManual(now time.Time) bool {
 	a := &p.ProAuto
-	if p.ManagementScope != "pro" || a.ID == "" || p.ProWorkflowRunning || p.SpaceMergedOnce || p.TransferStatus == "completed" ||
+	if p.ManagementScope != "pro" || a.ID == "" || a.StopRequested || p.ProWorkflowRunning || p.SpaceMergedOnce || p.TransferStatus == "completed" ||
 		(p.ProMigration != nil && p.ProMigration.Paused) || (a.Status != "failed" && a.Status != "interrupted" && a.Status != "awaiting_push") ||
 		(a.Stage != "oauth" && a.Stage != "push") || a.Steps["recharge"] != "completed" ||
 		p.ChatGPTStatus == "dead" || p.OAuthStatus != "completed" || !p.AccessTokenPresent || !p.RefreshTokenPresent ||
@@ -67,6 +67,15 @@ func (s ProAutoState) DisplayError() string {
 // An actual (or explicitly confirmed) merge ends quota waiting even when it
 // was performed manually. Display-only manual progress cannot satisfy this.
 func (p *MailAccountProfile) ReconcileProAutoMerge(now time.Time) bool {
+	if p.ProAuto.StopRequested {
+		changed := p.ProAuto.Status != "stopped" || p.ProAuto.NextCheckAt != nil || p.ProAuto.Error != "用户已停止全自动流程"
+		p.ProAuto.Status, p.ProAuto.Error = "stopped", "用户已停止全自动流程"
+		p.ProAuto.NextCheckAt = nil
+		if changed {
+			p.ProAuto.UpdatedAt = now
+		}
+		return changed
+	}
 	if p.ProAuto.ID == "" || p.TransferStatus != "completed" {
 		return false
 	}
