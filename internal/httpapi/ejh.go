@@ -54,6 +54,7 @@ func (s *Server) ejhRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/ejh/cards/{id}/action", s.ejhCardAction)
 	m.HandleFunc("POST /api/ejh/operations/{id}/resolve", s.resolveEJHOperation)
 	m.HandleFunc("PUT /api/ejh/trades/{id}/match", s.matchEJHTrade)
+	m.HandleFunc("PUT /api/ejh/cases/{id}/charge", s.linkEJHCharge)
 	m.HandleFunc("POST /api/ejh/trades/{id}/unmatch", s.unmatchEJHTrade)
 }
 func (s *Server) getEJHSettings(w http.ResponseWriter, r *http.Request) {

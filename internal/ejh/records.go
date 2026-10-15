@@ -44,27 +44,31 @@ type TradeRecord struct {
 	ConfirmedAt     *time.Time `json:"confirmed_at,omitempty"`
 }
 type Case struct {
-	CardType        string            `json:"card_type"`
-	EJHCardID       string            `json:"ejh_card_id,omitempty"`
-	OriginalTradeID string            `json:"original_trade_id"`
-	ID              string            `json:"id"`
-	Email           string            `json:"email"`
-	CardID          string            `json:"card_id"`
-	CardName        string            `json:"card_name"`
-	Last4           string            `json:"last4"`
-	Plan            string            `json:"plan"`
-	Provider        string            `json:"provider"`
-	PaymentStatus   string            `json:"payment_status"`
-	CreatedAt       time.Time         `json:"created_at"`
-	OpenedAt        *time.Time        `json:"opened_at,omitempty"`
-	RequestedAt     *time.Time        `json:"requested_at,omitempty"`
-	RequestSource   string            `json:"request_source"`
-	Deleted         bool              `json:"deleted"`
-	State           string            `json:"state"`
-	Returns         []TradeRecord     `json:"returns"`
-	Amounts         map[string]string `json:"amounts"`
-	Reversals       int               `json:"reversals"`
-	Refunds         int               `json:"refunds"`
+	Charge          *ActivationCharge  `json:"charge,omitempty"`
+	Credits         *ActivationCredits `json:"credits,omitempty"`
+	ChargeEvidence  string             `json:"charge_evidence,omitempty"`
+	ChargeLinkedAt  *time.Time         `json:"charge_linked_at,omitempty"`
+	CardType        string             `json:"card_type"`
+	EJHCardID       string             `json:"ejh_card_id,omitempty"`
+	OriginalTradeID string             `json:"original_trade_id"`
+	ID              string             `json:"id"`
+	Email           string             `json:"email"`
+	CardID          string             `json:"card_id"`
+	CardName        string             `json:"card_name"`
+	Last4           string             `json:"last4"`
+	Plan            string             `json:"plan"`
+	Provider        string             `json:"provider"`
+	PaymentStatus   string             `json:"payment_status"`
+	CreatedAt       time.Time          `json:"created_at"`
+	OpenedAt        *time.Time         `json:"opened_at,omitempty"`
+	RequestedAt     *time.Time         `json:"requested_at,omitempty"`
+	RequestSource   string             `json:"request_source"`
+	Deleted         bool               `json:"deleted"`
+	State           string             `json:"state"`
+	Returns         []TradeRecord      `json:"returns"`
+	Amounts         map[string]string  `json:"amounts"`
+	Reversals       int                `json:"reversals"`
+	Refunds         int                `json:"refunds"`
 }
 type SyncState struct {
 	LastSuccess *time.Time `json:"last_success,omitempty"`

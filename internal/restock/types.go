@@ -88,12 +88,14 @@ func (c Config) Validate() error {
 }
 
 type Window struct {
-	Seconds int64     `json:"seconds"`
-	ResetAt int64     `json:"reset_at"`
-	Used    float64   `json:"used"`
-	Rate    float64   `json:"rate"` // percentage points/minute, same plan/window only
-	Samples int       `json:"samples"`
-	At      time.Time `json:"at"`
+	Seconds       int64     `json:"seconds"`
+	ResetAt       int64     `json:"reset_at"`
+	Used          float64   `json:"used"`
+	Rate          float64   `json:"rate"`                    // percentage points/minute, same plan/window only
+	ObservedRate  *float64  `json:"observed_rate,omitempty"` // latest interval, before conservative smoothing
+	SampleSeconds float64   `json:"sample_seconds,omitempty"`
+	Samples       int       `json:"samples"`
+	At            time.Time `json:"at"`
 }
 
 // Fresh prevents old quota samples from reducing current or future capacity.
@@ -176,6 +178,7 @@ type Decision struct {
 	Reason          string    `json:"reason"`
 	Warnings        []string  `json:"warnings"`
 	SupplyMinutes   *float64  `json:"supply_minutes"`
+	SupplyCapped    bool      `json:"supply_capped"`
 	Coverage        float64   `json:"coverage"`
 	Usable          int       `json:"usable"`
 	Capacity        int       `json:"capacity"`

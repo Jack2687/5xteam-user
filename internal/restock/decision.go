@@ -10,6 +10,7 @@ func ObserveWindows(current, previous []Window, samePlan bool, maxAge time.Durat
 	for i := range current {
 		w := &current[i]
 		w.Rate, w.Samples = 0, 0
+		w.ObservedRate, w.SampleSeconds = nil, 0
 		if !samePlan {
 			continue
 		}
@@ -19,6 +20,7 @@ func ObserveWindows(current, previous []Window, samePlan bool, maxAge time.Durat
 				continue
 			}
 			rate := (w.Used - p.Used) / elapsed.Minutes()
+			w.ObservedRate, w.SampleSeconds = &rate, elapsed.Seconds()
 			// React to rising consumption immediately; decay more slowly after a fall.
 			w.Rate = math.Max(rate, p.Rate*.6+rate*.4)
 			w.Samples = p.Samples + 1
@@ -121,10 +123,11 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		d.Warnings = append(d.Warnings, "预计就绪或补后目标超出预测上限，暂停时间侧新增；并发和最低备用仍独立生效")
 	}
 	if c.TimeEnabled && timeWithinHorizon {
-		base, coverage, ok := forecast(c, s, tasks, 0, newSlots, lead, now, 0)
+		base, coverage, ok, capped := forecast(c, s, tasks, 0, newSlots, lead, now, 0)
 		d.Coverage = coverage
 		if ok {
 			d.SupplyMinutes = &base
+			d.SupplyCapped = capped
 			if base < lead {
 				d.Warnings = append(d.Warnings, "到货前可能出现供给缺口；新号不能消除已经发生的等待")
 			}
@@ -134,14 +137,14 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 				lo, hi := 0, c.MaxInflight
 				for lo < hi {
 					mid := (lo + hi) / 2
-					until, _, _ := forecast(c, s, tasks, mid, newSlots, lead, now, lead)
+					until, _, _, _ := forecast(c, s, tasks, mid, newSlots, lead, now, lead)
 					if until >= d.TargetMinutes {
 						hi = mid
 					} else {
 						lo = mid + 1
 					}
 				}
-				until, _, _ := forecast(c, s, tasks, lo, newSlots, lead, now, lead)
+				until, _, _, _ := forecast(c, s, tasks, lo, newSlots, lead, now, lead)
 				if until >= d.TargetMinutes {
 					d.TimeNeed = lo
 				} else {
@@ -236,7 +239,7 @@ func usableAt(a Account, t, now time.Time, maxAge time.Duration) bool {
 // and arrivals on a 15-second timeline; money and tokens never enter this model.
 // A gap before new arrivals is reported separately, not compensated by buying
 // an unbounded number of accounts that will arrive too late.
-func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64, now time.Time, checkFrom float64) (float64, float64, bool) {
+func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64, now time.Time, checkFrom float64) (float64, float64, bool, bool) {
 	type supply struct {
 		a         Account
 		arrive    float64
@@ -265,18 +268,18 @@ func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64
 			continue
 		}
 		if s.NewPlan == "" || s.NewPlan != a.Plan {
-			return 0, 0, false
+			return 0, 0, false, false
 		}
 		covered++
 		if plan != "" && plan != a.Plan {
-			return 0, 0, false
+			return 0, 0, false, false
 		}
 		plan = a.Plan
 		if template == nil {
 			template = a.Windows
 		} else {
 			if len(template) != len(a.Windows) {
-				return 0, 0, false
+				return 0, 0, false, false
 			}
 			for _, w := range template {
 				found := false
@@ -286,7 +289,7 @@ func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64
 					}
 				}
 				if !found {
-					return 0, 0, false
+					return 0, 0, false, false
 				}
 			}
 		}
@@ -300,7 +303,7 @@ func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64
 	}
 	coverage := float64(covered) * 100 / float64(max(1, eligible))
 	if coverage < float64(c.QuotaCoverage) || len(pool) == 0 {
-		return 0, coverage, false
+		return 0, coverage, false, false
 	}
 	positive := false
 	for _, v := range rates {
@@ -309,7 +312,7 @@ func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64
 		}
 	}
 	if !positive {
-		return 0, coverage, false
+		return 0, coverage, false, false
 	}
 	add := func(at float64) {
 		p := supply{a: Account{Ready: true, Capacity: slots}, arrive: at, remaining: map[int64]float64{}, reset: map[int64]int64{}}
@@ -362,7 +365,7 @@ func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64
 		}
 		gap := capacity == 0 || capacity < demand
 		if gap && minute >= checkFrom {
-			return minute, coverage, true
+			return minute, coverage, true, false
 		}
 		if capacity == 0 {
 			continue
@@ -373,7 +376,7 @@ func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64
 			}
 		}
 	}
-	return float64(c.ForecastMinutes), coverage, true
+	return float64(c.ForecastMinutes), coverage, true, true
 }
 func validWindow(used, rate float64) bool {
 	return !math.IsNaN(used) && !math.IsInf(used, 0) && !math.IsNaN(rate) && !math.IsInf(rate, 0) && used >= 0 && used <= 100 && rate >= 0

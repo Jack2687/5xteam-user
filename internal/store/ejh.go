@@ -512,7 +512,9 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 	if e != nil {
 		return nil, e
 	}
-	rows, e := q.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other') FROM ejh_cases c
+	rows, e := q.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other'),charge.sealed,o.profile FROM ejh_cases c
+        LEFT JOIN ejh_records charge ON charge.kind='trade' AND charge.id=json_extract(c.profile,'$.original_trade_id')
+        LEFT JOIN gptpay_orders o ON o.id=c.id
 		LEFT JOIN mail_accounts m ON m.email=c.email
 		LEFT JOIN pro_card_usage u ON u.order_id=c.id
   LEFT JOIN pro_card_identities i ON i.card_id=c.card_id
@@ -528,7 +530,8 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		var raw string
 		var exists sql.NullString
 		var ejhCardID, cardType string
-		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType); e != nil {
+		var chargeRaw, orderRaw sql.NullString
+		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType, &chargeRaw, &orderRaw); e != nil {
 			return nil, e
 		}
 		var v ejh.Case
@@ -537,6 +540,29 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		}
 		v.EJHCardID = ejhCardID
 		v.CardType = cardType
+		if chargeRaw.Valid {
+			decoded, err := s.decrypt(chargeRaw.String)
+			if err != nil {
+				return nil, err
+			}
+			var charge ejh.TradeRecord
+			if err = json.Unmarshal([]byte(decoded), &charge); err != nil {
+				return nil, err
+			}
+			t := charge.Trade
+			if t.Type == "1" || t.Type == "4" {
+				v.Charge = &ejh.ActivationCharge{ID: charge.ID, TradeNo: t.TradeNo, Type: t.Type, Status: t.Status, CardAmount: t.CardAmount, CardCurrency: t.CardCurrency, TradeAmount: t.TradeAmount, TradeCurrency: t.TradeCurrency, BillAmount: t.BillAmount, BillCurrency: t.BillCurrency, Merchant: t.Merchant, TradeTime: t.TradeTime, SyncedAt: charge.SyncedAt}
+			}
+		}
+		if orderRaw.Valid {
+			var order gptpay.Order
+			if e = json.Unmarshal([]byte(orderRaw.String), &order); e != nil {
+				return nil, e
+			}
+			if order.Remote.ID != "" {
+				v.Credits = &ejh.ActivationCredits{Charged: order.Remote.ChargedCredits, Reserved: order.Remote.ReservedCredits, Released: order.Remote.ReleasedCredits, Settlement: order.Remote.SettlementStatus, UpdatedAt: order.UpdatedAt}
+			}
+		}
 		v.Deleted = !exists.Valid
 		v.State = "unopened"
 		if v.PaymentStatus == "success" {
@@ -646,6 +672,9 @@ func (s *Store) EJHMatchTrade(id, orderID, originalID, amount, currency, evidenc
 	if c.OriginalTradeID != "" && c.OriginalTradeID != originalID {
 		return fmt.Errorf("该开通订单已关联其他原交易，请先核对并解除旧关联")
 	}
+	if e = chargeAvailable(s.db, trades, originalID, orderID); e != nil {
+		return e
+	}
 	c.OriginalTradeID = originalID
 	before := *target
 	target.OrderID, target.OriginalTradeID, target.Amount, target.Currency, target.Evidence, target.Source, target.Confirmed = orderID, originalID, amount, currency, evidence, "manual_verified", confirmed
@@ -698,7 +727,7 @@ func (s *Store) EJHUnmatch(id, reason string) error {
 	if e = s.ejhPutTx(tx, "match_audit", EJHID("audit", id+time.Now().String()), map[string]any{"before": t, "reason": reason, "action": "unmatch", "at": time.Now()}); e != nil {
 		return e
 	}
-	if _, e = tx.Exec(`UPDATE ejh_cases SET profile=json_set(profile,'$.original_trade_id','') WHERE id=?`, t.OrderID); e != nil {
+	if _, e = tx.Exec(`UPDATE ejh_cases SET profile=json_set(profile,'$.original_trade_id','') WHERE id=? AND COALESCE(json_extract(profile,'$.charge_evidence'),'')=''`, t.OrderID); e != nil {
 		return e
 	}
 	t.OrderID, t.OriginalTradeID, t.Amount, t.Currency, t.Evidence, t.Source = "", "", "", "", reason, ""
