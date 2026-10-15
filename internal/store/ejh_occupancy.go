@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+
+	"chapt-space-user/internal/gptpay"
 )
 
 // Orders and pre-payment reservations are the durable occupancy source. A
@@ -15,6 +17,13 @@ func (s *Store) initializeEJHOccupancy() error {
 		return err
 	}
 	defer tx.Rollback()
+	// Legacy mailbox deletion could leave a pre-payment reservation without an
+	// account. Only remove these orphan reservations; submitted orders retain
+	// their independent usage records, including uncertain payment outcomes.
+	if _, err = tx.Exec(`DELETE FROM pro_card_reservations WHERE NOT EXISTS
+ (SELECT 1 FROM mail_accounts m WHERE m.email=pro_card_reservations.email)`); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS pro_card_admission_lock(id INTEGER PRIMARY KEY CHECK(id=1));
  INSERT OR IGNORE INTO pro_card_admission_lock VALUES(1);
  CREATE TABLE IF NOT EXISTS pro_card_order_releases(order_id TEXT PRIMARY KEY, released_at TEXT NOT NULL);
@@ -76,6 +85,27 @@ func validateEJHOccupancy(q proCapacityQuery, key, email string) error {
 		return fmt.Errorf("EJH 银行卡正在被 %s 占用（一卡同时一个号），须移出成功后才可分配其他账号", owner)
 	}
 	return nil
+}
+
+func ejhCardOccupants(q ejhCaseQuery, key string) ([]gptpay.CardOccupant, error) {
+	rows, err := q.Query(`SELECT a.email,a.order_id,a.status,m.email IS NULL FROM (
+ SELECT lower(email) email,'' order_id,'reserved' status FROM pro_card_reservations WHERE card_key=?
+ UNION ALL SELECT lower(u.email),u.order_id,u.status FROM pro_card_usage u WHERE u.card_key=? AND u.status<>'failed'
+ AND (u.status<>'success' OR NOT EXISTS(SELECT 1 FROM pro_card_order_releases r WHERE r.order_id=u.order_id))
+ ) a LEFT JOIN mail_accounts m ON m.email=a.email ORDER BY a.email,a.order_id`, key, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []gptpay.CardOccupant{}
+	for rows.Next() {
+		var item gptpay.CardOccupant
+		if err = rows.Scan(&item.Email, &item.OrderID, &item.Status, &item.Deleted); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 // Called in the same transaction as the successful removal state transition.

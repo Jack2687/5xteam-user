@@ -41,29 +41,39 @@ type Settings struct {
 }
 
 type Card struct {
-	CardType            string    `json:"card_type"`
-	Source              string    `json:"source,omitempty"`
-	IssuerOrderNo       string    `json:"issuer_order_no,omitempty"`
-	IssuerStatus        string    `json:"issuer_status,omitempty"`
-	IssuerLocked        bool      `json:"issuer_locked,omitempty"`
-	IssuerEnd           string    `json:"issuer_end,omitempty"`
-	MaxAccounts         *int      `json:"max_accounts,omitempty"`
-	OpenedAccounts      int       `json:"opened_accounts"`
-	PendingAccounts     int       `json:"pending_accounts"`
-	ActiveAccounts      int       `json:"active_accounts"`
-	ActiveEmail         string    `json:"active_email,omitempty"`
-	SingleActiveAccount bool      `json:"single_active_account"`
-	RemainingAccounts   int       `json:"remaining_accounts"`
-	AccountLimit        int       `json:"account_limit"`
-	Available           bool      `json:"available"`
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	Last4               string    `json:"last4"`
-	ExpMonth            int       `json:"exp_month"`
-	ExpYear             int       `json:"exp_year"`
-	Enabled             bool      `json:"enabled"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	CardType            string         `json:"card_type"`
+	Source              string         `json:"source,omitempty"`
+	IssuerOrderNo       string         `json:"issuer_order_no,omitempty"`
+	IssuerStatus        string         `json:"issuer_status,omitempty"`
+	IssuerLocked        bool           `json:"issuer_locked,omitempty"`
+	IssuerEnd           string         `json:"issuer_end,omitempty"`
+	MaxAccounts         *int           `json:"max_accounts,omitempty"`
+	OpenedAccounts      int            `json:"opened_accounts"`
+	PendingAccounts     int            `json:"pending_accounts"`
+	ActiveAccounts      int            `json:"active_accounts"`
+	ActiveEmail         string         `json:"active_email,omitempty"`
+	Occupants           []CardOccupant `json:"occupants"`
+	SingleActiveAccount bool           `json:"single_active_account"`
+	RemainingAccounts   int            `json:"remaining_accounts"`
+	AccountLimit        int            `json:"account_limit"`
+	Available           bool           `json:"available"`
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	Last4               string         `json:"last4"`
+	ExpMonth            int            `json:"exp_month"`
+	ExpYear             int            `json:"exp_year"`
+	Enabled             bool           `json:"enabled"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+}
+
+// A reservation or unresolved payment is not a running account. Keep its
+// source visible even after local account deletion.
+type CardOccupant struct {
+	Email   string `json:"email"`
+	OrderID string `json:"order_id,omitempty"`
+	Status  string `json:"status"`
+	Deleted bool   `json:"deleted"`
 }
 
 type CardSecret struct {

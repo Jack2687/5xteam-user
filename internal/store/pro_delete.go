@@ -61,11 +61,11 @@ func (s *Store) checkProAccountDeletionLocked(email string) error {
 		}
 	}
 	var pending int
-	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM gptpay_orders WHERE email=? AND active=1) + (SELECT count(*) FROM pro_card_reservations WHERE email=?)`, email, email).Scan(&pending); err != nil {
+	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM gptpay_orders WHERE email=? AND active=1) + (SELECT count(*) FROM pro_card_usage WHERE email=? AND status NOT IN ('success','failed'))`, email, email).Scan(&pending); err != nil {
 		return err
 	}
 	if pending > 0 {
-		return errors.New("账号有未结束的开通订单或在途占位，请确认开通结果后再删除")
+		return errors.New("账号有未结束的开通订单，请确认开通结果后再删除")
 	}
 	return nil
 }

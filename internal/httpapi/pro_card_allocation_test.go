@@ -114,6 +114,60 @@ func allocationAccount(t *testing.T, s *Server, email string) {
 	}
 }
 
+func TestEJHAllocationReviewHoldAndExistingAlternative(t *testing.T) {
+	for _, status := range []string{"manual_review", "submission_unknown", "deleted", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			s, issued, paid, email := allocationFixture(t)
+			order, _, err := s.store.GPTPayOrder("resident-order")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status == "deleted" {
+				if err = s.store.DeleteProAccount(order.Email); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				order.Status = status
+				if err = s.store.UpdateGPTPayOrder(order); err != nil {
+					t.Fatal(err)
+				}
+			}
+			card, _, err := s.reserveProStartCard(context.Background(), email, "test-card", true, false)
+			if status == "failed" {
+				if err != nil || card.ID != "test-card" {
+					t.Fatal(card, err)
+				}
+				if err = s.store.ReleaseProCard(email); err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "暂停自动补卡") {
+				t.Fatal("abnormal hold bought a card", err)
+			}
+			if issued.Load() != 0 || paid.Load() != 0 {
+				t.Fatal("unexpected external mutation")
+			}
+			// A different usable card must still be preferred, even with a selected
+			// occupied card and another unresolved/deleted account in the history.
+			if status == "failed" {
+				return
+			}
+			alternative, err := s.store.SaveGPTPayCard(gptpay.Card{ID: "available-alternative", CardType: "ejh", Enabled: true}, gptpay.CardSecret{Number: "5555555555554444", Month: 12, Year: 2099, CVV: "123"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, selected := range []string{"", "test-card"} {
+				card, _, err = s.reserveProStartCard(context.Background(), email, selected, true, false)
+				if err != nil || card.ID != alternative.ID || issued.Load() != 0 || paid.Load() != 0 {
+					t.Fatal(card, err, issued.Load(), paid.Load())
+				}
+				if err = s.store.ReleaseProCard(email); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestEJHAllocationManualFallbackAndReplay(t *testing.T) {
 	for _, selected := range []string{"", "test-card"} {
 		t.Run("selected-"+selected, func(t *testing.T) {

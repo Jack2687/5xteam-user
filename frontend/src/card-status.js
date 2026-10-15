@@ -9,6 +9,18 @@ export function isClosedCard(card) {
   const { linked, status } = cardInfo(card)
   return linked && status === '2'
 }
+export function paymentStatusLabel(status) {
+  return ({ reserved: '开通前预留', created: '订单待提交', submitting: '订单提交中', processing: '开通处理中', submission_unknown: '提交结果未知', manual_review: '支付待核实', success: '开通成功', failed: '开通失败' })[status] || '订单状态待核实'
+}
+export function cardOccupancy(card) {
+  const { local } = cardInfo(card)
+  const occupants = local.occupants || []
+  if (occupants.some(row => row.deleted)) return { label: '已删除账号占用待核实', detail: '账号已删除，原订单仍占用；请核实开通结果及移出情况' }
+  if (occupants.some(row => !['reserved', 'created', 'submitting', 'processing', 'success'].includes(row.status))) return { label: '支付待核实', detail: '先查询原开通订单；确认失败后释放占用' }
+  if (occupants.some(row => ['created', 'submitting', 'processing'].includes(row.status))) return { label: '开通处理中', detail: '等待原开通订单结果；确认失败后释放占用' }
+  if (occupants.some(row => row.status === 'reserved')) return { label: '开通前预留', detail: '登录或开通准备占位，停止任务后释放' }
+  return { label: '使用中', detail: '移出当前账号后才可再次分配' }
+}
 export function cardUsage(card, now = new Date()) {
   const { local, linked, status, locked, end } = cardInfo(card)
   const blocked = (label, detail = '不能用于开通', tone = 'danger') => ({ label, detail, tone })
@@ -29,7 +41,10 @@ export function cardUsage(card, now = new Date()) {
   }
   if (local.exp_year && local.exp_month && new Date(local.exp_year, local.exp_month, 1) <= now) return blocked('已过期')
   if (!local.enabled) return blocked('已禁用', '本地开关已关闭', 'pending')
-  if (local.single_active_account && local.active_accounts > 0) return blocked('使用中', '移出当前账号后才可再次分配', 'pending')
+  if (local.active_accounts > 0 && (local.single_active_account || local.remaining_accounts <= 0)) {
+    const occupancy = cardOccupancy(card)
+    return blocked(occupancy.label, occupancy.detail, 'pending')
+  }
   if (local.remaining_accounts != null && local.remaining_accounts <= 0) return blocked('名额已用尽', '已开通和在途占用全部名额', 'pending')
   if (local.available === true) return { label: '可用于开通', detail: '本地开关已启用', tone: 'success' }
   return blocked('暂不可用', '请核对卡片资料及最新状态', 'pending')

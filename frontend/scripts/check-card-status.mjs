@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cardUsage, isClosedCard } from '../src/card-status.js'
+import { cardUsage, cardOccupancy, paymentStatusLabel, isClosedCard } from '../src/card-status.js'
 const now = new Date('2026-10-15T07:00:00Z')
 const active = { source: 'ejh', issuer_status: '1', issuer_order_no: 'fixture', enabled: true, available: true, exp_year: 2031, exp_month: 10, remaining_accounts: 1 }
 for (const enabled of [true, false]) {
@@ -27,3 +27,14 @@ assert.equal(cardUsage({ ...active, remaining_accounts: 0 }, now).label, '名额
 assert.equal(cardUsage({ ...active, available: false }, now).label, '暂不可用')
 assert.equal(cardUsage({ ...active, available: undefined }, now).label, '暂不可用')
 console.log('Passed: shared card status, closure precedence, physical aliases, manual cards, expiration, occupancy and capacity')
+for (const [status, label] of [['reserved','开通前预留'],['processing','开通处理中'],['manual_review','支付待核实'],['submission_unknown','支付待核实'],['success','使用中']]) {
+ const held = {...active, single_active_account:true, active_accounts:1, remaining_accounts:0, occupants:[{email:'fixture@example.com',status,deleted:false}]}
+ assert.equal(cardUsage(held,now).label,label)
+ assert.equal(cardUsage({local:held},now).label,label)
+ assert.ok(paymentStatusLabel(status))
+ assert.equal(cardUsage({...held,occupants:[{...held.occupants[0],deleted:true}]},now).label,'已删除账号占用待核实')
+ assert.equal(cardUsage({...held,issuer_status:'2'},now).label,'已销卡')
+ assert.equal(cardUsage({...held,single_active_account:false,remaining_accounts:1},now).label,'可用于开通')
+}
+assert.equal(cardOccupancy({...active,occupants:[{status:'success'},{status:'manual_review'}]}).label,'支付待核实')
+console.log('Passed: prepayment reservations, unresolved/deleted occupancy, issuer precedence and parallel capacity')

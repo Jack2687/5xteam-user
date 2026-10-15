@@ -150,7 +150,12 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 	card.AccountLimit, card.OpenedAccounts, card.PendingAccounts = limit, opened, pending
 	card.RemainingAccounts = max(0, limit-opened-pending)
 	card.ActiveAccounts, card.ActiveEmail, card.SingleActiveAccount = 0, "", false
+	card.Occupants = []gptpay.CardOccupant{}
 	if card.CardType == "ejh" {
+		card.Occupants, err = ejhCardOccupants(s.db, key)
+		if err != nil {
+			return err
+		}
 		card.ActiveAccounts, card.ActiveEmail, err = ejhCardOccupancy(s.db, key, "")
 		if err != nil {
 			return err

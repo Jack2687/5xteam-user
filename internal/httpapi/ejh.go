@@ -673,6 +673,26 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 	if len(cards) > 0 {
 		return cards[0], nil
 	}
+	cards, _, e = s.store.GPTPayCards(int(^uint(0)>>1), 0, false)
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	// An abnormal hold is not evidence that more cards are needed. Prefer any
+	// usable existing card above; otherwise stop before spending on issuance.
+	for _, card := range cards {
+		if card.CardType != "ejh" || !card.Enabled || card.IssuerStatus == "2" {
+			continue
+		}
+		for _, occupant := range card.Occupants {
+			if occupant.Deleted || occupant.Status == "submission_unknown" || occupant.Status == "manual_review" {
+				reason := "支付结果待核实"
+				if occupant.Deleted {
+					reason = "账号已删除，但原订单占用尚未解除"
+				}
+				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 的账号 %s：%s（订单 %s）；请在开通订单中核实原订单及移出情况，暂停自动补卡", card.Last4, occupant.Email, reason, occupant.OrderID)
+			}
+		}
+	}
 	pro, _, _, e := s.store.ProSettings()
 	if e != nil {
 		return gptpay.Card{}, e

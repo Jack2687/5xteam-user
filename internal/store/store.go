@@ -848,6 +848,9 @@ func (s *Store) deleteMailAccountLocked(email string, pro bool) error {
 		if err = json.Unmarshal([]byte(raw), &p); err != nil {
 			return err
 		}
+		if !pro && normalizeMailManagementScope(p.ManagementScope) == "pro" {
+			return errors.New("请从 Pro 管理删除账号，以核对任务和开通订单")
+		}
 		if p.VM2 != nil && p.VM2.DeletedAt == nil {
 			return errors.New("请从 Pro 管理删除账号，先清理 vm2api 槽位及运行环境")
 		}
@@ -859,6 +862,18 @@ func (s *Store) deleteMailAccountLocked(email string, pro bool) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockProCardAdmission(tx); err != nil {
+		return err
+	}
+	var pending bool
+	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM gptpay_orders WHERE email=? AND active=1)
+ OR EXISTS(SELECT 1 FROM pro_card_usage WHERE email=? AND status NOT IN ('success','failed'))
+ OR (?=0 AND EXISTS(SELECT 1 FROM pro_card_reservations WHERE email=?))`, email, email, pro, email).Scan(&pending); err != nil {
+		return err
+	}
+	if pending {
+		return errors.New("账号有未结束的开通订单或在途占位，请确认开通结果后再删除")
+	}
 	// Remove the current Team-rotation projection with the mailbox. Keep the
 	// permanent workspace ledger so a later re-import cannot reuse old Teams.
 	rows, err := tx.Query(`SELECT id FROM free_accounts WHERE LOWER(json_extract(profile,'$.email'))=?`, email)
@@ -898,6 +913,11 @@ func (s *Store) deleteMailAccountLocked(email string, pro bool) error {
 		return errors.New("邮箱账号不存在")
 	}
 	if pro {
+		// The Pro handler holds the account startup gate and checks active tasks.
+		// A stopped account's pre-payment reservation has no supplier liability.
+		if _, err = tx.Exec(`DELETE FROM pro_card_reservations WHERE email=?`, email); err != nil {
+			return err
+		}
 		if _, err = tx.Exec(`DELETE FROM pro_oauth_sessions WHERE LOWER(json_extract(profile,'$.target_email'))=?`, email); err != nil {
 			return err
 		}
