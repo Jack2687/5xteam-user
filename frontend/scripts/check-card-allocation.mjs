@@ -11,7 +11,7 @@ for (const file of ['ProRechargeDialog.vue', 'ProAutoDialog.vue']) {
   const ref = value => ({value})
   const calls=[]
   const settings=file==='ProAutoDialog.vue'?ref({}):{}
-  const ctx=vm.createContext({settings,cardID:ref(''),cards:ref([]),total:ref(0),page:ref(1),pageSize:ref(10),busy:ref(false),email:ref(''),order:ref(null),error:ref(''),opened:ref(false),state:ref({}),requestID:'',timer:0,generation:0,clearTimeout(){},schedule(){},emit(){},path:()=>'/auto-pro',payRequestID:()=> 'local-request',api:async(path,options)=>{
+  const ctx=vm.createContext({blockedCards:ref([]),occupancyMessage:ref(''),settings,cardID:ref(''),cards:ref([]),total:ref(0),page:ref(1),pageSize:ref(10),busy:ref(false),email:ref(''),order:ref(null),error:ref(''),opened:ref(false),state:ref({}),requestID:'',timer:0,generation:0,clearTimeout(){},schedule(){},emit(){},path:()=>'/auto-pro',payRequestID:()=> 'local-request',api:async(path,options)=>{
    calls.push({path,options})
    if(options) return {pro_auto:{status:'running'}}
    if(path==='/api/pro-settings')return {ejh_auto_open:auto}

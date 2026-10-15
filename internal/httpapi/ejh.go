@@ -44,6 +44,8 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 	return c, k, nil
 }
 func (s *Server) ejhRoutes(m *http.ServeMux) {
+	m.HandleFunc("GET /api/ejh/occupancy/{id}", s.getEJHOccupancyOrder)
+	m.HandleFunc("POST /api/ejh/occupancy/{id}/resolve", s.resolveEJHOccupancy)
 	m.HandleFunc("GET /api/ejh/settings", s.getEJHSettings)
 	m.HandleFunc("PUT /api/ejh/settings", s.saveEJHSettings)
 	m.HandleFunc("POST /api/ejh/test", s.testEJH)

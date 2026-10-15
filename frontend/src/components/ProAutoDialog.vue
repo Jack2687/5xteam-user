@@ -6,6 +6,7 @@ import { proPlanName, payProviderName, paymentCountryLabel } from '../gptpay'
 import { formatTime } from '../utils'
 import Pagination from './Pagination.vue'
 import ProAutoStages from './ProAutoStages.vue'
+import CardOccupancy from './CardOccupancy.vue'
 const emit=defineEmits(['updated'])
 const email=ref(''),opened=ref(false),busy=ref(false),error=ref(''),state=ref({}),settings=ref({}),cards=ref([]),cardID=ref(''),page=ref(1),pageSize=ref(10),total=ref(0)
 const active=computed(()=>['running','waiting_quota'].includes(state.value.status))
@@ -13,10 +14,20 @@ const manualRunning=computed(()=>Object.values(state.value.stage_progress?.steps
 const resumable=computed(()=>state.value.steps?.oauth==='completed'&&!active.value&&state.value.status!=='completed')
 const retryCurrent=computed(()=>!!state.value.order_id&&!active.value&&!resumable.value&&state.value.status!=='completed')
 const canStart=computed(()=>!active.value&&state.value.status!=='completed'&&!state.value.order_id)
+const blockedCards=ref([]),checkingOccupancy=ref(false),occupancyMessage=ref('')
+async function inspectOccupancy(){
+ if(checkingOccupancy.value)return
+ checkingOccupancy.value=true;occupancyMessage.value=''
+ try{const d=await api('/api/ejh/dashboard');blockedCards.value=(d.cards||[]).filter(c=>c.local?.occupants?.some(o=>o.deleted&&o.order_id));if(!blockedCards.value.length)occupancyMessage.value='没有待处理的已删除账号占用，请重试当前流程。'}catch(e){error.value=e.message}finally{checkingOccupancy.value=false}
+}
+async function occupancyResolved(){
+ occupancyMessage.value='已解除本次占用；可点击下方开通或继续按钮重试。'
+ try{await loadCards();const d=await api('/api/ejh/dashboard');blockedCards.value=(d.cards||[]).filter(c=>c.local?.occupants?.some(o=>o.deleted&&o.order_id));emit('updated')}catch(e){error.value='解除已保存，刷新卡片失败：'+e.message}
+}
 let timer,generation=0
 const path=()=>`/api/pro-accounts/${encodeURIComponent(email.value)}/auto-pro`
 async function loadCards(){const data=await api(`/api/gptpay/cards?page=${page.value}&page_size=${pageSize.value}&enabled=true`);cards.value=data.items||[];total.value=data.total||0;cardID.value=settings.value.ejh_auto_open?'':cards.value[0]?.id||''}
-async function open(account){if(busy.value)return;clearTimeout(timer);generation++;email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings'),loadCards()]);settings.value={...config,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open};cardID.value=pro.ejh_auto_open?'':cards.value[0]?.id||'';state.value=current||{}}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
+async function open(account){if(busy.value)return;clearTimeout(timer);generation++;blockedCards.value=[];occupancyMessage.value='';email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings'),loadCards()]);settings.value={...config,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open};cardID.value=pro.ejh_auto_open?'':cards.value[0]?.id||'';state.value=current||{}}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
 function close(){if(busy.value)return;opened.value=false;generation++;clearTimeout(timer)}
 function schedule(){clearTimeout(timer);if(opened.value&&(active.value||manualRunning.value))timer=setTimeout(refresh,state.value.status==='running'||manualRunning.value?1500:5000)}
 async function refresh(){const gen=generation;try{const value=await api(path());if(gen!==generation)return;state.value=value;emit('updated')}catch(e){if(gen===generation)error.value=e.message}finally{if(gen===generation)schedule()}}
@@ -36,6 +47,7 @@ defineExpose({open})
 <p v-if="state.status==='awaiting_push'">RT/AT 已保存，请推送当前下游，成功后自动恢复定时额度检测；也可点击“继续后续流程”。</p>
 <p v-if="state.proxy_name">登录代理：{{ state.proxy_name }}<span v-if="state.exit_ip"> · 首次记录 IP：{{ state.exit_ip }}</span></p>
 <p v-if="state.error" class="danger-text">{{ state.error }}</p><p v-if="error" role="alert" class="danger-text">{{ error }}</p>
+<div v-if="(state.error||'').includes('占用')||(error||'').includes('占用')" class="occupancy-help"><button class="btn ghost" :disabled="busy||checkingOccupancy" @click="inspectOccupancy">{{checkingOccupancy?'正在读取占用…':'处理已删除账号占用'}}</button><p v-if="occupancyMessage" role="status">{{occupancyMessage}}</p><div v-for="card in blockedCards" :key="card.id"><strong>{{card.local.name}} · 尾号 {{card.local.last4}}</strong><CardOccupancy :card="card" @updated="occupancyResolved"/></div></div>
 <template v-if="canStart"><p>供应商：{{ payProviderName(settings.provider) }}</p><p>套餐：{{ proPlanName(settings.plan_code) }}；7 天已用额度达到 {{ settings.quota_used_threshold || 100 }}% 后合并。</p>
 <p>开通国家：{{ paymentCountryLabel(settings.country) }}<span v-if="settings.plan_code === 'codex_point'">；购买点数：{{ settings.credit_quantity }}</span></p>
 <label class="field"><span>开通银行卡</span><select v-model="cardID" :disabled="busy"><option value="">{{settings.ejh_auto_open?'自动选卡（无可用卡时按配置从 EJH 补卡）':'请选择银行卡'}}</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>

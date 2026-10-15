@@ -134,26 +134,33 @@ type RemoteOrder struct {
 	UpdatedAt          string `json:"updatedAt"`
 }
 
+type OccupancyResolution struct {
+	Outcome  string    `json:"outcome"`
+	Evidence string    `json:"evidence"`
+	At       time.Time `json:"at"`
+}
+
 type Order struct {
-	Country           string      `json:"country,omitempty"`
-	CreditQuantity    int         `json:"credit_quantity,omitempty"`
-	Provider          string      `json:"provider,omitempty"`
-	LastStatusCheckAt *time.Time  `json:"last_status_check_at,omitempty"`
-	NextStatusCheckAt *time.Time  `json:"next_status_check_at,omitempty"`
-	StatusCheckError  string      `json:"status_check_error,omitempty"`
-	ID                string      `json:"id"`
-	Email             string      `json:"email"`
-	CardID            string      `json:"card_id"`
-	RequestedCardID   *string     `json:"requested_card_id,omitempty"`
-	CardName          string      `json:"card_name"`
-	CardLast4         string      `json:"card_last4"`
-	PlanCode          string      `json:"plan_code"`
-	Status            string      `json:"status"`
-	Error             string      `json:"error,omitempty"`
-	RequestID         string      `json:"request_id,omitempty"`
-	Remote            RemoteOrder `json:"remote"`
-	CreatedAt         time.Time   `json:"created_at"`
-	UpdatedAt         time.Time   `json:"updated_at"`
+	OccupancyResolution *OccupancyResolution `json:"occupancy_resolution,omitempty"`
+	Country             string               `json:"country,omitempty"`
+	CreditQuantity      int                  `json:"credit_quantity,omitempty"`
+	Provider            string               `json:"provider,omitempty"`
+	LastStatusCheckAt   *time.Time           `json:"last_status_check_at,omitempty"`
+	NextStatusCheckAt   *time.Time           `json:"next_status_check_at,omitempty"`
+	StatusCheckError    string               `json:"status_check_error,omitempty"`
+	ID                  string               `json:"id"`
+	Email               string               `json:"email"`
+	CardID              string               `json:"card_id"`
+	RequestedCardID     *string              `json:"requested_card_id,omitempty"`
+	CardName            string               `json:"card_name"`
+	CardLast4           string               `json:"card_last4"`
+	PlanCode            string               `json:"plan_code"`
+	Status              string               `json:"status"`
+	Error               string               `json:"error,omitempty"`
+	RequestID           string               `json:"request_id,omitempty"`
+	Remote              RemoteOrder          `json:"remote"`
+	CreatedAt           time.Time            `json:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at"`
 }
 
 func (o Order) Active() bool { return o.Status != "success" && o.Status != "failed" }

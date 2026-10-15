@@ -362,6 +362,25 @@ func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockProCardAdmission(tx); err != nil {
+		return err
+	}
+	var currentRaw string
+	if err = tx.QueryRow(`SELECT profile FROM gptpay_orders WHERE id=?`, v.ID).Scan(&currentRaw); err != nil {
+		return err
+	}
+	var current gptpay.Order
+	if err = json.Unmarshal([]byte(currentRaw), &current); err != nil {
+		return err
+	}
+	if current.OccupancyResolution != nil {
+		if v.OccupancyResolution == nil || v.Status != current.Status || !v.OccupancyResolution.At.Equal(current.OccupancyResolution.At) {
+			return fmt.Errorf("该订单已人工核实解除占用，请刷新后读取最新结果")
+		}
+		v.OccupancyResolution = current.OccupancyResolution
+	} else if v.OccupancyResolution != nil {
+		return fmt.Errorf("请使用核实解除入口记录订单处理结果")
+	}
 	raw, _ := json.Marshal(v)
 	_, err = tx.Exec("UPDATE gptpay_orders SET profile=?,active=? WHERE id=?", string(raw), v.Active(), v.ID)
 	if err != nil {
