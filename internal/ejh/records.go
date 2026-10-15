@@ -20,6 +20,7 @@ type Operation struct {
 }
 type CardRecord struct {
 	ID               string     `json:"id"`
+	CreatedAt        time.Time  `json:"created_at"`
 	Remote           Card       `json:"remote"`
 	Balance          string     `json:"balance"`
 	BalanceAt        *time.Time `json:"balance_at,omitempty"`

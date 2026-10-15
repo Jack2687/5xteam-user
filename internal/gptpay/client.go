@@ -82,7 +82,8 @@ type Session struct {
 		ID       string `json:"id"`
 		PlanType string `json:"planType,omitempty"`
 	} `json:"account"`
-	AccessToken string `json:"accessToken"`
+	AccessToken  string `json:"accessToken"`
+	SessionToken string `json:"sessionToken,omitempty"`
 }
 
 type CreateInput struct {
@@ -96,11 +97,12 @@ type CreateInput struct {
 // Snapshot is encrypted at rest and never returned by list/detail APIs. Keeping
 // it makes an uncertain submission replayable with exactly the original input.
 type Snapshot struct {
-	Provider string      `json:"provider,omitempty"`
-	Country  string      `json:"country,omitempty"`
-	URL      string      `json:"url"`
-	APIKey   string      `json:"api_key"`
-	Input    CreateInput `json:"input"`
+	WebSessionToken string      `json:"web_session_token,omitempty"`
+	Provider        string      `json:"provider,omitempty"`
+	Country         string      `json:"country,omitempty"`
+	URL             string      `json:"url"`
+	APIKey          string      `json:"api_key"`
+	Input           CreateInput `json:"input"`
 }
 
 type RemoteOrder struct {
@@ -384,6 +386,7 @@ func (c *Client) Create(ctx context.Context, snapshot Snapshot, id string) (Remo
 	var v RemoteOrder
 	input := snapshot.Input
 	input.Session.Raw = nil // Preserve Tokenseek's existing minimal session payload.
+	input.Session.SessionToken = snapshot.WebSessionToken
 	if input.Country == "" {
 		input.Session.Account.PlanType = ""
 	} // Legacy replay sent no subscription metadata.
@@ -415,7 +418,7 @@ func ValidStatus(s string) bool {
 var sensitiveText = regexp.MustCompile(`(?:\b\d{12,19}\b|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)`)
 
 func Redact(s string, snapshot Snapshot) string {
-	for _, secret := range []string{snapshot.Input.Session.AccessToken, snapshot.Input.Number, snapshot.Input.CVV, snapshot.APIKey} {
+	for _, secret := range []string{snapshot.Input.Session.AccessToken, snapshot.WebSessionToken, snapshot.Input.Session.SessionToken, snapshot.Input.Number, snapshot.Input.CVV, snapshot.APIKey} {
 		if secret != "" {
 			s = strings.ReplaceAll(s, secret, "[redacted]")
 		}

@@ -5,6 +5,8 @@ import "strings"
 // Listing, counts and filtered export share the same partition. Defaults such
 // as an empty ProAuto object or pending merge steps do not mean work started.
 // Include persisted manual/legacy progress, matching the stages shown by the UI.
+// A completed login alone is preparation, not an in-progress workflow. Actual
+// automation jobs and running/failed login attempts retain their progress state.
 // The payment lookup uses the existing email index and never reads credentials.
 const proAccountsCTE = `WITH accounts AS (
 	SELECT email, profile, encrypted_credentials, updated_at,
@@ -12,8 +14,8 @@ const proAccountsCTE = `WITH accounts AS (
 		WHEN COALESCE(json_extract(profile,'$.pro_auto.id'),'')<>''
 			OR COALESCE(json_extract(profile,'$.pro_auto.status'),'') NOT IN ('','not_started','pending')
 			OR COALESCE(json_extract(profile,'$.pro_auto.stage'),'')<>''
-			OR EXISTS (SELECT 1 FROM json_each(profile,'$.pro_auto.steps') WHERE COALESCE(value,'') NOT IN ('','not_started','pending'))
-			OR EXISTS (SELECT 1 FROM json_each(profile,'$.pro_manual_stages') WHERE COALESCE(json_extract(value,'$.status'),'') NOT IN ('','not_started','pending'))
+			OR EXISTS (SELECT 1 FROM json_each(profile,'$.pro_auto.steps') WHERE COALESCE(value,'') NOT IN ('','not_started','pending') AND NOT (key='login' AND value='completed'))
+			OR EXISTS (SELECT 1 FROM json_each(profile,'$.pro_manual_stages') WHERE COALESCE(json_extract(value,'$.status'),'') NOT IN ('','not_started','pending') AND NOT (key='login' AND json_extract(value,'$.status')='completed'))
 			OR json_extract(profile,'$.pro_workflow_running')=1
 			OR COALESCE(json_extract(profile,'$.pro_invite_status'),'') NOT IN ('','not_started','pending')
 			OR COALESCE(json_extract(profile,'$.pro_accept_status'),'') NOT IN ('','not_started','pending')
@@ -21,7 +23,6 @@ const proAccountsCTE = `WITH accounts AS (
 			OR COALESCE(json_extract(profile,'$.pro_remove_status'),'') NOT IN ('','not_started','pending')
 			OR COALESCE(json_extract(profile,'$.push_status'),'') NOT IN ('','not_started','pending')
 			OR COALESCE(json_extract(profile,'$.quota_status'),'') NOT IN ('','not_started','pending')
-			OR (json_extract(profile,'$.chatgpt_session_present')=1 AND json_extract(profile,'$.access_token_present')=1)
 			OR (COALESCE(json_extract(profile,'$.oauth_authorized_at'),'')<>'' AND json_extract(profile,'$.access_token_present')=1 AND json_extract(profile,'$.refresh_token_present')=1)
 			OR EXISTS (SELECT 1 FROM gptpay_orders o WHERE o.email=mail_accounts.email)
 		THEN 'in_progress' ELSE 'unmerged' END AS merge_state,

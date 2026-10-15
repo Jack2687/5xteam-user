@@ -63,6 +63,12 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	state := p.ProAuto
 	progress := p.ProStages()
+	if p.ProAuto.OrderID != "" && p.ProAuto.Status != "running" {
+		if order, _, e := s.store.GPTPayOrder(p.ProAuto.OrderID); e == nil && order.Email == p.Email {
+			payment := proPaymentStage(order)
+			progress.Steps["recharge"], progress.Errors["recharge"] = payment.Status, payment.Error
+		}
+	}
 	state.Error = progress.Errors[state.Stage]
 	writeAPI(w, 200, struct {
 		model.ProAutoState
@@ -102,6 +108,7 @@ func (s *Server) autoProUpdate(email, stage, status, message string) error {
 func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	var input struct {
+		RetryCurrent   bool    `json:"retry_current"`
 		CardID         string  `json:"card_id"`
 		PlanCode       string  `json:"plan_code"`
 		Provider       string  `json:"provider"`
@@ -128,6 +135,12 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resume := p.ProAuto.Steps["oauth"] == "completed"
+	if input.RetryCurrent && !resume && p.ProAuto.OrderID == "" {
+		writeAPI(w, 409, nil, "没有可恢复的原订单，请刷新后重新启动流程")
+		return
+	}
+	paidRecovery := input.RetryCurrent && p.ProAuto.OrderID != "" && !resume
+	recoveryOrderID := p.ProAuto.OrderID
 	stopVersion := p.ProAuto.StopVersion
 	wasStopped := p.ProAuto.StopRequested
 	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
@@ -135,15 +148,15 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "用户已停止该账号流程，未自动启动")
 		return
 	}
-	if !resume && p.ProRestockTaskID != "" && r.Context().Value(proRestockContextKey{}) != p.ProRestockTaskID {
+	if !resume && !paidRecovery && p.ProRestockTaskID != "" && r.Context().Value(proRestockContextKey{}) != p.ProRestockTaskID {
 		writeAPI(w, 409, nil, "账号已由 Pro 自动补货领取，请在补货记录中核验状态")
 		return
 	}
-	if p.ProMigration != nil && !resume {
+	if p.ProMigration != nil && !resume && !paidRecovery {
 		writeAPI(w, 409, nil, "迁移账号请按已保存进度使用单项按钮，完成 RT/AT 后点击继续迁移流程，不会重新自动开通")
 		return
 	}
-	if p.ProAuto.OrderID != "" && !resume {
+	if p.ProAuto.OrderID != "" && !resume && !paidRecovery {
 		writeAPI(w, 409, nil, "已有开通订单但原登录会话已结束，请查询订单并使用单项按钮处理，禁止重新付款")
 		return
 	}
@@ -174,7 +187,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	var card gptpay.Card
 	var secret gptpay.CardSecret
-	if !resume {
+	if !resume && !paidRecovery {
 		if key == "" {
 			writeAPI(w, 400, nil, "请先保存 GPTPay API Key")
 			return
@@ -204,7 +217,41 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reserved := false
-	if !resume {
+	if paidRecovery {
+		s.proAutoMu.Lock()
+		closed := s.proAutoClosed
+		s.proAutoMu.Unlock()
+		latest, _, readErr := s.store.MailAccountCredential(email)
+		if closed || readErr != nil || latest.ProAuto.OrderID != recoveryOrderID || latest.ProAuto.Status == "completed" || latest.ProWorkflowRunning || latest.SpaceMergedOnce || latest.ProAuto.StopVersion != stopVersion || s.proLoginAlreadyRunning(email) || s.proAutomationRunning(email) {
+			lock.Unlock()
+			writeAPI(w, 409, nil, "账号进度已变化，请刷新后重试")
+			return
+		}
+		order, snapshot, readErr := s.store.GPTPayOrder(recoveryOrderID)
+		if readErr != nil || order.Email != email {
+			lock.Unlock()
+			writeAPI(w, 409, nil, "无法读取原订单，未重新付款")
+			return
+		}
+		if order.Active() {
+			if order.Remote.ID != "" {
+				order, readErr = s.syncGPTPayOrderStatus(r.Context(), order, snapshot)
+			} else {
+				order, readErr = s.submitGPTPayOrder(context.WithoutCancel(r.Context()), order, snapshot)
+			}
+		}
+		if readErr != nil || order.Status != "success" {
+			s.updateProPaymentStage(order)
+			message := fmt.Sprintf("原订单状态为 %s，尚未确认开通成功：%s；已保留原订单，未创建新付款", order.Status, order.Error)
+			if readErr != nil {
+				message = "原订单核查失败：" + gptpay.Redact(readErr.Error(), snapshot)
+			}
+			lock.Unlock()
+			writeAPI(w, 409, nil, message)
+			return
+		}
+	}
+	if !resume && !paidRecovery {
 		s.proAutoMu.Lock()
 		closed := s.proAutoClosed
 		s.proAutoMu.Unlock()
@@ -258,8 +305,11 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	if err == nil && p.ProAuto.Status == "completed" {
 		err = errors.New("全自动流程已经完成")
 	}
-	if err == nil && !resume && p.ProAuto.OrderID != "" {
+	if err == nil && !resume && !paidRecovery && p.ProAuto.OrderID != "" {
 		err = errors.New("已存在开通订单，请查询原订单")
+	}
+	if err == nil && paidRecovery && p.ProAuto.OrderID != recoveryOrderID {
+		err = errors.New("原订单已变化，请刷新后重试")
 	}
 	// A stop received during card issuance must win over this older start.
 	// Versioning also detects a second stop while explicitly resuming a stopped account.
@@ -268,7 +318,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
-			if !resume {
+			if !resume && !paidRecovery {
 				p.ProAuto = model.ProAutoState{ID: randomRegistrationID(), PlanCode: cfg.PlanCode, CardID: card.ID, QuotaUsedThreshold: pro.QuotaUsedThreshold, QuotaIntervalSeconds: pro.QuotaCheckIntervalSeconds, StartedAt: time.Now(), Steps: map[string]string{}}
 				p.ProAuto.StopVersion = stopVersion
 				p.ProAuto.QuotaPlan = restockPlan(cfg.Provider, cfg.PlanCode, cfg.Country, cfg.CreditQuantity)
@@ -283,6 +333,13 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			p.ProAuto.Error = ""
 			p.ProAuto.UpdatedAt = time.Now()
 			p.ProAuto.NextCheckAt = nil
+			if p.ProAuto.Steps == nil {
+				p.ProAuto.Steps = map[string]string{}
+			}
+			if paidRecovery {
+				p.ProAuto.Steps["recharge"] = "completed"
+				delete(p.ProManualStages, "recharge")
+			}
 			if !resume {
 				p.ProAuto.Stage = "login"
 				p.ProAuto.Steps["login"] = "pending"
@@ -303,6 +360,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	if paidRecovery {
+		ctx = context.WithValue(ctx, proPaidRecoveryKey{}, recoveryOrderID)
+	}
 	if s.proAutoJobs == nil {
 		s.proAutoJobs = map[string]context.CancelFunc{}
 	}
@@ -406,6 +466,12 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 		})
 	}
 	if method == "pro_recharge" {
+		if orderID, _ := ctx.Value(proPaidRecoveryKey{}).(string); orderID != "" {
+			if p.ProAuto.OrderID != orderID {
+				return nil, errors.New("恢复任务与原订单不匹配")
+			}
+			return s.confirmProPaidSession(p, args)
+		}
 		if taskID, _ := ctx.Value(proRestockRecoveryKey{}).(string); taskID != "" {
 			return s.confirmRestockPaidSession(ctx, p, taskID, args)
 		}
@@ -480,7 +546,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 				return nil, errors.New("GPTPay 提交结果待确认，已保留原订单；不会新建订单或继续授权")
 			}
 			if order.Status == "manual_review" || order.Status == "submission_unknown" {
-				return nil, errors.New("GPTPay 订单需要核实，原订单已保留")
+				return nil, fmt.Errorf("GPTPay 订单需要核实，原订单已保留：%s", order.Error)
 			}
 			delay := 15 * time.Second
 			if time.Since(order.CreatedAt) < time.Minute {
@@ -506,6 +572,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 					if err = s.store.UpdateGPTPayOrder(order); err != nil {
 						return nil, err
 					}
+					s.auditGPTPayOrder(order)
 				}
 			}
 		}

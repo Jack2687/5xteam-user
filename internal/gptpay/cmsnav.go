@@ -19,6 +19,7 @@ func (e *APIError) cmsnavMessage() string {
 		"INSUFFICIENT_CREDITS": "可用积分不足", "REQUEST_REJECTED": "请求字段或业务参数错误",
 		"SESSION_INVALID": "Session 无效或已过期，请重新获取临时 AT", "CHANNEL_UNAVAILABLE": "支付通道暂时不可用",
 		"ORDER_NOT_FOUND": "订单不存在，请核对任务 ID", "CORS_ORIGIN_NOT_ALLOWED": "来源不被允许",
+		"PAYMENT_VERIFICATION_REQUIRED": "需要支付安全验证，自动支付已停止，请联系供应商处理，不要重复提交",
 	}
 	message := messages[e.ErrorCode]
 	if message == "" {
@@ -71,7 +72,7 @@ func (c *Client) cmsnavCall(ctx context.Context, base, key, method, path, idem s
 			code = "INVALID_RESPONSE"
 		}
 		// Only an explicit documented rejection can release a payment reservation.
-		definite := map[string]bool{"API_KEY_INVALID": true, "RESOURCE_FORBIDDEN": true, "INSUFFICIENT_CREDITS": true, "REQUEST_REJECTED": true, "SESSION_INVALID": true, "CHANNEL_UNAVAILABLE": true, "CORS_ORIGIN_NOT_ALLOWED": true}[code]
+		definite := map[string]bool{"API_KEY_INVALID": true, "RESOURCE_FORBIDDEN": true, "INSUFFICIENT_CREDITS": true, "REQUEST_REJECTED": true, "SESSION_INVALID": true, "CHANNEL_UNAVAILABLE": true, "CORS_ORIGIN_NOT_ALLOWED": true, "PAYMENT_VERIFICATION_REQUIRED": true}[code]
 		return &APIError{HTTPStatus: res.StatusCode, ErrorCode: code, Uncertain: idem != "" && (err != nil || res.StatusCode >= 500 || !definite)}
 	}
 	if err = json.Unmarshal(env.Data, output); err != nil {
@@ -94,10 +95,11 @@ type cmsnavOrder struct {
 		CreditCost   int64  `json:"creditCost"`
 	} `json:"order"`
 	Progress struct {
-		Status         string `json:"status"`
-		RechargeStatus string `json:"rechargeStatus"`
-		RenewalStatus  string `json:"renewalStatus"`
-		RetryHint      string `json:"retryHint"`
+		Status          string `json:"status"`
+		RechargeStatus  string `json:"rechargeStatus"`
+		RenewalStatus   string `json:"renewalStatus"`
+		RetryHint       string `json:"retryHint"`
+		FailureCategory string `json:"failureCategory"`
 	} `json:"progress"`
 }
 
@@ -114,6 +116,9 @@ func (v cmsnavOrder) remote(id string) RemoteOrder {
 	}
 	if r.Status == "" {
 		r.Status = v.Status
+	}
+	if r.Status != "success" && (v.Progress.Status == "failed" || v.Progress.RechargeStatus == "failed") {
+		r.Status = "failed"
 	}
 	if v.Progress.RechargeStatus == "success" {
 		r.Status = "success"
@@ -144,11 +149,18 @@ func (v cmsnavOrder) remote(id string) RemoteOrder {
 		if r.FailureReason == "" {
 			r.FailureReason = v.Order.RetryHint
 		}
+		if r.FailureReason == "" {
+			r.FailureReason = v.Progress.RetryHint
+		}
+	}
+	if r.Status == "failed" && v.Progress.FailureCategory == "payment_verification" {
+		r.FailureReason = strings.TrimSpace(r.FailureReason + "；需要支付安全验证，请联系供应商处理，不要重复提交")
 	}
 	return r
 }
 
 func (c *Client) createCMSNav(ctx context.Context, s Snapshot, id string) (RemoteOrder, string, error) {
+	s.Input.Session.SessionToken = s.WebSessionToken
 	product := map[string]string{"pro5": "pro5x", "pro20": "pro20x", "pro50": "pro50x"}[s.Input.PlanCode]
 	if product == "" {
 		return RemoteOrder{}, "", &APIError{ErrorCode: "REQUEST_REJECTED"}

@@ -34,7 +34,11 @@ func (s *Store) issuerForPhysicalCard(q proCapacityQuery, key string) (*gptpay.C
 	if e = json.Unmarshal([]byte(raw), &record); e != nil {
 		return nil, e
 	}
-	return &gptpay.Card{Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "", IssuerEnd: record.Remote.End}, nil
+	var pending bool
+	if e = q.QueryRow(`SELECT EXISTS(SELECT 1 FROM ejh_card_links l JOIN ejh_operation_claims c ON c.scope='card:'||l.card_id WHERE l.card_key=?)`, key).Scan(&pending); e != nil {
+		return nil, e
+	}
+	return &gptpay.Card{Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "" || pending, IssuerEnd: record.Remote.End}, nil
 }
 func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 	c, e := s.issuerForPhysicalCard(q, key)

@@ -29,6 +29,11 @@ func TestTokenseekCountryQuantitySnapshotAndReplay(t *testing.T) {
 	if _, err := st.SaveGPTPaySettings(cfg, ""); err != nil {
 		t.Fatal(err)
 	}
+	profile, credentials, _ := st.MailAccountCredential(email)
+	credentials.ChatGPTSession = fmt.Sprintf(`{"user":{"email":%q},"account":{"id":"personal-id"},"accessToken":%q,"session_token":"fixture-original-cookie"}`, email, credentials.AccessToken)
+	if _, err := st.SaveMailAccount(profile, credentials); err != nil {
+		t.Fatal(err)
+	}
 	input := map[string]any{"request_id": "country-points-fixture", "card_id": "test-card", "plan_code": "codex_point", "provider": "tokenseek", "country": "JP", "credit_quantity": 1250}
 	order := payOrder(t, payCall(t, s.createGPTPayOrder, "email", email, input))
 	if order.Country != "JP" || order.CreditQuantity != 1250 {
@@ -37,6 +42,9 @@ func TestTokenseekCountryQuantitySnapshotAndReplay(t *testing.T) {
 	saved, snapshot, err := st.GPTPayOrder(order.ID)
 	if err != nil || saved.Country != "JP" || snapshot.Input.Country != "JP" || snapshot.Input.CreditQuantity != 1250 {
 		t.Fatal("snapshot fields missing", err)
+	}
+	if snapshot.WebSessionToken != "fixture-original-cookie" || !strings.Contains(payloads[0], `"sessionToken":"fixture-original-cookie"`) {
+		t.Fatal("web session token lost across encrypted persistence")
 	}
 	input["country"] = "PH"
 	if rec := payCall(t, s.createGPTPayOrder, "email", email, input); rec.Code != 409 {

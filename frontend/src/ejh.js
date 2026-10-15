@@ -2,6 +2,38 @@ export const returnStates = { unopened: '未开通', opened: '已开通', waitin
 export const tradeKinds = { '1': '授权', '2': '授权撤销', '3': '授权失败', '4': '清算', '5': '退款', '16': '清算退款', '17': '销卡退回', '19': '销卡后清算' }
 export const operationStates = { submitting: '已提交待确认', unknown: '结果未知，需核实', import_pending: '已开卡待导入', completed: '已完成', resolved: '人工核实完成', failed: '未执行/失败' }
 export const returnTypes = new Set(['2', '5', '16'])
+export function newestCards(cards) {
+  const created = card => { const value = Date.parse(card.local?.created_at || card.created_at || ''); return Number.isFinite(value) ? value : 0 }
+  return [...cards].sort((a, b) => created(b) - created(a) || String(a.id).localeCompare(String(b.id)))
+}
+export function cancelCardReason(card, operations = [], cases = []) {
+  if (card.issuer_linked === false) return '尚未绑定卡台订单'
+  if (String(card.remote?.status) === '2') return '已销卡'
+  if (String(card.remote?.status) === '8') return '销卡处理中'
+  if (card.error || !['1','3','4','5','6','7'].includes(String(card.remote?.status))) return '卡片资料或状态待核实'
+  if (cases.some(row => cardHasCase(card,row) && !['returned','unopened'].includes(row.state))) return '有关联账号已开通或已申请待回款'
+  if (operations.some(op => (op.card_id === card.id || op.order_no && op.order_no === card.remote?.orderNo) && ['submitting','unknown','import_pending'].includes(op.status))) return '有待核实操作'
+  return ''
+}
+// A rejected/ambiguous mutation stops the batch. Never generate a replacement
+// request ID for an uncertain item or silently replay a partially finished batch.
+export async function runEJHBatch(items, progress, submit, shouldStop = () => false) {
+  progress.total = items.length
+  for (let i = 0; i < items.length; i++) {
+    if (shouldStop() || progress.stopRequested) { progress.stopped = true; break }
+    const item = items[i]
+    progress.phase = `正在处理 ${i + 1} / ${items.length}：${item.label}`
+    let result
+    try { result = await submit(item) }
+    catch (error) { result = {status:'unknown',error:error.message} }
+    const status = ['completed','resolved'].includes(result.status) ? 'success' : result.status === 'failed' ? 'failed' : 'unknown'
+    progress[status]++
+    progress.done++
+    progress.results.push({label:item.label,request_id:item.request_id,status,error:result.error || ''})
+    if (status !== 'success') { progress.stopped = true; break }
+  }
+  progress.phase = progress.stopped ? '后续操作已停止' : '全部处理完成'
+}
 export function returnLabel(row) { return returnStates[row?.state] || '未开通' }
 export function caseSummary(row) { return [row.email, row.plan || '—', returnLabel(row), row.deleted ? '账号已删除，历史保留' : ''].filter(Boolean).join(' · ') }
 export const returnStatusLabels = { ...returnStates, unverified: '待核实', unmatched: '回款待关联', unknown: '状态未知' }

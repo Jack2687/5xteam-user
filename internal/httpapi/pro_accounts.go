@@ -72,7 +72,7 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 			}
 		}
 		row.ProAuto.Error = row.ProAuto.DisplayError()
-		if order, ok := orders[strings.ToLower(item.Email)]; ok && item.ProAuto.ID == "" && item.ProManualStages["recharge"].ID == "" {
+		if order, ok := orders[strings.ToLower(item.Email)]; ok && ((item.ProAuto.ID == "" && item.ProManualStages["recharge"].ID == "") || (order.ID == item.ProAuto.OrderID && item.ProAuto.Status != "running")) {
 			progress := proPaymentStage(order)
 			row.StageProgress.Steps["recharge"], row.StageProgress.Errors["recharge"] = progress.Status, progress.Error
 		}

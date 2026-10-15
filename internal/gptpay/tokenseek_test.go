@@ -68,8 +68,8 @@ func TestTokenseekExtendedQuotesCreateAndStatus(t *testing.T) {
 			if input.PlanCode != "codex_point" || input.Country != "EG" || input.CreditQuantity != 1000 || input.Session.Account.PlanType != "plus" {
 				t.Errorf("wrong purchase: %+v", input)
 			}
-			if strings.Contains(string(input.Session.Raw), "private-cookie") {
-				t.Error("cookie leaked")
+			if !strings.Contains(string(input.Session.Raw), `"sessionToken":"private-cookie"`) {
+				t.Error("web session token missing from new order")
 			}
 			fmt.Fprint(w, `{"code":0,"data":{"id":"order-fixture","status":"processing","country":"EG","creditQuantity":1000}}`)
 		case "/gpt-recharge/orders/status":

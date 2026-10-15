@@ -14,6 +14,11 @@ fixture.providerConfigs = { tokenseek: { ...fixture.config }, cmsnav: { ...fixtu
 Object.assign(fixture.config,{card_account_limit:3});Object.assign(fixture.pro,{scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120})
 fixture.scheduleRuns=[];fixture.imported=new Set()
 fixture.profile=profile
+if(new URLSearchParams(location.search).has('payment-retry')){
+  profile.pro_auto={id:'fixture-original-flow',order_id:'fixture-original-order',status:'failed',stage:'recharge',steps:{login:'completed',recharge:'failed'}}
+  profile.pro_stage_progress={steps:{login:'completed',recharge:'unknown'},errors:{recharge:'请提供完整的tokenJson参数(需要有sessionToken)'}}
+  fixture.retryOrderStatus='manual_review'
+}
 const persisted = sessionStorage.getItem('pro-manual-preview')
 if (persisted) { const saved = JSON.parse(persisted); Object.assign(profile, saved.profile); fixture.orders = saved.orders; fixture.cards = saved.cards }
 fixture.persist = () => sessionStorage.setItem('pro-manual-preview', JSON.stringify({ profile, orders:fixture.orders, cards:fixture.cards }))
@@ -128,10 +133,11 @@ window.fetch = async (path, options = {}) => {
       return reply(progress?{...state,error:progress.errors?.[state.stage]||'',stage_progress:progress}:state)
     }
     if(profile.pro_auto?.status==='running')return reply(profile)
+    if(body.retry_current&&fixture.retryOrderStatus!=='success')return new Response(JSON.stringify({error:'原订单仍待核实，未创建新付款'}),{status:409,headers:{'Content-Type':'application/json'}})
     delete profile.pro_stage_progress
-    const state=profile.pro_auto={id:'fixture-auto',status:'running',stage:'login',steps:{login:'running'}}
+    const state=profile.pro_auto={...(body.retry_current?profile.pro_auto:{id:'fixture-auto'}),status:'running',stage:'login',steps:body.retry_current?{login:'running',recharge:'completed'}:{login:'running'}}
     void(async()=>{
-      for(const step of ['login','recharge','oauth','push','quota','merge']){
+      for(const step of (body.retry_current?['login','oauth','push','quota','merge']:['login','recharge','oauth','push','quota','merge'])){
         if(state.status!=='running')return
         state.stage=step;state.steps[step]='running'
         await new Promise(resolve=>setTimeout(resolve,500))

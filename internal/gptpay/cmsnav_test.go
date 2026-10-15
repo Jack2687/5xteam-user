@@ -96,6 +96,7 @@ func TestCMSNavPaymentFailures(t *testing.T) {
 		{400, `{"errorCode":"INSUFFICIENT_CREDITS","error":"secret"}`, false},
 		{400, `{"errorCode":"SESSION_INVALID"}`, false},
 		{401, `{"errorCode":"API_KEY_INVALID"}`, false},
+		{400, `{"errorCode":"PAYMENT_VERIFICATION_REQUIRED","retryable":false}`, false},
 		{503, `{"errorCode":"CHANNEL_UNAVAILABLE"}`, true},
 		{409, `{"errorCode":"IDEMPOTENCY_CONFLICT"}`, true},
 		{200, `<html>secret</html>`, true},

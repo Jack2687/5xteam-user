@@ -70,7 +70,7 @@ func proPaymentStage(order gptpay.Order) model.ProStageProgress {
 		status = "completed"
 	case "failed":
 		status = "failed"
-	case "submission_unknown":
+	case "submission_unknown", "manual_review":
 		status = "unknown"
 	}
 	return model.ProStageProgress{ID: order.ID, Status: status, Error: order.Error, StartedAt: order.CreatedAt, UpdatedAt: time.Now()}

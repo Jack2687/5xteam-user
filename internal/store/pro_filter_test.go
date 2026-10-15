@@ -21,9 +21,14 @@ func TestProAccountFiltersPartitionProgressAndExport(t *testing.T) {
 		{"new", "unmerged", model.MailAccountProfile{}, model.MailAccountCredentials{}},
 		{"defaults", "unmerged", model.MailAccountProfile{InviteStatus: "pending", AcceptStatus: "not_started", ProAuto: model.ProAutoState{Steps: map[string]string{"login": "not_started", "merge": "pending"}}, ProManualStages: map[string]model.ProStageProgress{"login": {Status: "pending"}}}, model.MailAccountCredentials{}},
 		{"credentials-only", "unmerged", model.MailAccountProfile{}, model.MailAccountCredentials{AccessToken: "at", RefreshToken: "rt"}},
+		{"manual-login-completed", "unmerged", model.MailAccountProfile{ProManualStages: map[string]model.ProStageProgress{"login": {Status: "completed"}}}, model.MailAccountCredentials{AccessToken: "at", ChatGPTSession: "{}"}},
+		{"login-display-only", "unmerged", model.MailAccountProfile{ProAuto: model.ProAutoState{Steps: map[string]string{"login": "completed", "recharge": "not_started", "oauth": "not_started", "push": "not_started", "quota": "not_started", "merge": "pending"}}}, model.MailAccountCredentials{AccessToken: "at", ChatGPTSession: "{}"}},
+		{"login-then-recharge", "in_progress", model.MailAccountProfile{ProManualStages: map[string]model.ProStageProgress{"login": {Status: "completed"}, "recharge": {Status: "running"}}}, model.MailAccountCredentials{}},
+		{"login-then-auto-recharge", "in_progress", model.MailAccountProfile{ProAuto: model.ProAutoState{Steps: map[string]string{"login": "completed", "recharge": "completed"}}}, model.MailAccountCredentials{}},
+		{"login-after-merge", "merged", model.MailAccountProfile{SpaceMergedOnce: true, ProManualStages: map[string]model.ProStageProgress{"login": {Status: "completed"}}}, model.MailAccountCredentials{}},
 		{"manual-login", "in_progress", model.MailAccountProfile{ProManualStages: map[string]model.ProStageProgress{"login": {Status: "running"}}}, model.MailAccountCredentials{}},
 		{"manual-failed", "in_progress", model.MailAccountProfile{ProManualStages: map[string]model.ProStageProgress{"oauth": {Status: "failed"}}}, model.MailAccountCredentials{}},
-		{"legacy-login", "in_progress", model.MailAccountProfile{}, model.MailAccountCredentials{AccessToken: "at", ChatGPTSession: `{}`}},
+		{"legacy-login", "unmerged", model.MailAccountProfile{}, model.MailAccountCredentials{AccessToken: "at", ChatGPTSession: `{}`}},
 		{"legacy-oauth", "in_progress", model.MailAccountProfile{OAuthAuthorizedAt: &now}, model.MailAccountCredentials{AccessToken: "at", RefreshToken: "rt"}},
 		{"legacy-push", "in_progress", model.MailAccountProfile{PushStatus: "completed"}, model.MailAccountCredentials{}},
 		{"legacy-quota", "in_progress", model.MailAccountProfile{QuotaStatus: "failed"}, model.MailAccountCredentials{}},
@@ -102,7 +107,11 @@ func TestProAccountFiltersPartitionProgressAndExport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		items, total, _, err := s.ProAccountsPage("new@", "in_progress", 10, 0)
+		wantState := "in_progress"
+		if stage == "completed" {
+			wantState = "unmerged"
+		}
+		items, total, _, err := s.ProAccountsPage("new@", wantState, 10, 0)
 		if err != nil || total != 1 || len(items) != 1 {
 			t.Fatal("manual transition", stage, err)
 		}

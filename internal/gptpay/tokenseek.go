@@ -1,6 +1,7 @@
 package gptpay
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -47,9 +48,23 @@ func ValidatePlanSession(cfg Settings, session Session) error {
 // snapshots have an unused top-level Country; replay must continue omitting it.
 func NewSnapshot(cfg Settings, key string, card CardSecret, session Session) Snapshot {
 	input := CreateInput{PlanCode: cfg.PlanCode, CardSecret: card, Session: session}
+	input.Session.SessionToken = ""
+	sessionToken := session.SessionToken
+	{
+		var web map[string]json.RawMessage
+		if json.Unmarshal(session.Raw, &web) == nil {
+			for _, name := range []string{"sessionToken", "session_token"} {
+				var token string
+				if json.Unmarshal(web[name], &token) == nil && strings.TrimSpace(token) != "" {
+					sessionToken = token
+					break
+				}
+			}
+		}
+	}
 	if Provider(cfg.Provider) == Tokenseek {
 		input.Country = cfg.Country
 		input.CreditQuantity = cfg.CreditQuantity
 	}
-	return Snapshot{Provider: cfg.Provider, Country: cfg.Country, URL: cfg.URL, APIKey: key, Input: input}
+	return Snapshot{Provider: cfg.Provider, Country: cfg.Country, URL: cfg.URL, APIKey: key, Input: input, WebSessionToken: sessionToken}
 }

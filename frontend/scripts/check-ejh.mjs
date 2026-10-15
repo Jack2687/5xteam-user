@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { newestCards, cancelCardReason, runEJHBatch } from '../src/ejh.js'
 import { currencies, currencyOptions, searchCurrencyOptions } from '../src/ejh-currencies.js'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -7,11 +8,11 @@ import { returnTypes, operationStates, caseSummary, summarizeCardBalances, retur
 const source=readFileSync(new URL('../src/components/EJHManagementView.vue',import.meta.url),'utf8')
 const script=source.split('<script setup>')[1].split('</script>')[0]
 const parsed=ts.createSourceFile('ejh.js',script,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS)
-const methods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','cardAction','openCards'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
+const methods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','cardAction','openCards','cancelSelected'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 function fixture(result){
  const calls=[],message={text:'',type:''},openForm={count:3,request_id:'',input:{cardAmount:'20',cardCurrency:'USD'}},detail={value:null}
- const ctx=vm.createContext({message,openForm,detail,busy:{value:false},operationStates,window:{confirm:()=>true,prompt:()=> '20'},crypto:{randomUUID:()=> 'fixture-id'},load:async()=>{},api:async(path,options)=>{calls.push({path,options});return result}})
- vm.runInContext(methods+'\nthis.methods={cardAction,openCards}',ctx)
+ const ctx=vm.createContext({setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),message,openForm,detail,busy:{value:false},operationStates,window:{confirm:()=>true,prompt:()=> '20'},crypto:{randomUUID:()=> 'fixture-id'},load:async()=>{},api:async(path,options)=>{calls.push({path,options});return result}})
+ vm.runInContext(methods+'\nthis.methods={cardAction,openCards,cancelSelected}',ctx)
  return {ctx,calls,message,openForm,detail}
 }
 const card={id:'fixture',remote:{cardCurrency:'USD'}}
@@ -34,7 +35,7 @@ assert.deepEqual(summarizeCardBalances([]).totals,[])
 const balanceMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','load','refreshAllBalances','queryAccountBalance'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 for(const stop of [false,true]){
  const calls=[],allCards=[{id:'one',remote:{orderNo:'one'}},{id:'two',remote:{orderNo:'two'}}]
- const ctx=vm.createContext({message:{text:'',type:''},busy:{value:false},disposed:false,data:{value:{cards:allCards}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{calls.push({path,options});if(path==='/api/ejh/dashboard')return {cards:allCards};if(path.includes('/one/')){if(stop)ctx.disposed=true;throw Error('fixture card failure')}return {}}})
+ const ctx=vm.createContext({setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),message:{text:'',type:''},busy:{value:false},disposed:false,data:{value:{cards:allCards}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{calls.push({path,options});if(path==='/api/ejh/dashboard')return {cards:allCards};if(path.includes('/one/')){if(stop)ctx.disposed=true;throw Error('fixture card failure')}return {}}})
  vm.runInContext(balanceMethods+'\nthis.run=refreshAllBalances;this.load=load',ctx)
  await ctx.load();assert.equal(calls.length,1,'Reading saved snapshots must not query supplier balances')
  await ctx.run()
@@ -121,7 +122,7 @@ console.log('Passed: searchable currencies, code/name/region matching, legacy an
 const currencyMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['save','action','show','chooseTemplate','cardStatus'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 const settings={templates:[{id:'currency-template',name:'币种测试',valid_days:30,cardType:'fixture',cardAmount:'20',cardCurrency:'CNH',billCurrency:'EUR'}]}
 const calls=[]
-const currencyContext=vm.createContext({cardStates,cardState,settings,openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
+const currencyContext=vm.createContext({setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),cardStates,cardState,settings,openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
 vm.runInContext(currencyMethods+'\nthis.run={save,chooseTemplate,cardStatus}',currencyContext)
 await currencyContext.run.save()
 assert.equal(calls[0].path,'/api/ejh/settings')
@@ -154,7 +155,7 @@ console.log('Passed: EJH switch false/true payloads, card type column/default/se
 const entryMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','load','refreshAllBalances','refreshPage','initialize'].includes(s.name?.text)).map(s=>s.getText(parsed)).join(';')
 for(const enabled of [false,true]) for(const syncFails of [false,true]) {
  const calls=[], cards=[{id:'one',remote:{orderNo:'one'}},{id:'local',issuer_linked:false,remote:{}}]
- const ctx=vm.createContext({message:{text:'',type:''},busy:{value:false},ready:{value:false},settings:{enabled:false},disposed:false,data:{value:{cards:[]}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{
+ const ctx=vm.createContext({setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),message:{text:'',type:''},busy:{value:false},ready:{value:false},settings:{enabled:false},disposed:false,data:{value:{cards:[]}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{
   calls.push({path,options});if(path==='/api/ejh/settings')return {enabled};if(path==='/api/ejh/dashboard')return {cards};if(path==='/api/ejh/sync'&&syncFails)throw Error('sync unavailable');return {}
  }})
  vm.runInContext(entryMethods+';this.initialize=initialize;this.refreshPage=refreshPage',ctx)
@@ -170,3 +171,49 @@ for(const enabled of [false,true]) for(const syncFails of [false,true]) {
 }
 assert.ok(source.includes('onMounted(initialize)'))
 console.log('Passed: EJH entry refresh, disabled guard, read-only endpoints, partial-failure retention, busy and disposal guards')
+
+const sorted=newestCards([{id:'old',local:{created_at:'2026-10-01'},synced_at:'2026-10-20'},{id:'new',local:{created_at:'2026-10-15'}},{id:'missing'}])
+assert.deepEqual(sorted.map(c=>c.id),['new','old','missing'])
+const usable={id:'card',remote:{status:'1',orderNo:'order'},local:{active_accounts:0,pending_accounts:0}}
+assert.equal(cancelCardReason(usable), '')
+assert.equal(cancelCardReason({...usable,local:{active_accounts:3}},[],[{card_id:'card',state:'returned'},{ejh_card_id:'card',state:'unopened'}]),'','Return states override historical occupancy')
+for(const state of ['opened','waiting','unknown'])assert.ok(cancelCardReason(usable,[],[{card_id:'card',state:'returned'},{ejh_card_id:'card',state}]))
+assert.equal(cancelCardReason(usable,[],[{card_id:'other',state:'waiting'}]),'')
+for(const card of [{...usable,issuer_linked:false},{...usable,remote:{status:'2'}},{...usable,remote:{status:'8'}},{...usable,error:'review'}])assert.ok(cancelCardReason(card))
+assert.ok(cancelCardReason(usable,[{card_id:'card',status:'unknown'}]))
+assert.ok(cancelCardReason(usable,[{order_no:'order',status:'submitting'}]))
+for(const status of ['completed','unknown','failed','throw','stop']) {
+ const p={done:0,success:0,failed:0,unknown:0,results:[]},calls=[]
+ await runEJHBatch([1,2,3].map(i=>({label:'card '+i,request_id:'request-'+i})),p,async item=>{
+  calls.push(item.request_id);if(status==='throw')throw Error('connection lost')
+  if(status==='stop')p.stopRequested=true
+  return {status:status==='stop'?'completed':status}
+ })
+ assert.equal(calls.length,status==='completed'?3:1)
+ assert.equal(p.done,calls.length);assert.equal(p.results[0].request_id,'request-1')
+ assert.equal(p.unknown,status==='unknown'||status==='throw'?1:0)
+ assert.equal(p.failed,status==='failed'?1:0)
+}
+{
+ const f=fixture({status:'completed'});let resolveFirst
+ const calls=[]
+ f.ctx.api=async(path,options)=>{calls.push(JSON.parse(JSON.stringify(options.body)));if(calls.length===1)await new Promise(r=>resolveFirst=r);return {status:'completed'}}
+ const running=f.ctx.methods.openCards()
+ assert.equal(f.ctx.busy.value,true);assert.equal(f.ctx.progress.value.total,3);assert.match(f.ctx.progress.value.phase,/1 \/ 3/)
+ f.openForm.count=1;f.openForm.input.cardAmount='999';resolveFirst();await running
+ assert.equal(calls.length,3);assert.ok(calls.every(c=>c.input.cardAmount==='20'),'Freeze batch quantity and payload before awaiting supplier')
+}
+{
+ const f=fixture({status:'unknown'});await f.ctx.methods.openCards();await f.ctx.methods.openCards()
+ assert.equal(f.calls.length,1,'Uncertain opening cannot start another batch')
+}
+{
+ const f=fixture({status:'completed'});f.ctx.disposed=true;await f.ctx.methods.openCards();assert.equal(f.calls.length,0)
+}
+for(const status of ['completed','unknown']) {
+ const f=fixture({status});f.ctx.selectedCards.value=['one','two'];f.ctx.data={value:{cards:['one','two'].map(id=>({...usable,id}))}}
+ await f.ctx.methods.cancelSelected()
+ assert.equal(f.calls.length,status==='completed'?2:1);assert.ok(f.calls.every(c=>c.options.body.action==='cancel'&&c.options.body.confirm))
+ assert.equal(f.ctx.progress.value.success,status==='completed'?2:0)
+}
+console.log('Passed: newest-first order, cancellation selection guards, progress, frozen opening payload, uncertainty stop, disposal and batch cancellation')

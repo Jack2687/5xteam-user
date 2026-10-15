@@ -12,14 +12,19 @@ import (
 )
 
 type proRestockRecoveryKey struct{}
+type proPaidRecoveryKey struct{}
 
 // Recovery can establish a new login session, but it has no payment permission.
 func (s *Server) confirmRestockPaidSession(ctx context.Context, p model.MailAccountProfile, taskID string, args map[string]any) (any, error) {
 	if p.ProRestockTaskID != taskID || p.ProAuto.OrderID == "" {
 		return nil, errors.New("补货恢复任务与原订单不匹配")
 	}
+	return s.confirmProPaidSession(p, args)
+}
+
+func (s *Server) confirmProPaidSession(p model.MailAccountProfile, args map[string]any) (any, error) {
 	order, paid, err := s.store.GPTPayOrder(p.ProAuto.OrderID)
-	if err != nil || order.Status != "success" {
+	if err != nil || order.Status != "success" || order.Email != p.Email || paid.Input.Session.User.Email != p.Email || paid.Input.Session.Account.ID == "" {
 		return nil, errors.New("原订单未确认成功，停止恢复授权")
 	}
 	session, _ := args["session"].(map[string]any)
@@ -27,6 +32,9 @@ func (s *Server) confirmRestockPaidSession(ctx context.Context, p model.MailAcco
 	info, err := workflow.DecodeUserInfo(at)
 	if err != nil || info.Email != p.Email || info.AccountID != paid.Input.Session.Account.ID {
 		return nil, errors.New("恢复登录账号或空间与已付款订单不一致")
+	}
+	if err = s.autoProUpdate(p.Email, "login", "completed", "恢复登录身份与原订单一致"); err != nil {
+		return nil, err
 	}
 	if err = s.autoProUpdate(p.Email, "recharge", "completed", "复核原订单成功；恢复授权，不重新付款"); err != nil {
 		return nil, err

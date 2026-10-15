@@ -3,7 +3,8 @@ package gptpay
 import "encoding/json"
 
 // Preserve the web session fields supplied by /api/auth/session, while keeping
-// local OAuth refresh tokens and cookie credentials out of payment requests.
+// local OAuth refresh tokens out of payment requests. Only new snapshots
+// explicitly include their web session token; legacy payloads remain unchanged.
 func (s *Session) UnmarshalJSON(data []byte) error {
 	type plain Session
 	var v plain
@@ -11,6 +12,8 @@ func (s *Session) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*s = Session(v)
+	// Only NewSnapshot opts a new order into sessionToken delivery.
+	s.SessionToken = ""
 	s.Raw = append(json.RawMessage(nil), data...)
 	return nil
 }
@@ -44,6 +47,9 @@ func (s Session) MarshalJSON() ([]byte, error) {
 		v[key], _ = json.Marshal(nested)
 	}
 	v["accessToken"], _ = json.Marshal(s.AccessToken)
+	if s.SessionToken != "" {
+		v["sessionToken"], _ = json.Marshal(s.SessionToken)
+	}
 	// Keep the original three-field encoding for legacy encrypted snapshots.
 	var user, account map[string]json.RawMessage
 	_ = json.Unmarshal(v["user"], &user)

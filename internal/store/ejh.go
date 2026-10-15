@@ -120,6 +120,41 @@ func (s *Store) EJHBeginOperation(op ejh.Operation) error {
 	}
 	defer tx.Rollback()
 	var exists int
+	if op.Method == "cancel" {
+		// Serialize cancellation admission with payment/reservation admission.
+		if err = lockProCardAdmission(tx); err != nil {
+			return err
+		}
+		var sealed string
+		if err = tx.QueryRow(`SELECT sealed FROM ejh_records WHERE kind='card' AND id=?`, op.CardID).Scan(&sealed); err != nil {
+			return err
+		}
+		raw, err := s.decrypt(sealed)
+		if err != nil {
+			return err
+		}
+		var card ejh.CardRecord
+		if err = json.Unmarshal([]byte(raw), &card); err != nil {
+			return err
+		}
+		switch card.Remote.Status {
+		case "1", "3", "4", "5", "6", "7":
+		default:
+			return fmt.Errorf("该卡已销卡、销卡处理中或状态待核实，不能再次销卡")
+		}
+		if card.Error != "" {
+			return fmt.Errorf("卡片资料待核实，不能销卡")
+		}
+		cases, err := s.ejhCasesQuery(tx, nil)
+		if err != nil {
+			return err
+		}
+		for _, c := range cases {
+			if (c.CardID == card.ID || c.EJHCardID == card.ID) && c.State != "returned" && c.State != "unopened" {
+				return fmt.Errorf("该卡有关联账号已开通或已申请待回款，不能销卡")
+			}
+		}
+	}
 	if err = tx.QueryRow(`SELECT count(*) FROM ejh_records WHERE kind='operation' AND id=?`, op.ID).Scan(&exists); err != nil {
 		return err
 	}
@@ -202,7 +237,7 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 		return empty, fmt.Errorf("卡台未返回订单号")
 	}
 	id := EJHID("card", remote.OrderNo)
-	record := ejh.CardRecord{ID: id, Remote: remote, SyncedAt: time.Now()}
+	record := ejh.CardRecord{ID: id, Remote: remote, CreatedAt: time.Now(), SyncedAt: time.Now()}
 	defer func() {
 		if retErr != nil {
 			record.Error = retErr.Error()
@@ -213,6 +248,10 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 	}()
 	var prior ejh.CardRecord
 	if s.EJHGet("card", id, &prior) == nil {
+		record.CreatedAt = prior.CreatedAt
+		if record.CreatedAt.IsZero() {
+			record.CreatedAt = prior.SyncedAt
+		}
 		record.Balance, record.BalanceAt = prior.Balance, prior.BalanceAt
 		record.BalanceError, record.BalanceAttemptAt = prior.BalanceError, prior.BalanceAttemptAt
 	}
@@ -424,6 +463,14 @@ func (s *Store) EJHCases() ([]ejh.Case, error) {
 func (s *Store) EJHCasesForEmails(emails []string) ([]ejh.Case, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.ejhCasesQuery(s.db, emails)
+}
+
+type ejhCaseQuery interface {
+	Query(string, ...any) (*sql.Rows, error)
+}
+
+func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, error) {
 	where := ""
 	args := []any{}
 	if emails != nil {
@@ -437,7 +484,7 @@ func (s *Store) EJHCasesForEmails(emails []string) ([]ejh.Case, error) {
 		}
 		where = " WHERE c.email IN (" + strings.Join(marks, ",") + ")"
 	}
-	tradeRows, e := s.db.Query(`SELECT r.sealed FROM ejh_records r JOIN ejh_return_links l ON l.trade_id=r.id JOIN ejh_cases c ON c.id=l.order_id WHERE r.kind='trade'`+strings.Replace(where, " WHERE ", " AND ", 1), args...)
+	tradeRows, e := q.Query(`SELECT r.sealed FROM ejh_records r JOIN ejh_return_links l ON l.trade_id=r.id JOIN ejh_cases c ON c.id=l.order_id WHERE r.kind='trade'`+strings.Replace(where, " WHERE ", " AND ", 1), args...)
 	if e != nil {
 		return nil, e
 	}
@@ -465,7 +512,7 @@ func (s *Store) EJHCasesForEmails(emails []string) ([]ejh.Case, error) {
 	if e != nil {
 		return nil, e
 	}
-	rows, e := s.db.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other') FROM ejh_cases c
+	rows, e := q.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other') FROM ejh_cases c
 		LEFT JOIN mail_accounts m ON m.email=c.email
 		LEFT JOIN pro_card_usage u ON u.order_id=c.id
   LEFT JOIN pro_card_identities i ON i.card_id=c.card_id
