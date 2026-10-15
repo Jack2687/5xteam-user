@@ -61,6 +61,7 @@ func (a MonitorAccount) Ready(now time.Time, models []string) bool {
 func (c *Client) MonitorAccounts(ctx context.Context, v model.Sub2Settings, password string, group int64) ([]MonitorAccount, error) {
 	out := []MonitorAccount{}
 	seen := map[int64]bool{}
+	expected := -1
 	for page := 1; page <= 100; page++ {
 		raw, e := c.doJSON(ctx, v, password, http.MethodGet, fmt.Sprintf("/api/v1/admin/accounts?platform=openai&group_id=%d&page=%d&page_size=100", group, page), nil, nil)
 		if e != nil {
@@ -76,6 +77,13 @@ func (c *Client) MonitorAccounts(ctx context.Context, v model.Sub2Settings, pass
 		if result.Total == nil {
 			return nil, errors.New("Sub2 账号分页缺少总数")
 		}
+		if result.Items == nil || *result.Total < 0 {
+			return nil, errors.New("Sub2 账号分页缺少有效列表或总数无效")
+		}
+		if expected >= 0 && *result.Total != expected {
+			return nil, errors.New("Sub2 账号总数在采集期间变化，请重新采样")
+		}
+		expected = *result.Total
 		if len(result.Items) == 0 && len(out) < *result.Total {
 			return nil, errors.New("Sub2 账号分页不完整")
 		}
@@ -138,6 +146,9 @@ func (c *Client) MonitorConcurrency(ctx context.Context, v model.Sub2Settings, p
 	e = json.Unmarshal(raw, &result)
 	if e == nil && !result.Enabled {
 		e = errors.New("Sub2 实时监控未启用")
+	}
+	if e == nil && result.Account == nil {
+		e = errors.New("Sub2 实时监控缺少有效账号负载列表")
 	}
 	return result, e
 }

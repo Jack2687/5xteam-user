@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -129,7 +128,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resume := p.ProAuto.Steps["oauth"] == "completed"
-	if r.Context().Value(proRestockContextKey{}) != nil && p.ProAuto.StopRequested {
+	stopVersion := p.ProAuto.StopVersion
+	wasStopped := p.ProAuto.StopRequested
+	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
+	if automatic && p.ProAuto.StopRequested {
 		writeAPI(w, 409, nil, "用户已停止该账号流程，未自动启动")
 		return
 	}
@@ -207,7 +209,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		closed := s.proAutoClosed
 		s.proAutoMu.Unlock()
 		latest, _, checkErr := s.store.MailAccountCredential(email)
-		if closed || checkErr != nil || (r.Context().Value(proRestockContextKey{}) != nil && latest.ProAuto.StopRequested) || latest.ProWorkflowRunning || latest.ProAuto.OrderID != "" || latest.SpaceMergedOnce || s.proAutomationRunning(email) || s.proLoginAlreadyRunning(email) {
+		if closed || checkErr != nil || latest.ProAuto.StopVersion != stopVersion || (latest.ProAuto.StopRequested && (automatic || !wasStopped)) || latest.ProWorkflowRunning || latest.ProAuto.OrderID != "" || latest.SpaceMergedOnce || s.proAutomationRunning(email) || s.proLoginAlreadyRunning(email) {
 			lock.Unlock()
 			writeAPI(w, 409, nil, "账号已有任务或已开通，未购买新卡")
 			return
@@ -221,7 +223,16 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, 500, nil, "无法核实原订单，未启动流程或购买新卡")
 			return
 		}
-		card, secret, err = s.reserveProStartCard(r.Context(), email, input.CardID, pro.EJHAutoOpen, r.Context().Value(proScheduledContextKey{}) == true)
+		card, secret, err = s.reserveProStartCard(r.Context(), email, input.CardID, pro.EJHAutoOpen, r.Context().Value(proScheduledContextKey{}) == true, func() error {
+			latest, _, err := s.store.MailAccountCredential(email)
+			if err != nil {
+				return err
+			}
+			if latest.ProAuto.StopVersion != stopVersion || (latest.ProAuto.StopRequested && (automatic || !wasStopped)) {
+				return errors.New("用户已停止该账号流程，未购买新卡")
+			}
+			return nil
+		})
 		if err != nil {
 			lock.Unlock()
 			writeAPI(w, 409, nil, err.Error())
@@ -250,13 +261,16 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	if err == nil && !resume && p.ProAuto.OrderID != "" {
 		err = errors.New("已存在开通订单，请查询原订单")
 	}
-	if err == nil && r.Context().Value(proRestockContextKey{}) != nil && p.ProAuto.StopRequested {
-		err = errors.New("用户已停止该账号流程，未自动启动")
+	// A stop received during card issuance must win over this older start.
+	// Versioning also detects a second stop while explicitly resuming a stopped account.
+	if err == nil && (p.ProAuto.StopVersion != stopVersion || (p.ProAuto.StopRequested && (automatic || !wasStopped))) {
+		err = errors.New("用户已停止该账号流程，本次启动已取消；已发出的开卡请求请在卡片记录中核对")
 	}
 	if err == nil {
 		p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			if !resume {
 				p.ProAuto = model.ProAutoState{ID: randomRegistrationID(), PlanCode: cfg.PlanCode, CardID: card.ID, QuotaUsedThreshold: pro.QuotaUsedThreshold, QuotaIntervalSeconds: pro.QuotaCheckIntervalSeconds, StartedAt: time.Now(), Steps: map[string]string{}}
+				p.ProAuto.StopVersion = stopVersion
 				p.ProAuto.QuotaPlan = restockPlan(cfg.Provider, cfg.PlanCode, cfg.Country, cfg.CreditQuantity)
 				p.ProAuto.RestockBinding = restockBinding(pro)
 			}
@@ -695,7 +709,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err == nil && p.Quota7D != nil && !math.IsNaN(p.Quota7D.UsedPercent) && !math.IsInf(p.Quota7D.UsedPercent, 0) {
+		if err == nil && validProQuotaWindow(p.Quota7D) {
 			if _, e := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				if p.ProAuto.ProvisionedAt == nil {
 					now := time.Now()
@@ -705,11 +719,11 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 				return e
 			}
 		}
-		if err != nil || p.Quota7D == nil || math.IsNaN(p.Quota7D.UsedPercent) || math.IsInf(p.Quota7D.UsedPercent, 0) || p.Quota7D.UsedPercent < p.ProAuto.QuotaUsedThreshold {
+		if err != nil || !validProQuotaWindow(p.Quota7D) || p.Quota7D.UsedPercent < p.ProAuto.QuotaUsedThreshold {
 			message := ""
 			if err != nil {
 				message = "额度检测暂未成功，等待下次重试：" + err.Error()
-			} else if p.Quota7D == nil || math.IsNaN(p.Quota7D.UsedPercent) || math.IsInf(p.Quota7D.UsedPercent, 0) {
+			} else if !validProQuotaWindow(p.Quota7D) {
 				message = "额度检测未返回有效的 7 天额度，等待下次重试"
 			}
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
@@ -846,6 +860,7 @@ func (s *Server) stopProAutomation(w http.ResponseWriter, r *http.Request) {
 	s.proAutoMu.Lock()
 	defer s.proAutoMu.Unlock()
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		p.ProAuto.StopVersion++
 		p.ProAuto.StopRequested = true
 		p.ProAuto.Status = "stopped"
 		p.ProAuto.NextCheckAt = nil

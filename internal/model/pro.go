@@ -3,6 +3,7 @@ package model
 import "time"
 
 type ProAutoState struct {
+	StopVersion          uint64               `json:"stop_version,omitempty"`
 	StopRequested        bool                 `json:"stop_requested,omitempty"`
 	RestockRecoveries    int                  `json:"restock_recoveries,omitempty"`
 	RestockRecoveryAt    *time.Time           `json:"restock_recovery_at,omitempty"`

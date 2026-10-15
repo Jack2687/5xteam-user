@@ -1,8 +1,10 @@
 <script setup>
 import {ref,reactive,computed,onMounted,onUnmounted,nextTick} from 'vue'
 import {api} from '../api'
+import {createLatestRequest} from '../latestRequest'
 const state=ref(null),tab=ref('dashboard'),busy=ref(false),error=ref(''),notice=ref(''),groups=ref([]),search=ref(''),records=ref([]),page=ref(1),detail=ref(null),dialog=ref(null),dirty=ref(false),form=reactive({})
-let timer,disposed=false,loading=false,returnFocus
+let timer,disposed=false,returnFocus,stateRevision=0
+const stateRequest=createLatestRequest(),recordsRequest=createLatestRequest()
 const d=computed(()=>state.value?.decision||{}),snap=computed(()=>state.value?.snapshot||{}),inherited=computed(()=>state.value?.inherited||{}),tasks=computed(()=>state.value?.tasks||[])
 const active=computed(()=>tasks.value.filter(t=>!['ready','failed','cancelled'].includes(t.status))),filteredGroups=computed(()=>groups.value.filter(g=>g.name.toLowerCase().includes(search.value.toLowerCase())))
 const stale=computed(()=>!snap.value.at||Date.now()-new Date(snap.value.at).getTime()>1000*(state.value?.config?.fresh_seconds||20))
@@ -20,20 +22,32 @@ const advanced=[
  {title:'成本与数量保护',text:'预算按每号保守成本预留记账，单位须一致，不直接换算供应商 Credits；不包含其他策略支出。金额限制为 0 时关闭。',fields:[['hour_limit','每小时最多补充',1,10000],['day_limit','每天最多补充',1,10000],['unit_cost','每号成本预留（记账单位）',0,100000000],['hour_budget','每小时预留预算',0,100000000000],['day_budget','每日预留预算',0,100000000000],['pool_limit','监控池硬上限',1,10000],['failure_limit','连续异常熔断阈值',1,100],['fault_percent','账号异常暂停比例（%）',1,100]]},
  {title:'数据与到货保护',text:'不足历史样本时使用保守回退耗时；付款未知保留原订单、预算和在途。',fields:[['lead_minutes','就绪耗时回退（分钟）',1,1440],['lead_samples','采用历史耗时所需样本',2,1000],['margin_minutes','到货安全余量（分钟）',0,120],['forecast_minutes','最大预测范围（分钟）',2,1440],['fresh_seconds','并发快照有效期（秒）',2,3600],['quota_coverage','可信额度样本覆盖（%）',1,100],['retention_days','明细保留天数',1,90]]}
 ]
-async function refresh(initial=false){if(loading||disposed)return;loading=true;try{state.value=await api('/api/pro-restock');if(initial)Object.assign(form,state.value.config);await loadRecords()}catch(e){error.value=e.message}finally{loading=false}}
-async function loadRecords(){records.value=await api('/api/pro-restock/records?page='+page.value)}
-async function action(fn){if(busy.value)return;busy.value=true;error.value='';notice.value='';try{await fn()}catch(e){error.value=e.message}finally{busy.value=false}}
-async function evaluate(){await action(async()=>{state.value=await api('/api/pro-restock/evaluate',{method:'POST'});await loadRecords();notice.value='已完成评估；自动模式会启动符合规则的全自动流程。'})}
-async function save(){await action(async()=>{const c=await api('/api/pro-restock/config',{method:'PUT',body:form});Object.assign(form,c);dirty.value=false;await refresh();notice.value='配置 v'+c.version+' 已保存。'})}
-async function pause(){await action(async()=>{const c={...state.value.config,enabled:!state.value.config.enabled};await api('/api/pro-restock/config',{method:'PUT',body:c});await refresh(true);dirty.value=false;notice.value=c.enabled?'后台监控已启用':'新增已暂停，已提交任务继续跟踪。'})}
+async function refresh(initial=false,background=false){
+ if(disposed||(background&&busy.value))return
+ const revision=stateRevision
+ try{await stateRequest.run(signal=>api('/api/pro-restock',{signal}),async data=>{
+  if(disposed||revision!==stateRevision)return
+  state.value=data
+  if(initial)Object.assign(form,data.config)
+  await loadRecords(true)
+ },{background})}catch(e){if(!disposed&&revision===stateRevision)error.value=e.message}
+}
+async function loadRecords(background=false){
+ const requestedPage=page.value
+ await recordsRequest.run(signal=>api('/api/pro-restock/records?page='+requestedPage,{signal}),data=>{records.value=data},{background})
+}
+async function action(fn){if(busy.value||disposed)return;busy.value=true;stateRevision++;error.value='';notice.value='';try{await fn()}catch(e){if(!disposed)error.value=e.message}finally{busy.value=false}}
+async function evaluate(){await action(async()=>{const data=await api('/api/pro-restock/evaluate',{method:'POST'});if(disposed)return;state.value=data;await loadRecords();notice.value='已完成评估；自动模式会启动符合规则的全自动流程。'})}
+async function save(){await action(async()=>{const c=await api('/api/pro-restock/config',{method:'PUT',body:form});if(disposed)return;state.value={...state.value,config:c};Object.assign(form,c);dirty.value=false;await refresh();notice.value='配置 v'+c.version+' 已保存。'})}
+async function pause(){await action(async()=>{const c=await api('/api/pro-restock/config',{method:'PUT',body:{...state.value.config,enabled:!state.value.config.enabled}});if(disposed)return;state.value={...state.value,config:c};Object.assign(form,c);dirty.value=false;await refresh(true);notice.value=c.enabled?'后台监控已启用':'新增已暂停，已提交任务继续跟踪。'})}
 async function loadGroups(){await action(async()=>{groups.value=await api('/api/pro-restock/groups');notice.value='已读取 Pro 推送连接的 Sub2 分组。'})}
-async function resetBreaker(){await action(async()=>{state.value=await api('/api/pro-restock/reset-breaker',{method:'POST'});notice.value='熔断已重置，原订单和在途保留。'})}
+async function resetBreaker(){await action(async()=>{const data=await api('/api/pro-restock/reset-breaker',{method:'POST'});if(disposed)return;state.value=data;notice.value='熔断已重置，原订单和在途保留。'})}
 async function changeTab(value){tab.value=value;if(value==='records')await action(loadRecords)}
 async function showDetail(item){returnFocus=document.activeElement;detail.value={...item,related_tasks:tasks.value.filter(t=>t.decision_id===item.id)};await nextTick();dialog.value?.showModal();if(item.snapshot&&item.id){try{const related=await api('/api/pro-restock/records/'+encodeURIComponent(item.id)+'/tasks');if(detail.value?.id===item.id)detail.value.related_tasks=related}catch(e){error.value=e.message}}}
 function closeDetail(){dialog.value?.close();detail.value=null;returnFocus?.focus()}
 const chart=computed(()=>{const points=[...records.value].reverse().slice(-30);const top=Math.max(1,...points.map(r=>Math.max(r.capacity,r.used+r.waiting)));function path(key){let value='',connected=false;points.forEach((r,i)=>{if(!r.snapshot?.valid||!r.snapshot?.load_valid){connected=false;return}const n=key==='capacity'?r.capacity:r.used+r.waiting;value+=(connected?' L':' M')+(20+i*560/Math.max(1,points.length-1))+','+(155-n*125/top);connected=true});return value}return {empty:!points.some(r=>r.snapshot?.valid&&r.snapshot?.load_valid),demand:path('demand'),capacity:path('capacity')}})
-onMounted(async()=>{await refresh(true);timer=setInterval(()=>refresh(),5000)})
-onUnmounted(()=>{disposed=true;clearInterval(timer)})
+onMounted(async()=>{await refresh(true);if(!disposed)timer=setInterval(()=>refresh(false,true),5000)})
+onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);stateRequest.dispose();recordsRequest.dispose()})
 </script>
 <template>
 <div class="restock">

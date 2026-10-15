@@ -663,7 +663,7 @@ func (s *Server) validateEJHAutomation(v model.ProSettings) error {
 	}
 	return nil
 }
-func (s *Server) ensureEJHCard(ctx context.Context) (gptpay.Card, error) {
+func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() error) (gptpay.Card, error) {
 	s.ejh.mu.Lock()
 	defer s.ejh.mu.Unlock()
 	cards, _, e := s.store.GPTPayCards(10000, 0, true)
@@ -745,6 +745,15 @@ func (s *Server) ensureEJHCard(ctx context.Context) (gptpay.Card, error) {
 	sum := sha256.Sum256([]byte(time.Now().String()))
 	id := fmt.Sprintf("auto-ejh-%x", sum[:12])
 	input.Note = "Space " + id
+	// Recheck after waiting for other card operations, immediately before issuance.
+	if err := ctx.Err(); err != nil {
+		return gptpay.Card{}, err
+	}
+	for _, check := range admissionChecks {
+		if err := check(); err != nil {
+			return gptpay.Card{}, err
+		}
+	}
 	op, e := s.ejhOpenLocked(ctx, id, input, true)
 	if e != nil {
 		return gptpay.Card{}, e

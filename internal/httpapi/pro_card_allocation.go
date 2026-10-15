@@ -10,11 +10,16 @@ import (
 
 // Serialize selection, optional issuance and reservation across manual, auto
 // and scheduled starts. The database still enforces physical-card occupancy.
-func (s *Server) reserveProStartCard(ctx context.Context, email, selected string, autoOpen, enforceMaximum bool) (gptpay.Card, gptpay.CardSecret, error) {
+func (s *Server) reserveProStartCard(ctx context.Context, email, selected string, autoOpen, enforceMaximum bool, admissionChecks ...func() error) (gptpay.Card, gptpay.CardSecret, error) {
 	s.proCardAdmissionMu.Lock()
 	defer s.proCardAdmissionMu.Unlock()
 	var card gptpay.Card
 	var secret gptpay.CardSecret
+	for _, check := range admissionChecks {
+		if err := check(); err != nil {
+			return card, secret, err
+		}
+	}
 	taskID, _ := ctx.Value(proRestockContextKey{}).(string)
 	if profile, _, e := s.store.MailAccountCredential(email); e != nil {
 		return card, secret, e
@@ -74,7 +79,7 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 		if !autoOpen {
 			return card, secret, fmt.Errorf("请选择银行卡，或启用 EJH 自动补卡")
 		}
-		card, err = s.ensureEJHCard(ctx)
+		card, err = s.ensureEJHCard(ctx, admissionChecks...)
 		if err != nil {
 			return card, secret, err
 		}

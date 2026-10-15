@@ -985,6 +985,7 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 		}
 	})
 	var five, seven *model.FreeQuotaWindow
+	queriedProfile := profile
 	if v.Provider == "vm2api" {
 		five, seven, err = s.proVMQuota(ctx, profile)
 	} else if v.Provider == "cpa" {
@@ -1013,20 +1014,50 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.QuotaStatus, p.ProLastError = "failed", err.Error() })
 		return profile, err
 	}
+	// Settings can change without taking this account's execution lock. Keep
+	// validation and quota admission serialized with configuration updates.
+	s.downstreamMu.Lock()
+	defer s.downstreamMu.Unlock()
+	current, _, err := s.store.MailAccountCredential(email)
+	if err != nil {
+		return profile, err
+	}
+	currentSettings, _, _, err := s.proAccountPushSettings(current)
+	if err != nil {
+		return profile, err
+	}
+	if !sameProQuotaBinding(queriedProfile, current) || !model.ProDownstream(v).Matches(model.ProDownstream(currentSettings)) {
+		err = errors.New("额度查询期间下游连接或账号已变化，已丢弃旧响应，请重新查询")
+		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.QuotaStatus, p.ProLastError = "failed", err.Error() })
+		return current, err
+	}
 	if seven == nil {
 		err = errors.New("下游未返回可识别的 7d 额度窗口")
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.QuotaStatus, p.ProLastError = "failed", err.Error() })
 		return profile, err
 	}
+	if !validProQuotaWindow(seven) || (five != nil && !validProQuotaWindow(five)) {
+		err = errors.New("下游额度百分比无效，须为 0～100；保留原额度并停止本次自动合并")
+		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.QuotaStatus, p.ProLastError = "failed", err.Error() })
+		return profile, err
+	}
 	now := time.Now()
+	applied := false
 	profile, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		if !sameProQuotaBinding(queriedProfile, *p) {
+			return
+		}
+		applied = true
 		p.Quota5H, p.Quota7D, p.QuotaCheckedAt = five, seven, &now
 		p.QuotaStatus = "completed"
 		if !proTransferNeedsConfirmation(*p) {
 			p.ProLastError = ""
 		}
 	})
-	if err == nil && auto && v.AutoMergeEnabled && !profile.SpaceMergedOnce && seven.UsedPercent >= v.QuotaUsedThreshold && !proTransferNeedsConfirmation(profile) {
+	if err == nil && !applied {
+		return profile, errors.New("额度查询期间下游账号已变化，已丢弃旧响应，请重新查询")
+	}
+	if err == nil && auto && currentSettings.AutoMergeEnabled && !profile.SpaceMergedOnce && seven.UsedPercent >= currentSettings.QuotaUsedThreshold && !proTransferNeedsConfirmation(profile) {
 		profile, err = s.startProMergeJob(email, nil)
 	}
 	return profile, err

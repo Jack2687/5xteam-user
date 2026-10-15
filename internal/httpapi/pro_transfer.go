@@ -246,7 +246,9 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		if p.ProAuto.ID == "" {
+			stopVersion, stopped := p.ProAuto.StopVersion, p.ProAuto.StopRequested
 			p.ProAuto = model.ProAutoState{ID: randomRegistrationID(), Status: "interrupted", Stage: "oauth", StartedAt: time.Now(), Steps: map[string]string{}, QuotaUsedThreshold: settings.QuotaUsedThreshold, QuotaIntervalSeconds: settings.QuotaCheckIntervalSeconds}
+			p.ProAuto.StopVersion, p.ProAuto.StopRequested = stopVersion, stopped
 		}
 		if p.ProAuto.Steps == nil {
 			p.ProAuto.Steps = map[string]string{}
