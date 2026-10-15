@@ -3,7 +3,7 @@ import { currencies, currencyOptions, searchCurrencyOptions } from '../src/ejh-c
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { returnTypes, operationStates, caseSummary, summarizeCardBalances, returnStatus, returnStatusLabels, cardHasCase, cardMatchesSearch, readCardView, saveCardView, ejhCardEntry } from '../src/ejh.js'
+import { returnTypes, operationStates, caseSummary, summarizeCardBalances, returnStatus, returnStatusLabels, cardHasCase, cardMatchesSearch, cardStates, cardState, cardMatchesFilters, readCardView, saveCardView, ejhCardEntry } from '../src/ejh.js'
 const source=readFileSync(new URL('../src/components/EJHManagementView.vue',import.meta.url),'utf8')
 const script=source.split('<script setup>')[1].split('</script>')[0]
 const parsed=ts.createSourceFile('ejh.js',script,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS)
@@ -121,7 +121,7 @@ console.log('Passed: searchable currencies, code/name/region matching, legacy an
 const currencyMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['save','action','show','chooseTemplate','cardStatus'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 const settings={templates:[{id:'currency-template',name:'币种测试',valid_days:30,cardType:'fixture',cardAmount:'20',cardCurrency:'CNH',billCurrency:'EUR'}]}
 const calls=[]
-const currencyContext=vm.createContext({settings,openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
+const currencyContext=vm.createContext({cardStates,cardState,settings,openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
 vm.runInContext(currencyMethods+'\nthis.run={save,chooseTemplate,cardStatus}',currencyContext)
 await currencyContext.run.save()
 assert.equal(calls[0].path,'/api/ejh/settings')

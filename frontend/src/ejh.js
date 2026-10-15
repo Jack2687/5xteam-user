@@ -7,6 +7,20 @@ export function caseSummary(row) { return [row.email, row.plan || '—', returnL
 export const returnStatusLabels = { ...returnStates, unverified: '待核实', unmatched: '回款待关联', unknown: '状态未知' }
 export function returnStatus(state) { return Object.hasOwn(returnStatusLabels, state) ? state : 'unknown' }
 export function cardHasCase(card, row) { return row.card_id === card.id || row.ejh_card_id === card.id }
+export const cardStates = { '1': '已激活', '2': '已销卡', '3': '活跃', '4': '未激活', '5': '已冻结', '6': '销卡失败', '7': '非活跃', '8': '销卡处理中', review: '资料待核实', unknown: '状态待核实', unlinked: '手动添加 · 未绑定卡台' }
+export function cardState(card) {
+  if (card.issuer_linked === false) return 'unlinked'
+  if (card.error) return 'review'
+  if (String(card.remote?.isLocked) === '1') return '5'
+  const status = String(card.remote?.status || '')
+  return Object.hasOwn(cardStates, status) ? status : 'unknown'
+}
+export function cardMatchesFilters(card, cases, state = '', returnState = '') {
+  if (state && cardState(card) !== state) return false
+  if (!returnState) return true
+  const linked = cases.filter(row => cardHasCase(card, row))
+  return returnState === 'none' ? linked.length === 0 : linked.some(row => row.state === returnState)
+}
 export function cardMatchesSearch(card, cases, search, targetID = '') {
   if (targetID && card.id !== targetID) return false
   const query = String(search || '').trim().toLowerCase()

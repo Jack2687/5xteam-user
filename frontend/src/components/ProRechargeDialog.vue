@@ -7,15 +7,15 @@ import Pagination from './Pagination.vue'
 
 const emit = defineEmits(['updated', 'progress'])
 const opened = ref(false), busy = ref(false), error = ref(''), email = ref(''), cards = ref([]), cardID = ref(''), order = ref(null)
-const settings = reactive({ provider: 'tokenseek', plan_code: 'pro5', country: '', credit_quantity: 0, key_present: false })
+const settings = reactive({ provider: 'tokenseek', plan_code: 'pro5', country: '', credit_quantity: 0, key_present: false, ejh_auto_open: false })
 const page = ref(1), pageSize = ref(10), total = ref(0)
 const chosen = computed(() => cards.value.find(card => card.id === cardID.value))
 let requestID = '', timer, disposed = false, generation = 0
-async function loadCards() { const result = await api(`/api/gptpay/cards?page=${page.value}&page_size=${pageSize.value}&enabled=true`); cards.value = result.items || []; total.value = result.total || 0; cardID.value = cards.value[0]?.id || '' }
+async function loadCards() { const result = await api(`/api/gptpay/cards?page=${page.value}&page_size=${pageSize.value}&enabled=true`); cards.value = result.items || []; total.value = result.total || 0; cardID.value = settings.ejh_auto_open ? '' : cards.value[0]?.id || '' }
 async function open(account) {
   if (busy.value) return
   generation++; clearTimeout(timer); opened.value = true; email.value = account.email; order.value = null; error.value = ''; page.value = 1; cards.value = []; cardID.value = ''; requestID = payRequestID(); busy.value = true
-  try { const [config, history] = await Promise.all([api('/api/gptpay/settings'), api(`/api/gptpay/orders?page=1&page_size=10&email=${encodeURIComponent(account.email)}`), loadCards()]); Object.assign(settings, config); order.value = history.items?.find(item => !['success', 'failed'].includes(item.status)) || history.items?.[0] || null; schedule() }
+  try { const [config, history, pro] = await Promise.all([api('/api/gptpay/settings'), api(`/api/gptpay/orders?page=1&page_size=10&email=${encodeURIComponent(account.email)}`), api('/api/pro-settings'), loadCards()]); Object.assign(settings, config, {ejh_auto_open: !!pro.ejh_auto_open}); cardID.value = settings.ejh_auto_open ? '' : cards.value[0]?.id || ''; order.value = history.items?.find(item => !['success', 'failed'].includes(item.status)) || history.items?.[0] || null; schedule() }
   catch (e) { error.value = e.message }
   finally { busy.value = false }
 }
@@ -61,11 +61,11 @@ defineExpose({ open })
       <p>供应商：{{ payProviderName(settings.provider) }}</p><p>开通套餐：<strong>{{ proPlanName(settings.plan_code) }}</strong></p>
       <p>开通国家：{{ paymentCountryLabel(settings.country) }}<span v-if="settings.plan_code === 'codex_point'">；购买点数：{{ settings.credit_quantity }}</span></p>
       <p v-if="!settings.key_present" class="danger-text">请先在“Pro 全自动配置”中保存 GPTPay API Key。</p>
-      <label class="field"><span>选择银行卡</span><select v-model="cardID" :disabled="busy"><option value="">请选择已启用银行卡</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · {{ card.exp_year }}/{{ String(card.exp_month).padStart(2, '0') }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
+      <label class="field"><span>选择银行卡</span><select v-model="cardID" :disabled="busy"><option value="">{{settings.ejh_auto_open ? '自动选卡（无可用卡时按配置从 EJH 补卡）' : '请选择已启用银行卡'}}</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · {{ card.exp_year }}/{{ String(card.exp_month).padStart(2, '0') }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
       <Pagination v-if="total > 10" :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
-      <p v-if="!cards.length && !busy">暂无可选卡：请添加或启用银行卡；已占用的 EJH 卡须等待移出成功，累计名额用尽的卡不可再用。</p>
+      <p v-if="settings.ejh_auto_open" class="muted">优先使用现有可用卡；EJH 卡被占用或名额用尽时，自动选其他可用卡，无卡可用则按模板和每日预算补卡。原订单重试不会另行开卡。</p><p v-else-if="!cards.length && !busy">暂无可选卡：请添加或启用银行卡，或到 Pro 全自动配置启用 EJH 自动补卡。</p>
       <p class="muted">将使用此账号已保存的 AT 和所选银行卡向 GPTPay 提交开通订单，费用按供应商配置扣除。</p>
-      <div class="panel-actions"><button class="btn ghost" :disabled="busy" @click="close">取消</button><button class="btn primary" :disabled="busy || !chosen || !settings.key_present" @click="submit(false)"><LoaderCircle v-if="busy" class="spin" :size="15" />{{ busy ? '正在提交…' : '确认开通 ' + proPlanName(settings.plan_code) }}</button></div>
+      <div class="panel-actions"><button class="btn ghost" :disabled="busy" @click="close">取消</button><button class="btn primary" :disabled="busy || (!chosen && !settings.ejh_auto_open) || !settings.key_present" @click="submit(false)"><LoaderCircle v-if="busy" class="spin" :size="15" />{{ busy ? '正在提交…' : '确认开通 ' + proPlanName(settings.plan_code) }}</button></div>
     </template>
     <template v-else>
       <h3 :class="{ 'danger-text': order.status === 'failed' }">{{ proPlanName(order.plan_code) }} · {{ payStatusName(order.status) }}</h3>

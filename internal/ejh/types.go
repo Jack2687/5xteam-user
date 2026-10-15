@@ -192,7 +192,7 @@ func ValidateOpen(v OpenInput, now time.Time) error {
 	switch v.MCC {
 	case "flight", "hotel", "ecom", "trv":
 	default:
-		return fmt.Errorf("商户类别无效")
+		return fmt.Errorf("风控订单类别无效：请选择 flight（机票）、hotel（酒店）、ecom（跨境电商）或 trv（非酒店机票）")
 	}
 	d, e := time.Parse("2006-01-02", v.ActiveDate)
 	today, _ := time.Parse("2006-01-02", now.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02"))

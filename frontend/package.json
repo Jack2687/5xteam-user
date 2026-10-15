@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "check": "vue-tsc --noEmit",
+    "test:card-status": "node scripts/check-card-status.mjs",
+    "test:card-allocation": "node scripts/check-card-allocation.mjs",
     "test:ejh": "node scripts/check-ejh.mjs",
     "test:config-layout": "node scripts/check-config-layout.mjs",
     "test:mail-import": "node scripts/check-mail-import.mjs",

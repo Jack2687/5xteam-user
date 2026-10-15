@@ -63,7 +63,8 @@ func (c *Client) MonitorAccounts(ctx context.Context, v model.Sub2Settings, pass
 	seen := map[int64]bool{}
 	expected := -1
 	for page := 1; page <= 100; page++ {
-		raw, e := c.doJSON(ctx, v, password, http.MethodGet, fmt.Sprintf("/api/v1/admin/accounts?platform=openai&group_id=%d&page=%d&page_size=100", group, page), nil, nil)
+		// Account lists use group; ops/concurrency uses group_id.
+		raw, e := c.doJSON(ctx, v, password, http.MethodGet, fmt.Sprintf("/api/v1/admin/accounts?platform=openai&group=%d&page=%d&page_size=100", group, page), nil, nil)
 		if e != nil {
 			return nil, e
 		}

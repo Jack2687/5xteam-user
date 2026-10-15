@@ -60,6 +60,41 @@ func TestMonitorAccountsRejectsChangingTotal(t *testing.T) {
 	}
 }
 
+func TestMonitorAccountsUsesSub2GroupFilter(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/auth/login" {
+			fmt.Fprint(w, `{"code":0,"data":{"access_token":"fixture"}}`)
+			return
+		}
+		// The Sub2 accounts endpoint reads "group", unlike ops/concurrency.
+		switch r.URL.Query().Get("group") {
+		case "4":
+			fmt.Fprint(w, `{"code":0,"data":{"total":0,"items":[]}}`)
+		case "1":
+			id := 1
+			if r.URL.Query().Get("page") == "2" {
+				id = 2
+			}
+			fmt.Fprintf(w, `{"code":0,"data":{"total":2,"items":[{"id":%d,"group_ids":[1]}]}}`, id)
+		default:
+			fmt.Fprint(w, `{"code":0,"data":{"total":1,"items":[{"id":99,"group_ids":[2]}]}}`)
+		}
+	}))
+	defer up.Close()
+	for _, tc := range []struct {
+		name  string
+		group int64
+		want  int
+	}{{"empty_group", 4, 0}, {"populated_group_pagination", 1, 2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := New().MonitorAccounts(context.Background(), model.Sub2Settings{URL: up.URL, Email: "test@example.com"}, "fixture", tc.group)
+			if err != nil || len(rows) != tc.want {
+				t.Fatalf("group=%d rows=%v want=%d err=%v", tc.group, rows, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestMonitorConcurrencyRequiresExplicitAccountMap(t *testing.T) {
 	for _, tc := range []struct {
 		data string
