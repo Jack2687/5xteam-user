@@ -18,11 +18,15 @@ import (
 	"chapt-space-user/internal/store"
 )
 
-func gptPayFixture(t *testing.T, handler http.HandlerFunc) (*Server, *store.Store, string) {
+func gptPayFixture(t *testing.T, handler http.HandlerFunc, dataDirs ...string) (*Server, *store.Store, string) {
 	t.Helper()
 	upstream := httptest.NewServer(handler)
 	t.Cleanup(upstream.Close)
-	st, err := store.Open(t.TempDir())
+	dir := t.TempDir()
+	if len(dataDirs) > 0 {
+		dir = dataDirs[0]
+	}
+	st, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

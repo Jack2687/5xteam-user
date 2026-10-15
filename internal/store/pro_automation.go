@@ -10,7 +10,9 @@ import (
 func (s *Store) DueProAutomations(now time.Time) ([]model.MailAccountProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro' AND json_extract(profile,'$.pro_auto.status')='waiting_quota' AND json_extract(profile,'$.pro_auto.next_check_at')<=? ORDER BY json_extract(profile,'$.pro_auto.next_check_at') LIMIT 20`, now.UTC().Format(time.RFC3339Nano))
+	// Legacy and recovery timestamps may carry different UTC offsets. Compare
+	// actual instants, not their RFC3339 string order.
+	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro' AND json_extract(profile,'$.pro_auto.status')='waiting_quota' AND julianday(json_extract(profile,'$.pro_auto.next_check_at'))<=julianday(?) ORDER BY julianday(json_extract(profile,'$.pro_auto.next_check_at')) LIMIT 20`, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}

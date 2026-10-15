@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -189,6 +190,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		if existing, e := s.store.ActiveGPTPayOrder(email); e == nil {
 			writeAPI(w, 409, existing, "该账号已有未结束订单，请先查询")
 			return
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			writeAPI(w, 500, nil, "无法核实原订单，未启动流程或购买新卡")
+			return
 		}
 	}
 	value, _ := s.proLocks.LoadOrStore("account:"+email, &sync.Mutex{})
@@ -211,6 +215,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		if _, e := s.store.ActiveGPTPayOrder(email); e == nil {
 			lock.Unlock()
 			writeAPI(w, 409, nil, "账号已有未结束订单，未购买新卡")
+			return
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			lock.Unlock()
+			writeAPI(w, 500, nil, "无法核实原订单，未启动流程或购买新卡")
 			return
 		}
 		card, secret, err = s.reserveProStartCard(r.Context(), email, input.CardID, pro.EJHAutoOpen, r.Context().Value(proScheduledContextKey{}) == true)

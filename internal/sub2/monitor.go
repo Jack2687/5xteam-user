@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -41,7 +42,16 @@ func (a MonitorAccount) Ready(now time.Time, models []string) bool {
 	}
 	if len(a.Credentials.Models) > 0 {
 		for _, m := range models {
-			if _, ok := a.Credentials.Models[m]; !ok {
+			m = strings.TrimSpace(m)
+			supported := false
+			for pattern := range a.Credentials.Models {
+				// Match Sub2's exact or trailing-star model whitelist semantics.
+				if m != "" && (pattern == m || (strings.HasSuffix(pattern, "*") && strings.HasPrefix(m, strings.TrimSuffix(pattern, "*")))) {
+					supported = true
+					break
+				}
+			}
+			if !supported {
 				return false
 			}
 		}

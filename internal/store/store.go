@@ -209,6 +209,7 @@ func (s *Store) initSchema() error {
 		WHERE COALESCE(json_extract(profile,'$.remote.id'),'')<>'' AND (active=1 OR json_extract(profile,'$.remote.cancellationStatus') IN ('waiting','pending'));
 		CREATE INDEX IF NOT EXISTS gptpay_orders_success_email_idx ON gptpay_orders(email,created_at DESC,id DESC) WHERE json_extract(profile,'$.status')='success';
 		CREATE INDEX IF NOT EXISTS mail_pro_auto_due_idx ON mail_accounts(json_extract(profile,'$.pro_auto.status'),json_extract(profile,'$.pro_auto.next_check_at')) WHERE json_extract(profile,'$.management_scope')='pro';
+		CREATE INDEX IF NOT EXISTS mail_pro_auto_due_instant_idx ON mail_accounts(json_extract(profile,'$.pro_auto.status'),julianday(json_extract(profile,'$.pro_auto.next_check_at'))) WHERE json_extract(profile,'$.management_scope')='pro';
 		CREATE TABLE IF NOT EXISTS pro_oauth_sessions (
 			id TEXT PRIMARY KEY, profile TEXT NOT NULL, encrypted_verifier TEXT NOT NULL,
 			expires_at TEXT NOT NULL

@@ -86,9 +86,6 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	if !s.LoadValid {
 		return block(first(s.Error, "并发采集完整性未知，暂停新增"))
 	}
-	if lead >= float64(c.ForecastMinutes) || d.TargetMinutes > float64(c.ForecastMinutes) {
-		return block("预计就绪或补后目标超出预测上限，等待在途推进")
-	}
 	if newSlots < 1 {
 		return block("推送设置的单账号并发无效")
 	}
@@ -119,7 +116,11 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	if c.ConcurrencyEnabled && confirmations >= c.Confirmations && Pressure(c, s) {
 		d.ConcurrencyNeed = max(0, int(math.Ceil((float64(d.Used+d.Waiting)*100/float64(c.TargetPercent)-float64(futureCapacity+timely*newSlots))/float64(newSlots))))
 	}
-	if c.TimeEnabled {
+	timeWithinHorizon := lead < float64(c.ForecastMinutes) && d.TargetMinutes <= float64(c.ForecastMinutes)
+	if c.TimeEnabled && !timeWithinHorizon {
+		d.Warnings = append(d.Warnings, "预计就绪或补后目标超出预测上限，暂停时间侧新增；并发和最低备用仍独立生效")
+	}
+	if c.TimeEnabled && timeWithinHorizon {
 		base, coverage, ok := forecast(c, s, tasks, 0, newSlots, lead, now, 0)
 		d.Coverage = coverage
 		if ok {

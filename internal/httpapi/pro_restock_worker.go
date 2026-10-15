@@ -184,12 +184,36 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if targetErr != nil || validateRestockTarget(c, target) != nil || restockBinding(target) != snap.Binding {
 			continue
 		}
-		if profile.ProAuto.Status == "completed" || profile.ProAuto.Status == "stopped" {
+		if profile.ProAuto.Status == "completed" {
+			continue
+		}
+		running := s.proAutomationRunning(profile.Email)
+		orderID := profile.ProAuto.OrderID
+		if orderID == "" {
+			// Recover the durable payment written just before its profile link.
+			orderID = "pro-auto-" + profile.ProAuto.ID
+		}
+		order, _, orderErr := s.store.GPTPayOrder(orderID)
+		if orderErr != nil && !errors.Is(orderErr, sql.ErrNoRows) {
+			return nil, 0, orderErr
+		}
+		if !running && (orderErr != nil || order.Status == "failed") && profile.ProAuto.OrderID == "" && profile.ProAuto.Steps["recharge"] != "completed" && profile.ProAuto.Steps["oauth"] != "completed" && profile.PushStatus != "completed" {
+			continue
+		}
+		if !running && orderErr == nil && order.Status == "failed" {
 			continue
 		}
 		t := restock.Task{Plan: "payment:" + profile.ProAuto.PlanCode, ID: profile.ProAuto.ID, Email: profile.Email, Status: "external", Stage: profile.ProAuto.Stage, OrderID: profile.ProAuto.OrderID, CreatedAt: profile.ProAuto.StartedAt, GroupID: c.GroupID, Binding: snap.Binding, Message: "手动／原定时任务在途，占用共用工作并发"}
-		if !s.proAutomationRunning(profile.Email) {
+		if !running {
 			t.Status = "attention"
+			t.Message = "旧任务已停止但付款或就绪结果仍待核验，保留在途"
+		}
+		if orderErr == nil {
+			t.OrderID = order.ID
+			if order.Status == "submission_unknown" || order.Status == "manual_review" {
+				t.Status = "unknown"
+				t.Message = "原订单结果待确认，保留在途且不承诺未来容量"
+			}
 		}
 		t.SubmittedAt = &profile.ProAuto.StartedAt
 		t.Plan = profile.ProAuto.QuotaPlan

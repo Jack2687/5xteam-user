@@ -86,6 +86,9 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 		if e = client.Call(ctx, cfg, key, "card.list.info", map[string]any{"page": page, "size": 100}, &out); e != nil {
 			return e
 		}
+		if out.Cards == nil {
+			return fmt.Errorf("卡台响应缺少有效 cardInfos 列表，不能确认卡片同步完整")
+		}
 		for _, remote := range out.Cards {
 			if _, e = s.store.ImportEJHCard(remote, false); e != nil {
 				cardErrors++
@@ -127,6 +130,9 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 			}
 			if e = client.Call(ctx, cfg, key, "card.trade.info", map[string]any{"tradeTime": from.In(zone).Format("2006-01-02 15:04:05"), "endTime": to.In(zone).Format("2006-01-02 15:04:05"), "page": page, "size": 100}, &out); e != nil {
 				return e
+			}
+			if out.Trades == nil {
+				return fmt.Errorf("卡台响应缺少有效 tradeInfos 列表，不能确认流水同步完整")
 			}
 			for _, t := range out.Trades {
 				if e = s.store.EJHSaveTrade(ejhCardID(t.OrderNo), t); e != nil {
