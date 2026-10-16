@@ -1,4 +1,5 @@
-import { summarizeReversalFees, reversalProfit } from './ejh-reversal-fees.js'
+import { summarizeReversalFees } from './ejh-reversal-fees.js'
+import { financeProfit, usdToR } from './ejh-profit.js'
 import { summarizeCardBalancesUSD } from './ejh-card-funding.js'
 import { summarizeInFlightPayments } from './ejh-account-amounts.js'
 
@@ -77,7 +78,10 @@ export function financeOverview(data={}) {
   if(cardUSD.missing)reasons.push(`${cardUSD.missing} 张卡余额或折算依据缺失`)
   if(inFlight.paymentUSD.missing)reasons.push(`${inFlight.paymentUSD.missing} 笔在途付款待核实`)
   const loss=reasons.length?null:net-account-(cents(cardUSD.amount)||0n)-(cents(inFlight.paymentUSD.amount)||0n)
-  return {reversal,profit:reversalProfit(reversal,consumption.total,consumption.missing),openingCount:opening.length,openingFee:money(BigInt(opening.length)*50n),consumption,
+  const openingFee=money(BigInt(opening.length)*50n)
+  const earnings=financeProfit({openingUSD:openingFee,reversalUSD:reversal.usd.amount??(!reversal.count?'0.00':null),rechargeUSD:money(deposit),consumption:consumption.total,
+    costMissing:reversal.missing+reversal.pending+reversal.usd.missing,consumptionMissing:consumption.missing,estimated:!!reversal.count})
+  return {reversal,earnings,openingCount:opening.length,openingFee,consumption,netR:usdToR(money(net)),lossR:usdToR(money(loss)),
     gross:money(gross),depositFee:money(deposit),net:money(net),loss:money(loss),lossReasons:[...new Set(reasons)],
     estimated:!!(cardUSD.estimated||inFlight.paymentUSD.estimated),stale:cards.filter(c=>c.remote?.status!=='2'&&c.balance_error).length,
     accountUSD:money(account),cardUSD,inFlight}
@@ -124,11 +128,20 @@ export function financeEvents(data,history={}) {
   if(consumption.total!==null&&consumption.total>recordedR+0.0000001)events.push({id:'legacy-consumption',kind:'consumption',at:null,amount:consumption.total-recordedR,currency:'R',note:'首次采集的历史累计消费，无法还原每天发生额'})
   return events.sort((a,b)=>(b.at??-Infinity)-(a.at??-Infinity)||String(a.id).localeCompare(String(b.id)))
 }
+export function eventAmountR(event) {
+  if(event.incomplete)return null
+  if(event.kind==='consumption')return financeProfit({openingUSD:0,reversalUSD:0,rechargeUSD:0,consumption:event.amount}).consumptionR
+  return usdToR(event.kind==='opening'?event.amount:event.usd)
+}
 function summarizeEvents(events) {
-  let usd=0n,usdt=0n,reversalUSD=0n,rechargeUSD=0n,r=0,missing=0,opening=0
+  let usd=0n,usdt=0n,reversalUSD=0n,rechargeUSD=0n,r=0,missing=0,consumptionMissing=0,opening=0
   const original=new Map()
   for(const e of events){
-    if(e.kind==='consumption'){r+=Number(e.amount)||0;continue}
+    if(e.kind==='consumption'){
+      if(e.amount===null||e.amount===undefined||e.amount===''||!Number.isFinite(Number(e.amount))||Number(e.amount)<0)consumptionMissing++
+      else r+=Number(e.amount)
+      continue
+    }
     if(e.kind==='opening'){usdt+=cents(e.amount)||0n;opening++;continue}
     if(e.kind==='reversal'&&e.amount!==null){const n=cents(e.amount);if(n!==null)original.set(e.currency,(original.get(e.currency)||0n)+n)}
     const raw=e.usd_precise??e.usd
@@ -140,7 +153,8 @@ function summarizeEvents(events) {
     if(e.kind==='recharge')rechargeUSD+=signed
   }
   const rounded=n=>money(((n<0n?-n:n)+5000n)/10000n*(n<0n?-1n:1n))
-  return {usd:rounded(usd),usdt:money(usdt),reversalUSD:rounded(reversalUSD),rechargeUSD:rounded(rechargeUSD),r,missing,opening,original:[...original].map(([currency,n])=>({currency,amount:money(n)}))}
+  const earnings=financeProfit({openingUSD:money(usdt),reversalUSD:rounded(reversalUSD),rechargeUSD:rounded(rechargeUSD),consumption:r,costMissing:missing,consumptionMissing,estimated:events.some(e=>e.kind==='reversal')})
+  return {usd:rounded(usd),usdt:money(usdt),reversalUSD:rounded(reversalUSD),rechargeUSD:rounded(rechargeUSD),r,missing:missing+consumptionMissing,opening,earnings,original:[...original].map(([currency,n])=>({currency,amount:money(n)}))}
 }
 export function financeReport(data,history={},mode='day',date=beijingDay()) {
   const range=periodRange(mode,date),all=financeEvents(data,history),overview=financeOverview({...data,consumption_history:history.consumption||data.consumption_history})
@@ -151,6 +165,7 @@ export function financeReport(data,history={},mode='day',date=beijingDay()) {
     summary.rechargeUSD=overview.depositFee
     summary.usd=overview.depositFee===null?null:money((cents(summary.reversalUSD)||0n)+cents(overview.depositFee))
     summary.missing+=overview.consumption.missing
+    summary.earnings=overview.earnings
   }
   const groups=new Map()
   for(const e of events){
@@ -159,6 +174,12 @@ export function financeReport(data,history={},mode='day',date=beijingDay()) {
     groups.get(key).push(e)
   }
   const rows=[...groups].map(([day,list])=>({day,...summarizeEvents(list)})).sort((a,b)=>b.day.localeCompare(a.day))
+  // If the current ledger or an account's consumption is unknown, recorded
+  // period entries are still useful but cannot establish a complete profit.
+  for(const row of [summary,...rows]){
+    if(overview.depositFee===null){row.missing++;row.earnings={...row.earnings,costR:null,costIncomplete:true,profitR:null,incomplete:true}}
+    if(overview.consumption.missing)row.earnings={...row.earnings,profitR:null,incomplete:true}
+  }
   const baseline=all.filter(e=>e.kind==='consumption'&&e.at===null).reduce((n,r)=>n+Number(r.amount),0)
   const snapshots=(history.snapshots||[]).filter(s=>{const at=financeTime(s.at);return at!==null&&at>=range.start&&at<range.end}).sort((a,b)=>financeTime(a.at)-financeTime(b.at))
   const first=snapshots[0],last=snapshots.at(-1)

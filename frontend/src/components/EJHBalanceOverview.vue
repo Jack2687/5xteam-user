@@ -72,7 +72,7 @@ async function saveLedger() {
    </div>
   </div>
   <EJHFinanceTotals :data="data"/>
-  <footer class="overview-footer"><details><summary>统计说明</summary><p>实际到账＝充值总额 × 99%；充值手续费为 1%。实际损耗＝实际到账 − EJH 账户余额 − 卡片余额折合 USD − 在途卡内付款折合 USD。它是资金差额，授权撤销费和开卡费不能再重复加上。开卡费以 USDT 单列；消费 R 来自下游用户消耗。撤销费 R＝撤销费 USD × 6.7；利润＝消费 R − 撤销费 R，仅扣这项撤销费。</p><p>充值总账为手动填写的累计金额。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 卡内余额和卡内付款按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片或付款不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次，卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{failures.length}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
+  <footer class="overview-footer"><details><summary>统计说明</summary><p>实际到账＝充值总额 × 99%；充值手续费为 1%。实际损耗＝实际到账 − EJH 账户余额 − 卡片余额折合 USD − 在途卡内付款折合 USD。它是资金差额，授权撤销费和开卡费不能再重复加上。消费收益来自下游用户消耗；净利润＝消费收益 − 开卡费 − 充值手续费 − 授权撤销费，全部折算为 R。1 USD = 6.7 R，开卡费按 1 USDT = 1 USD 记账。单卡结余未分摊充值手续费，由总账统一扣除。</p><p>充值总账为手动填写的累计金额。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 卡内余额和卡内付款按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片或付款不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次，卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{failures.length}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
  </section>
 </template>
 

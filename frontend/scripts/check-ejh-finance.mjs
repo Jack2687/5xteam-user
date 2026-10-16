@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { financeOverview, financeReport, periodRange, financeTime, beijingDay, cents, money, consumptionSummary } from '../src/ejh-finance.js'
+import { financeOverview, financeReport, periodRange, financeTime, beijingDay, cents, money, consumptionSummary, eventAmountR } from '../src/ejh-finance.js'
 
 const card={id:'card',issuer_linked:true,balance:'22595.26',balance_at:'2026-10-16T17:17:20+08:00',remote:{orderNo:'opened',status:'3',cardCurrency:'PHP'}}
 const closed={id:'closed',issuer_linked:true,balance:'999999',balance_at:card.balance_at,remote:{orderNo:'closed-order',status:'2',cardCurrency:'PHP'}}
@@ -12,9 +12,16 @@ assert.equal(total.openingFee,'1.00','closed card fees must remain, duplicate op
 assert.equal(total.reversal.rows[0].amount,'346.83','fee rounds each distinct reversal once')
 assert.equal(total.reversal.count,1)
 assert.equal(total.consumption.total,120)
-assert.equal(total.profit.amount,'37.2520')
-assert.equal(total.profit.profit,'82.7480')
-assert.equal(financeOverview({...data,operations:[]}).profit.profit,null,'profit requires full fee conversion')
+assert.equal(total.earnings.reversalR,'37.2520')
+assert.equal(total.earnings.openingR,'6.7000')
+assert.equal(total.earnings.rechargeR,'201.0000')
+assert.equal(total.earnings.costR,'244.9520')
+assert.equal(total.earnings.profitR,'-124.9520','profit deducts all three costs, including cancelled-card fees')
+assert.equal(financeOverview({...data,operations:[]}).earnings.profitR,null,'profit requires full fee conversion')
+assert.equal(financeOverview({...data,recharge_ledger:{amount:''}}).earnings.profitR,null,'unknown recharge ledger cannot count as zero cost')
+assert.equal(financeOverview({...data,balance:null}).earnings.profitR,total.earnings.profitR,'cash reconciliation must not be deducted again or block profit')
+assert.equal(financeOverview({...data,cases:[{id:'unknown',consumption_total:null}]}).earnings.profitR,null)
+assert.equal(financeOverview({...data,trades:[{...trade,trade:{...trade.trade,tradeStatus:'0'}}]}).earnings.profitR,null,'pending reversal must not create overstated profit')
 assert.equal(total.loss,money(297000n-227315n-cents(total.cardUSD.amount)-cents(total.inFlight.paymentUSD.amount)))
 assert.equal(total.cardUSD.total,1,'closed card balance excluded')
 assert.equal(financeOverview({...data,cards:[{...card,balance_at:null},closed]}).loss,null,'unknown balances cannot turn into zero')
@@ -28,13 +35,38 @@ const history={consumption:[{id:'recorded',email:'user@example.com',total:120,ba
 let report=financeReport(data,history,'day','2026-10-16')
 assert.equal(report.summary.r,12);assert.equal(report.summary.rechargeUSD,'10.00');assert.equal(report.summary.usdt,'0.00');assert.equal(report.baseline,100)
 assert.equal(report.events.filter(e=>e.kind==='reversal').length,1)
+assert.equal(report.summary.earnings.costR,'104.2520')
+assert.equal(report.summary.earnings.profitR,'-92.2520')
+const openDay=financeReport(data,history,'day','2026-10-15')
+assert.equal(openDay.summary.earnings.openingR,'3.3500')
+assert.equal(openDay.summary.earnings.profitR,'4.6500')
+for(const period of ['week','month']){
+ const scoped=financeReport(data,history,period,'2026-10-16')
+ assert.equal(scoped.summary.earnings.costR,'107.6020')
+ assert.equal(scoped.summary.earnings.profitR,'-87.6020','undated opening and recharge costs belong to all-time only')
+}
+assert.equal(eventAmountR({kind:'opening',amount:'0.50',currency:'USDT'}),'3.3500')
+assert.equal(eventAmountR({kind:'reversal',usd:'5.56'}),'37.2520')
+assert.equal(eventAmountR({kind:'reversal',usd:null,incomplete:true}),null)
+assert.equal(eventAmountR({kind:'consumption',amount:12}),'12.0000')
+assert.equal(eventAmountR({kind:'recharge',usd:'-1.00'}),'-6.7000')
 report=financeReport(data,history,'all')
 assert.equal(report.summary.r,120);assert.equal(report.summary.rechargeUSD,'30.00');assert.equal(report.summary.usdt,'1.00')
+assert.deepEqual(report.summary.earnings,report.overview.earnings,'all-time finance and dashboard must agree')
+assert.equal(report.summary.earnings.costR,total.earnings.costR)
+assert.equal(report.rows.find(r=>r.day==='未分期历史').earnings.costR,'137.3500')
+assert.equal(report.rows.find(r=>r.day==='未分期历史').earnings.profitR,'-37.3500')
 const multiple={...data,trades:Array.from({length:12},(_,i)=>({...trade,id:'many-'+i,trade:{...trade.trade,tradeNo:'many-'+i}}))}
 assert.equal(financeReport(multiple,history,'all').summary.reversalUSD,financeOverview(multiple).reversal.usd.amount,'USD must round after summing, matching the card dashboard')
 assert.equal(report.rows.reduce((n,r)=>n+r.r,0),120,'period rows plus undated baseline reconcile to all-time usage')
 assert.equal(report.rows.reduce((n,r)=>n+(cents(r.rechargeUSD)||0n),0n),3000n)
 assert.equal(financeReport(data,history,'day','2026-10-14').events.length,0)
+const unknownLedger=financeReport({...data,recharge_ledger:{amount:''}},history,'month','2026-10-16')
+assert.equal(unknownLedger.summary.earnings.profitR,null)
+assert.ok(unknownLedger.rows.every(row=>row.earnings.profitR===null),'period rows must not imply a complete profit when the ledger is unknown')
+const invalidUsage=financeReport(data,{...history,usage_days:[{id:'unknown',day:'2026-10-16',amount:null}]},'day','2026-10-16')
+assert.equal(invalidUsage.summary.earnings.profitR,null,'unknown period usage is not zero revenue')
+assert.equal(invalidUsage.summary.earnings.costR,'104.2520','unknown revenue should not hide known costs')
 assert.equal(beijingDay(financeTime('2026-10-15T16:00:00Z')),'2026-10-16')
 const week=periodRange('week','2026-10-18');assert.equal(beijingDay(week.start),'2026-10-12');assert.equal(beijingDay(week.end-1),'2026-10-18')
 const month=periodRange('month','2026-12-31');assert.equal(beijingDay(month.end),'2027-01-01')
@@ -42,4 +74,4 @@ assert.equal(financeTime('2026-10-16 00:00:00'),Date.parse('2026-10-15T16:00:00Z
 const snapshot={...data,at:'2026-10-16T00:05:00+08:00'}
 assert.equal(financeReport(data,{...history,snapshots:[snapshot]},'day','2026-10-16').lossChange,null,'one observation is not a period loss')
 assert.equal(financeReport(data,{...history,snapshots:[snapshot,{...snapshot,at:'2026-10-16T23:59:00+08:00',balance:{data:{abroadList:[{currency:'USD',balance:'2270.15'}]}}}]},'day','2026-10-16').lossChange,'3.00')
-console.log('Passed: exact fee arithmetic, duplicate transactions/cards/accounts, closed and pending cards, missing FX, Beijing day/week/month, undated baselines, deleted accounts and snapshot loss changes')
+console.log('Passed: all three costs and net profit in R, day/week/month/all-time totals, missing ledger and consumption, signed adjustments, no cash-loss double deduction, exact fee arithmetic, duplicate transactions/cards/accounts, closed and pending cards, missing FX, Beijing day/week/month, undated baselines, deleted accounts and snapshot loss changes')

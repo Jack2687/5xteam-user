@@ -1,0 +1,40 @@
+// Fixed accounting rate: 1 USD = 6.7 R; opening USDT is valued at 1 USD.
+// Use integer arithmetic and retain four decimals, matching consumption R.
+function units(value) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Math.abs(value) >= 1e18) return null
+    value = value.toFixed(6)
+  }
+  const text = String(value ?? '')
+  if (!/^-?\d{1,18}(\.\d{1,6})?$/.test(text)) return null
+  const [whole, fraction = ''] = text.replace('-', '').split('.')
+  return (BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, '0'))) * (text.startsWith('-') ? -1n : 1n)
+}
+const rounded = (value, divisor) => ((value < 0n ? -value : value) + divisor / 2n) / divisor * (value < 0n ? -1n : 1n)
+function format(value) {
+  if (value === null) return null
+  const n = value < 0n ? -value : value
+  return `${value < 0n ? '-' : ''}${n / 10000n}.${String(n % 10000n).padStart(4, '0')}`
+}
+export function usdToR(value) {
+  const n = units(value)
+  return format(n === null ? null : rounded(n * 67n, 1000n))
+}
+export function financeProfit({ openingUSD, reversalUSD, rechargeUSD, consumption, costMissing = 0, consumptionMissing = 0, estimated = false }) {
+  const costs = [openingUSD, reversalUSD, rechargeUSD].map(value => {
+    const n = units(value)
+    return n === null ? null : rounded(n * 67n, 1000n)
+  })
+  const partial = !!costMissing || costs.some(n => n === null)
+  const known = costs.filter(n => n !== null)
+  const cost = known.reduce((sum, n) => sum + n, 0n)
+  const rawRevenue = units(consumption)
+  const revenue = rawRevenue === null ? null : rounded(rawRevenue, 100n)
+  const incomplete = partial || !!consumptionMissing || revenue === null
+  return {
+    openingR: format(costs[0]), reversalR: format(costs[1]), rechargeR: format(costs[2]),
+    costR: partial ? null : format(cost), knownCostR: known.length ? format(cost) : null,
+    consumptionR: format(revenue), profitR: incomplete ? null : format(revenue - cost),
+    costIncomplete: partial, incomplete, estimated: !!estimated,
+  }
+}

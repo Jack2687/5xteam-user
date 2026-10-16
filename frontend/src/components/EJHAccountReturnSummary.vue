@@ -17,7 +17,7 @@ const amounts = computed(() => accountAmounts(props.row))
    <div><dt>付款<span v-if="amounts.authorization">（授权）</span></dt><dd>{{amounts.paid===null?'待识别':amounts.paid+' '+amounts.currency}}</dd></div>
    <div><dt>回款</dt><dd v-for="r in amounts.returned" :key="r.currency">{{r.amount}} {{r.currency}}</dd><dd v-if="!amounts.returned.length">{{amounts.invalid||amounts.pending?'待核实':'0.00'+(amounts.currency?' '+amounts.currency:'')}}</dd></div>
    <div><dt>差额</dt><dd>{{amounts.difference===null?'—':amounts.difference+' '+amounts.currency}}</dd></div>
-   <div class="consumption-total" title="Pro 管理中的用户消耗统计，按账号显示"><dt>消费总额</dt><dd>{{consumptionText(accountConsumption(row))}}</dd></div>
+   <div class="consumption-total" title="Pro 管理中的用户消耗统计，按账号显示"><dt>消费收益</dt><dd>{{consumptionText(accountConsumption(row))}}</dd></div>
   </dl>
   <EJHReversalFee show-profit :consumption="accountConsumption(row)" :records="row.returns||[]" :fee-percent="feePercent" :cards="cards" :operations="operations" confirmed-only/>
   <p v-if="amounts.pending||amounts.invalid" class="return-note">{{amounts.pending?amounts.pending+' 笔回款待核实，未计入金额':'回款金额待核实'}}</p>

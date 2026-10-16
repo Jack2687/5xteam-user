@@ -20,8 +20,8 @@ const result = computed(() => reversalProfit(fee.value, props.consumption, props
    <small v-if="fee.pending">{{fee.pending}} 笔待确认，未计入</small>
   </div>
  </div>
- <div v-if="showProfit" class="reversal-profit" title="利润＝消费总额 R − 授权撤销费 USD × 6.7">
-  <span>利润</span><div><strong :class="{'negative':result.profit?.startsWith('-')}">{{result.profit!==null&&result.estimated?'≈ ':''}}{{result.profit??'—'}} R</strong><small v-if="result.profit===null">{{consumptionMissing||consumption===null?'消费未查询完整':'撤销费待核实'}}</small></div>
+ <div v-if="showProfit" class="reversal-profit" title="账号结余＝消费收益 R − 本账号授权撤销费 R；开卡费和充值手续费在总账扣除">
+  <span>账号结余</span><div><strong :class="{'negative':result.profit?.startsWith('-')}">{{result.profit!==null&&result.estimated?'≈ ':''}}{{result.profit??'—'}} R</strong><small>未分摊开卡费、充值手续费</small><small v-if="result.profit===null">{{consumptionMissing||consumption===null?'消费未查询完整':'撤销费待核实'}}</small></div>
  </div>
 </template>
 
