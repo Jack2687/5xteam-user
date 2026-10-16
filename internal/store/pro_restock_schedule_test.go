@@ -3,6 +3,7 @@ package store
 import (
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/restock"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,10 @@ func TestProRestockSchedulePersistsAndGuardsAdmission(t *testing.T) {
 	local := now.In(time.FixedZone("Asia/Shanghai", 8*60*60))
 	c.NoRestockEnabled = true
 	c.NoRestockStart, c.NoRestockEnd = local.Add(-time.Hour).Format("15:04"), local.Add(time.Hour).Format("15:04")
+	c.NoRestockWindows = []restock.DailyWindow{
+		{Start: local.Add(3 * time.Hour).Format("15:04"), End: local.Add(4 * time.Hour).Format("15:04")},
+		{Start: c.NoRestockStart, End: c.NoRestockEnd},
+	}
 	c, err = s.SaveProRestockConfig(c)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +87,7 @@ func TestProRestockSchedulePersistsAndGuardsAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.ProRestockConfig()
-	if err != nil || got != c || got.NoRestockReason(time.Now()) == "" {
+	if err != nil || !reflect.DeepEqual(got, c) || got.NoRestockReason(time.Now()) == "" {
 		t.Fatal("schedule lost on restart", got, err)
 	}
 }

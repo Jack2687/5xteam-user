@@ -59,6 +59,10 @@ func TestProRestockScheduleCancelsPendingButTracksStarted(t *testing.T) {
 	local := now.In(beijingLocation)
 	c.NoRestockEnabled = true
 	c.NoRestockStart, c.NoRestockEnd = local.Add(-time.Hour).Format("15:04"), local.Add(time.Hour).Format("15:04")
+	c.NoRestockWindows = []restock.DailyWindow{
+		{Start: local.Add(3 * time.Hour).Format("15:04"), End: local.Add(4 * time.Hour).Format("15:04")},
+		{Start: c.NoRestockStart, End: c.NoRestockEnd},
+	}
 	c, err = st.SaveProRestockConfig(c)
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +121,7 @@ func TestProRestockScheduleCancelsPendingButTracksStarted(t *testing.T) {
 	// Simulate leaving the window without disabling the feature. Fresh demand
 	// is assessed again, and the released account can be reserved normally.
 	c.NoRestockStart, c.NoRestockEnd = local.Add(time.Hour).Format("15:04"), local.Add(2*time.Hour).Format("15:04")
+	c.NoRestockWindows[1] = restock.DailyWindow{Start: c.NoRestockStart, End: c.NoRestockEnd}
 	c, err = st.SaveProRestockConfig(c)
 	if err != nil {
 		t.Fatal(err)

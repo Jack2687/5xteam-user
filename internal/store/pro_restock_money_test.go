@@ -1,6 +1,7 @@
 package store
 
 import (
+	"reflect"
 	"testing"
 
 	"chapt-space-user/internal/restock"
@@ -42,7 +43,7 @@ func TestProRestockMoneyWindowDefaultAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.ProRestockConfig()
-	if err != nil || got != c || got.MoneyWindowMinutes != 60 {
+	if err != nil || !reflect.DeepEqual(got, c) || got.MoneyWindowMinutes != 60 {
 		t.Fatal("window did not survive restart", got, err)
 	}
 }

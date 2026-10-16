@@ -1,10 +1,62 @@
 package restock
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestNoRestockMultipleWindowsUnion(t *testing.T) {
+	c := DefaultConfig()
+	c.NoRestockEnabled = true
+	c.NoRestockWindows = []DailyWindow{{"02:00", "08:00"}, {"12:00", "13:30"}, {"13:00", "14:00"}, {"14:00", "15:00"}, {"23:00", "01:00"}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 10, 16, 0, 0, 0, 0, scheduleLocation)
+	for minute := 0; minute < 24*60; minute++ {
+		want := minute < 60 || (minute >= 120 && minute < 480) || (minute >= 720 && minute < 900) || minute >= 1380
+		for _, second := range []int{0, 59} {
+			at := day.Add(time.Duration(minute)*time.Minute + time.Duration(second)*time.Second).UTC()
+			if got := c.NoRestockReason(at) != ""; got != want {
+				t.Fatalf("minute=%d second=%d got=%v want=%v", minute, second, got, want)
+			}
+		}
+	}
+	// An explicitly empty list must never restore the legacy 00:00-07:00.
+	for _, windows := range [][]DailyWindow{{}, {{"02:00", "08:00"}, {"bad", "10:00"}}, {{"02:00", "08:00"}, {"12:00", "12:00"}}} {
+		c.NoRestockWindows = windows
+		if c.Validate() == nil || c.NoRestockReason(day.Add(18*time.Hour)) == "" {
+			t.Fatal("invalid enabled window list did not fail closed", windows)
+		}
+		c.NoRestockEnabled = false
+		if c.Validate() != nil || c.NoRestockReason(day) != "" {
+			t.Fatal("cannot disable invalid schedule")
+		}
+		c.NoRestockEnabled = true
+	}
+}
+
+func TestNoRestockLegacyAndExplicitListRoundTrip(t *testing.T) {
+	c := DefaultConfig()
+	if err := json.Unmarshal([]byte(`{"no_restock_enabled":true,"no_restock_start":"02:00","no_restock_end":"08:00"}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 16, 3, 0, 0, 0, scheduleLocation)
+	if c.NoRestockReason(at) == "" {
+		t.Fatal("legacy single interval was lost")
+	}
+	c.NoRestockWindows = []DailyWindow{{"12:00", "13:00"}, {"23:00", "01:00"}}
+	data, _ := json.Marshal(c)
+	var restored Config
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.NoRestockReason(at) != "" || restored.NoRestockReason(at.Add(9*time.Hour)) == "" || restored.NoRestockReason(at.Add(21*time.Hour)) == "" {
+		t.Fatal("explicit list did not replace legacy interval or lost its second window")
+	}
+}
 
 func TestNoRestockDailyWindow(t *testing.T) {
 	for _, tc := range []struct {

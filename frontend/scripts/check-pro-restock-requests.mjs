@@ -24,7 +24,7 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog, applyConfig, addNoRestockWindow, removeNoRestockWindow, scheduleSummary};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
 }
 
@@ -167,6 +167,45 @@ for (const [start, end] of [['', '07:00'], ['7:00', '23:00'], ['24:00', '07:00']
   f.unmounted()
 }
 console.log('Passed: restock request ordering, paging, retry recovery, and daily no-restock configuration')
+
+// Every row is validated; editing drafts must not mutate the live saved config.
+for (const windows of [[], [{start:'02:00',end:'08:00'},{start:'',end:'12:00'}], [{start:'02:00',end:'08:00'},{start:'12:00',end:'12:00'}]]) {
+ const f=fixture();f.applyConfig({no_restock_enabled:true,no_restock_windows:windows})
+ await f.save();assert.equal(f.requests.length,0);assert.match(f.error.value,/每日禁补/);f.unmounted()
+}
+{
+ const f=fixture()
+ const before={version:1,enabled:false,no_restock_enabled:true,money_window_minutes:3,no_restock_start:'02:00',no_restock_end:'08:00'}
+ f.state.value={config:before};f.applyConfig(before)
+ assert.equal(f.form.no_restock_windows[0].start,'02:00','legacy interval was lost')
+ f.addNoRestockWindow();Object.assign(f.form.no_restock_windows[1],{start:'23:00',end:'01:00'})
+ assert.equal(f.dirty.value,true)
+ assert.match(f.scheduleSummary(f.form),/02:00～08:00、23:00～次日 01:00/)
+ const saving=f.save();await tick()
+ const put=f.requests[0]
+ assert.equal(JSON.stringify(put.options.body.no_restock_windows),JSON.stringify([{start:'02:00',end:'08:00'},{start:'23:00',end:'01:00'}]))
+ const saved={...put.options.body,version:2};put.resolve(saved);await tick()
+ f.requests.findLast(r=>r.url==='/api/pro-restock').resolve({config:saved});await tick()
+ f.requests.findLast(r=>r.url.includes('/records')).resolve([]);await saving
+ assert.equal(f.form.no_restock_windows.length,2)
+ f.form.no_restock_windows[1].start='22:00';f.dirty.value=true
+ assert.equal(f.state.value.config.no_restock_windows[1].start,'23:00','draft mutated saved config')
+ const poll=f.refresh();await tick();f.requests.findLast(r=>r.url==='/api/pro-restock').resolve({config:saved});await tick()
+ f.requests.findLast(r=>r.url.includes('/records')).resolve([]);await poll
+ assert.equal(f.form.no_restock_windows[1].start,'22:00','poll overwrote unsaved interval')
+ f.windowDraft.value=4
+ const inline=f.saveWindow();await tick()
+ const inlinePut=f.requests.findLast(r=>r.options.method==='PUT')
+ assert.equal(inlinePut.options.body.no_restock_windows[1].start,'23:00','inline save leaked schedule draft')
+ inlinePut.reject(new Error('fixture stop'));await inline
+ f.removeNoRestockWindow(0)
+ assert.equal(f.form.no_restock_windows.length,1)
+ assert.equal(f.form.no_restock_windows[0].start,'22:00')
+ assert.equal(f.state.value.config.no_restock_windows.length,2,'remove mutated saved config')
+ f.removeNoRestockWindow(0);assert.equal(f.form.no_restock_windows.length,1,'removed last interval')
+ f.unmounted()
+}
+console.log('Passed: multiple pause windows, legacy migration, save, removal, and draft isolation')
 
 // Inline window saves update only the saved config and never send other drafts.
 for (const unsaved of [false,true]) {

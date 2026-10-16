@@ -7,6 +7,8 @@ import (
 )
 
 type Config struct {
+	NoRestockWindows []DailyWindow `json:"no_restock_windows"`
+
 	CapacityPercent          int    `json:"capacity_percent"`
 	ExitEnabled              bool   `json:"exit_enabled"`
 	ExitMinutes              int    `json:"exit_minutes"`
@@ -74,13 +76,8 @@ func (c Config) Validate() error {
 		return errors.New("消耗计算窗口应为 1～60 分钟的整数")
 	}
 	if c.NoRestockEnabled {
-		start, startOK := dailyMinute(c.NoRestockStart)
-		end, endOK := dailyMinute(c.NoRestockEnd)
-		if !startOK || !endOK {
-			return errors.New("每日禁补开始和结束时间必须为 HH:mm（00:00～23:59）")
-		}
-		if start == end {
-			return errors.New("每日禁补开始和结束时间不能相同；全天停止请关闭自动补货总开关")
+		if err := c.validateNoRestockWindows(); err != nil {
+			return err
 		}
 	}
 	if c.ForceMergeMinutes < 1 || c.ForceMergeMinutes > 525600 {

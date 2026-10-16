@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -94,7 +95,7 @@ func TestProRestockCollectionRecovery(t *testing.T) {
 				t.Fatal("recovered demand did not resume existing Pro flow")
 			}
 			saved, _ := st.ProRestockConfig()
-			if saved != c {
+			if !reflect.DeepEqual(saved, c) {
 				t.Fatal("collection failure or recovery changed configuration")
 			}
 		})
