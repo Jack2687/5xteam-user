@@ -810,22 +810,24 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	}
 	forceProfile := p
 	forceProfile.ProWorkflowRunning = false
-	if p.ProMergeTrigger == "push_timeout" && p.ProAuto.Steps["quota"] == "skipped" && !forceMergeDue(forceProfile, forceSettings, time.Now()) {
+	forceReason := s.forcedMergeReason(forceProfile, forceSettings, time.Now())
+	if (p.ProMergeTrigger == "push_timeout" || p.ProMergeTrigger == "daily_ejh") && p.ProAuto.Steps["quota"] == "skipped" && forceReason == "" {
 		if err = s.autoProUpdate(email, "quota", "waiting", "超时条件已关闭或不可执行，恢复额度检测"); err != nil {
 			return err
 		}
 		p.ProAuto.Steps["quota"] = "waiting"
 	}
-	if forceMergeDue(forceProfile, forceSettings, time.Now()) && p.ProAuto.Steps["quota"] != "completed" {
+	if forceReason != "" && p.ProAuto.Steps["quota"] != "completed" {
 		if _, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
-			p.ProMergeTrigger = "push_timeout"
-			p.ProForceMergeAttempts++
-			next := time.Now().Add(time.Duration(max(30, forceSettings.RetryIntervalSeconds)) * time.Second)
-			p.ProForceMergeNextAt = &next
+			recordForcedMergeAttempt(p, forceReason, forceSettings)
 		}); err != nil {
 			return err
 		}
-		if err = s.autoProUpdate(email, "quota", "skipped", "推送超时，跳过额度等待"); err != nil {
+		message := "推送超时，跳过额度等待"
+		if forceReason == "daily_ejh" {
+			message = "每日 EJH 定点合并，跳过额度等待"
+		}
+		if err = s.autoProUpdate(email, "quota", "skipped", message); err != nil {
 			return err
 		}
 		p.ProAuto.Steps["quota"] = "skipped"
@@ -881,14 +883,18 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	if _, err = merge(ctx, email); err != nil {
 		// Preserve original merge semantics, only reschedule a safe failed tail.
 		latest, _, readErr := s.store.MailAccountCredential(email)
-		if readErr == nil && ctx.Err() == nil && latest.ProMergeTrigger == "push_timeout" && latest.ProPushDeadline() != nil && latest.ProForceMergeAttempts <= forceSettings.RetryCount && !proTransferNeedsConfirmation(latest) && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
+		if readErr == nil && ctx.Err() == nil && s.forcedMergeRetry(latest, forceSettings) && !proTransferNeedsConfirmation(latest) && !latest.ProAuto.StopRequested && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				p.ProAuto.Status = "waiting_quota"
 				p.ProAuto.Steps["merge"] = "failed"
 				p.ProAuto.Steps["quota"] = "waiting"
 				next := time.Now().Add(time.Duration(max(30, forceSettings.RetryIntervalSeconds)) * time.Second)
 				p.ProAuto.NextCheckAt = &next
-				p.ProForceMergeNextAt = &next
+				if p.ProMergeTrigger == "daily_ejh" && p.ProDailyMerge != nil {
+					p.ProDailyMerge.NextAt = &next
+				} else {
+					p.ProForceMergeNextAt = &next
+				}
 				p.ProAuto.Error = err.Error()
 			})
 			return saveErr
@@ -900,6 +906,9 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	}
 	_, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.ProAuto.Status = "completed"
+		if p.DailyMergeMatches() {
+			p.ProDailyMerge.Completed = true
+		}
 		p.ProAuto.Error = ""
 		p.ProAuto.NextCheckAt = nil
 	})

@@ -81,6 +81,9 @@ func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccoun
 		// Also clear the queued flag if preparation or lock acquisition failed.
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			p.ProWorkflowRunning = false
+			if runErr == nil && p.DailyMergeMatches() {
+				p.ProDailyMerge.Completed = true
+			}
 			if runErr != nil {
 				p.ProLastError = runErr.Error()
 			} else if p.ProMigration != nil {

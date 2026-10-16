@@ -316,3 +316,26 @@ for(const percent of [0,-1,101,60.5,'']){
  f.unmounted()
 }
 console.log('Passed: capacity percentage validation, save round-trip and live dashboard recalculation')
+
+// Daily scheduling fields survive drafts and saves independently of replenishment.
+{
+ const f=fixture()
+ const config={version:1,enabled:false,mode:'observe',capacity_percent:60,money_window_minutes:3,no_restock_enabled:true,no_restock_windows:[{start:'17:00',end:'20:50'}],no_restock_fallback:true,daily_ejh_merge_enabled:true,daily_ejh_merge_time:'17:30'}
+ f.applyConfig(config);f.state.value={config};f.dirty.value=true
+ f.form.daily_ejh_merge_time='24:00';await f.save()
+ assert.equal(f.requests.length,0,'invalid daily schedule sent to server')
+ assert.match(f.error.value,/定点合并时间/)
+ f.form.daily_ejh_merge_time='17:30'
+ const saving=f.save();await tick()
+ const request=f.requests[0]
+ assert.equal(request.options.body.no_restock_fallback,true)
+ assert.equal(request.options.body.daily_ejh_merge_enabled,true)
+ assert.equal(request.options.body.daily_ejh_merge_time,'17:30')
+ assert.deepEqual(JSON.parse(JSON.stringify(request.options.body.no_restock_windows)),[{start:'17:00',end:'20:50'}])
+ request.resolve({...config,version:2});await tick()
+ f.requests.at(-1).resolve({config:{...config,version:2}});await tick()
+ f.requests.at(-1).resolve([]);await saving
+ assert.equal(f.form.daily_ejh_merge_time,'17:30');assert.equal(f.dirty.value,false)
+ f.unmounted()
+}
+console.log('Passed: 17:00–20:50 fallback schedule and 17:30 daily merge settings validation/save')

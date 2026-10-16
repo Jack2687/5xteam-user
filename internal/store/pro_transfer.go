@@ -400,6 +400,11 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 	p.Email = result.Email
 	p.ManagementScope = "pro"
 	p.ProWorkflowRunning = false
+	// Daily cohorts belong to the source instance's scheduler, not this import.
+	p.ProDailyMerge = nil
+	if p.ProMergeTrigger == "daily_ejh" {
+		p.ProMergeTrigger = ""
+	}
 	if p.ProPostMergeGroups != nil && p.ProPostMergeGroups.Status == "running" {
 		p.ProPostMergeGroups.Status = "pending"
 		p.ProPostMergeGroups.UpdatedAt = time.Now()

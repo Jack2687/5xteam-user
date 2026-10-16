@@ -554,6 +554,7 @@ func preserveMailPlanCheck(profile *model.MailAccountProfile, old model.MailAcco
 }
 
 func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccountProfile) {
+	profile.ProDailyMerge, profile.ProMergeTrigger = old.ProDailyMerge, old.ProMergeTrigger
 	profile.ProRestockTaskID, profile.ProRestockTargetID = old.ProRestockTaskID, old.ProRestockTargetID
 	profile.ProPushStartedAt = old.ProPushStartedAt
 	profile.ProPushTimeoutEnabled, profile.ProPushTimeoutMinutes = old.ProPushTimeoutEnabled, old.ProPushTimeoutMinutes

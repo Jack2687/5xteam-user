@@ -8,6 +8,19 @@ import (
 // Use Beijing business time independently of the host/container time zone.
 var scheduleLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
+func (c Config) ScheduledFallbackActive(now time.Time) bool {
+	return c.NoRestockFallback && c.NoRestockEnabled && c.validateNoRestockWindows() == nil && c.NoRestockReason(now) != ""
+}
+
+func (c Config) DailyEJHMergeDeadline(now time.Time) (time.Time, bool) {
+	minute, ok := dailyMinute(c.DailyEJHMergeTime)
+	if !c.DailyEJHMergeEnabled || !ok {
+		return time.Time{}, false
+	}
+	local := now.In(scheduleLocation)
+	return time.Date(local.Year(), local.Month(), local.Day(), minute/60, minute%60, 0, 0, scheduleLocation), true
+}
+
 type DailyWindow struct {
 	Start string `json:"start"`
 	End   string `json:"end"`

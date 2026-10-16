@@ -7,7 +7,10 @@ import (
 )
 
 type Config struct {
-	NoRestockWindows []DailyWindow `json:"no_restock_windows"`
+	NoRestockWindows     []DailyWindow `json:"no_restock_windows"`
+	NoRestockFallback    bool          `json:"no_restock_fallback"`
+	DailyEJHMergeEnabled bool          `json:"daily_ejh_merge_enabled"`
+	DailyEJHMergeTime    string        `json:"daily_ejh_merge_time"`
 
 	CapacityPercent          int    `json:"capacity_percent"`
 	ExitEnabled              bool   `json:"exit_enabled"`
@@ -66,6 +69,11 @@ func DefaultConfig() Config {
 	return Config{CapacityPercent: DefaultCapacityPercent, ExitMinutes: 5, ExitWarningPercent: 5, ExitRefreshSeconds: 15, ExitDemandHoldSeconds: 60, NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, MoneyWindowMinutes: DefaultMoneyWindowMinutes, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
 }
 func (c Config) Validate() error {
+	if c.DailyEJHMergeEnabled {
+		if _, ok := dailyMinute(c.DailyEJHMergeTime); !ok {
+			return errors.New("每日 EJH 定点合并时间必须为 HH:mm（00:00～23:59）")
+		}
+	}
 	if c.CapacityPercent < 1 || c.CapacityPercent > 100 {
 		return errors.New("总并发容量使用比例应为 1～100% 的整数")
 	}
@@ -199,6 +207,10 @@ type Task struct {
 	ReadyAt           *time.Time           `json:"ready_at,omitempty"`
 	ETA               *time.Time           `json:"eta,omitempty"`
 	Stages            map[string]time.Time `json:"stages"`
+	// Retain assignment history after the source departs, so a ready account
+	// cannot be recycled as the replacement for another original lifecycle.
+	ForceMergeAssigned bool `json:"force_merge_assigned,omitempty"`
+	ForceMergeTracked  bool `json:"force_merge_tracked,omitempty"`
 }
 
 func (t Task) Active() bool {

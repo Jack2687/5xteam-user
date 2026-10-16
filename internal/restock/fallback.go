@@ -68,7 +68,15 @@ type FallbackPlan struct {
 	Reason string `json:"reason"`
 }
 
-// Replenishment mode, daily windows and Pro tasks deliberately do not participate.
+// The explicit schedule override is independent of replenishment mode and group size.
+func (f FallbackConfig) PlanWithSchedule(now time.Time, o FallbackObservation, c Config) FallbackPlan {
+	if f.Enabled && f.Validate() == nil && c.ScheduledFallbackActive(now) {
+		return FallbackPlan{Active: true, Phase: "scheduled", Reason: "每日禁补时段：开启所选兜底账号调度；结束后恢复空组判断"}
+	}
+	return f.Plan(now, o)
+}
+
+// Ordinary empty-group fallback remains independent of replenishment decisions.
 func (f FallbackConfig) Plan(now time.Time, o FallbackObservation) FallbackPlan {
 	if !f.Enabled {
 		return FallbackPlan{Phase: "disabled", Reason: "兜底未启用；关闭已接管账号调度"}

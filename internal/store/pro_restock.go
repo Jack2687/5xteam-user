@@ -17,6 +17,7 @@ func (s *Store) initializeProRestock() error {
  CREATE TABLE IF NOT EXISTS pro_restock_replacements(source TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE);
  CREATE TABLE IF NOT EXISTS pro_restock_decisions(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_restock_snapshot(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS pro_daily_ejh_merge_runs(day TEXT PRIMARY KEY,payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_restock_clock(id INTEGER PRIMARY KEY CHECK(id=1),last_batch TEXT,reset_at TEXT);
  CREATE TABLE IF NOT EXISTS pro_fallback_config(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL,target_id TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_fallback_bindings(target_id TEXT NOT NULL,account_id INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(target_id,account_id));`)
@@ -247,8 +248,12 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	for i, email := range emails {
 		t := restock.Task{ID: fmt.Sprintf("%s-%d", d.ID, i+1), Plan: d.Snapshot.NewPlan, DecisionID: d.ID, Email: email, Version: c.Version, GroupID: c.GroupID, Binding: d.Snapshot.Binding, Status: "reserved", Stage: "queued", Cost: c.UnitCost, CreatedAt: d.At, UpdatedAt: d.At, Stages: map[string]time.Time{"reserved": d.At}}
 		t.EmptyGroupStartup = d.EmptyGroupOnly()
+		t.ForceMergeTracked = true
 		if d.Trace != nil {
 			t.Capacity = d.Trace.NewAccountCapacity
+		}
+		if i < len(stats.Sources) {
+			t.ForceMergeSource, t.ForceMergeAssigned = stats.Sources[i], true
 		}
 		var raw string
 		var p model.MailAccountProfile
@@ -267,7 +272,6 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 			return nil, err
 		}
 		if i < len(stats.Sources) {
-			t.ForceMergeSource = stats.Sources[i]
 			if _, err = tx.Exec("INSERT INTO pro_restock_replacements(source,task_id) VALUES(?,?)", t.ForceMergeSource, t.ID); err != nil {
 				return nil, err
 			}

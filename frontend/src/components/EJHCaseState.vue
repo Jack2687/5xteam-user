@@ -3,11 +3,13 @@ import { computed, nextTick, ref } from 'vue'
 import { api } from '../api'
 import { returnStates } from '../ejh'
 import { formatTime } from '../utils'
+import { caseRequestTime } from '../ejhRequestTime'
 import ReturnStatusBadge from './ReturnStatusBadge.vue'
 const props = defineProps({ row: { type: Object, required: true }, editable: Boolean, disabled: Boolean })
 const emit = defineEmits(['updated'])
 const opened = ref(false), busy = ref(false), error = ref(''), reason = ref(''), state = ref(''), confirmed = ref(false), original = ref(null), select = ref(null), restoring = ref(false)
 const manual = computed(() => !!props.row.state_override?.state)
+const requestTime = computed(() => caseRequestTime(props.row))
 const effective = computed(() => restoring.value ? original.value?.automatic_state : state.value)
 const release = computed(() => ['returned', 'unopened'].includes(effective.value))
 const canSave = computed(() => !busy.value && confirmed.value && reason.value.trim().length >= 3 && reason.value.trim().length <= 600)
@@ -27,7 +29,7 @@ async function save() {
 }
 </script>
 <template>
- <span class="case-state"><ReturnStatusBadge :state="row.state"/><small v-if="manual" class="manual-state" :title="row.state_override.reason+' · '+formatTime(row.state_override.updated_at)">人工设置</small><button v-if="editable" type="button" class="btn ghost compact" :disabled="disabled||busy" :aria-label="'调整 '+row.email+' 的回款状态'" @click.stop="open">调整状态</button></span>
+ <span class="case-state"><ReturnStatusBadge :state="row.state" show-requested-at :requested-at="requestTime.at" :request-label="requestTime.label"/><small v-if="manual" class="manual-state" :title="row.state_override.reason+' · '+formatTime(row.state_override.updated_at)">人工设置</small><button v-if="editable" type="button" class="btn ghost compact" :disabled="disabled||busy" :aria-label="'调整 '+row.email+' 的回款状态'" @click.stop="open">调整状态</button></span>
  <Teleport to="body"><div v-if="opened" class="modal-backdrop case-state-overlay" @click.self="!busy&&(opened=false)" @keydown.esc.stop="!busy&&(opened=false)"><form class="modal case-state-dialog" role="dialog" aria-modal="true" aria-label="调整账号回款状态" @submit.prevent="save">
  <h2>调整账号回款状态</h2><p><strong>{{original.email}}</strong><br/>卡片 {{original.card_name||'EJH'}} · 尾号 {{original.last4||'—'}}<br/><small>开通订单 {{original.id}}</small></p>
  <p>当前状态：{{returnStates[original.state]}}<br/>自动判断：{{returnStates[original.automatic_state]||returnStates[original.state]}}</p>

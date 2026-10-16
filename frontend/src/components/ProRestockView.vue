@@ -32,7 +32,7 @@ function noRestockWindows(config={}){
  const windows=Array.isArray(config.no_restock_windows)?config.no_restock_windows:[{start:config.no_restock_start??'00:00',end:config.no_restock_end??'07:00'}]
  return windows.map(w=>({start:w?.start??'',end:w?.end??''}))
 }
-function applyConfig(config){Object.assign(form,{capacity_percent:60},config,{no_restock_windows:noRestockWindows(config)})}
+function applyConfig(config){Object.assign(form,{capacity_percent:60,no_restock_fallback:false,daily_ejh_merge_enabled:false,daily_ejh_merge_time:"17:30"},config,{no_restock_windows:noRestockWindows(config)})}
 function scheduleSummary(config){return noRestockWindows(config).map(w=>`${w.start||'待设置'}～${w.start>w.end?'次日 ':''}${w.end||'待设置'}`).join('、')||'待设置'}
 function addNoRestockWindow(){form.no_restock_windows??=noRestockWindows(form);form.no_restock_windows.push({start:'',end:''});dirty.value=true}
 function removeNoRestockWindow(index){if(form.no_restock_windows?.length>1){form.no_restock_windows.splice(index,1);dirty.value=true}}
@@ -104,6 +104,7 @@ async function evaluate(){await action(async()=>{
  await loadRecords()
 })}
 async function save(){await action(async()=>{
+ if(form.daily_ejh_merge_enabled&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.daily_ejh_merge_time||''))throw new Error('每日 EJH 定点合并时间必须为 HH:mm（00:00～23:59）。')
  const windows=noRestockWindows(form)
  if(form.no_restock_enabled){
   const validTime=/^([01]\d|2[0-3]):[0-5]\d$/
@@ -179,7 +180,9 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
   <div v-for="(window,index) in form.no_restock_windows" :key="index" class="schedule-row">
    <span class="schedule-number">{{index+1}}</span><label>开始时间<input v-model="window.start" :aria-label="`禁补时段 ${index+1} 开始时间`" type="time" step="60" :disabled="!form.no_restock_enabled||busy" :required="form.no_restock_enabled"></label><label>结束时间<input v-model="window.end" :aria-label="`禁补时段 ${index+1} 结束时间`" type="time" step="60" :disabled="!form.no_restock_enabled||busy" :required="form.no_restock_enabled"></label><button type="button" :aria-label="`删除禁补时段 ${index+1}`" :disabled="busy||form.no_restock_windows.length<=1" @click="removeNoRestockWindow(index)">删除</button>
   </div>
+  <label class="check"><input v-model="form.no_restock_fallback" type="checkbox" :disabled="!form.no_restock_enabled||busy">禁补时段立即启用兜底调度</label><p class="muted">需先在兜底配置中启用并选择账号。时段内即使主组有账号也开启兜底；结束后恢复空组判断。</p>
   <p v-if="form.no_restock_enabled" class="notice">每天 {{scheduleSummary(form)}} 暂停新增补货；重叠时段连续生效。</p><p class="muted">禁补期间所有补货规则与“立即评估”均不启动新流程；撤销未启动的预留，已启动的登录、开通、推送和后续流程继续执行。结束后按最新监控数据重新判断，不积攒补货数量。仅影响 Pro 自动补货，原定时任务继续按原配置运行。</p></article>
+ <article class="panel daily-merge-panel"><h2>每日 EJH 定点合并</h2><label class="check"><input v-model="form.daily_ejh_merge_enabled" type="checkbox">启用每日定点强制合并</label><label>执行时间（北京时间）<input v-model="form.daily_ejh_merge_time" aria-label="每日 EJH 定点合并时间" type="time" step="60" :disabled="!form.daily_ejh_merge_enabled||busy" :required="form.daily_ejh_merge_enabled"></label><p class="muted">每天到点只登记一次当时已开通、仍在运行的 EJH Pro（含未开启推送时限的账号）；之后新开的不加入当天任务。独立于补货总开关与观察模式。</p><p class="muted">跳过额度等待，沿用合并并发与同母号串行；安全失败按原重试配置处理，结果待确认或人工停止的不自动重试。</p><p v-if="state.daily_ejh_merge_run" class="notice">最近登记：{{fmt(state.daily_ejh_merge_run.at)}} · {{state.daily_ejh_merge_run.count}} 个账号<br><small>逐账号进度见 Pro 管理。当天改时间不会再次登记。</small></p></article>
  </div><details class="panel advanced"><summary>高级配置 · 成本、数据与到货保护</summary><div class="two-grid"><article v-for="section in advanced" :key="section.title"><h3>{{section.title}}</h3><p class="muted">{{section.text}}</p><div class="fields"><label v-for="field in section.fields" :key="field[0]">{{field[1]}}<input v-model.number="form[field[0]]" type="number" :min="field[2]" :max="field[3]" step="1" required></label></div></article></div><button type="button" :disabled="busy" @click="resetBreaker">处理故障后重置熔断</button></details><div class="savebar"><span>{{dirty?'有未保存修改':'参数由后台持久化保存'}}</span><button class="primary" :disabled="busy" type="submit">{{busy?'检查并保存…':'保存配置'}}</button></div></form></section>
  <section v-if="tab==='records'"><article class="panel"><div class="panel-head"><h2>补货决策与执行记录</h2><span class="badge">持久化记录 · 第 {{page}} 页</span></div><p class="muted">点击“查看”打开本轮详情，查看当时为什么触发、为什么补这个数量，以及关联任务的执行进度。记录按配置保留 {{state.config.retention_days||7}} 天。</p><div class="tablewrap"><table><thead><tr><th>时间 / 配置</th><th>事件</th><th>结果</th><th>在途</th><th>原因</th><th>明细</th></tr></thead><tbody><tr v-for="r in records" :key="r.id"><td>{{fmt(r.at)}}<small>v{{r.version}}</small></td><td>{{r.snapshot?.id||r.trace?'补货决策':'配置 / 操作'}}</td><td>{{r.started?'已预留 '+r.started+' 个':r.snapshot?.id||r.trace?'建议 '+(r.suggested||0)+' 个':'未执行'}}</td><td>{{r.inflight??'—'}}</td><td>{{r.reason}}</td><td><button @click="showDetail(r)">查看</button></td></tr><tr v-if="!records.length"><td colspan="6" class="empty">暂无记录，启用观察或立即评估后显示</td></tr></tbody></table></div><Pagination :page="page" :page-size="pageSize" :total="recordTotal" :disabled="busy" @update:page="setRecordPage" @update:page-size="setRecordPageSize"/></article></section>
  </template>

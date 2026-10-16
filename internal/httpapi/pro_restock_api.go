@@ -104,7 +104,12 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	noRestockReason := c.NoRestockReason(now)
-	writeAPI(w, 200, map[string]any{"config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason}, "")
+	dailyRun, err := s.store.LatestDailyEJHMerge()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]any{"config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "daily_ejh_merge_run": dailyRun}, "")
 }
 func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	c := restock.DefaultConfig()

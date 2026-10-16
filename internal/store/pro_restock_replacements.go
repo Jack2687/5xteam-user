@@ -4,25 +4,30 @@ import (
 	"chapt-space-user/internal/restock"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
 func replacementTasks(tx *sql.Tx) ([]restock.Task, error) {
-	rows, err := tx.Query(`SELECT json_set(t.payload,'$.force_merge_source',coalesce(r.source,'')) FROM pro_restock_tasks t LEFT JOIN pro_restock_replacements r ON r.task_id=t.id WHERE t.status NOT IN ('failed','cancelled') OR r.source IS NOT NULL ORDER BY t.created_at,t.id`)
+	rows, err := tx.Query(`SELECT t.payload,coalesce(r.source,'') FROM pro_restock_tasks t LEFT JOIN pro_restock_replacements r ON r.task_id=t.id WHERE t.status NOT IN ('failed','cancelled') OR r.source IS NOT NULL ORDER BY t.created_at,t.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []restock.Task{}
 	for rows.Next() {
-		var raw string
+		var raw, source string
 		var t restock.Task
-		if err = rows.Scan(&raw); err != nil {
+		if err = rows.Scan(&raw, &source); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(raw), &t); err != nil {
 			return nil, err
 		}
+		// Older payloads may retain a released source; that is assignment
+		// history, not current coverage. Preserve it before applying the join.
+		t.ForceMergeAssigned = t.ForceMergeAssigned || t.ForceMergeSource != "" || source != ""
+		t.ForceMergeSource = source
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -75,11 +80,21 @@ func (s *Store) ReconcileForceMerge(c restock.Config, snap restock.Snapshot, tas
 				return nil, err
 			}
 			t.ForceMergeSource = ""
+			if _, err = tx.Exec("UPDATE pro_restock_tasks SET payload=? WHERE id=?", mustJSON(t), t.ID); err != nil {
+				return nil, err
+			}
 		}
 		persisted[i] = t
 	}
 	stats := restock.ForceMergeSummary(c, snap, persisted, snap.At)
 	if c.Enabled && c.Mode == "auto" && stats.Triggered {
+		// A time/concurrency/exit purchase may become ready before the average
+		// deadline crosses its threshold. Reuse it only with original decision
+		// evidence and only once, rather than ordering the same capacity again.
+		if err = linkReadyForceMergeReplacements(tx, c, snap, persisted, stats.Sources); err != nil {
+			return nil, err
+		}
+		stats = restock.ForceMergeSummary(c, snap, persisted, snap.At)
 		// Adopt verified same-target automatic work so its eventual readiness remains
 		// linked after restart. It consumes inflight, never this policy's purchase budget.
 		available := 0
@@ -123,17 +138,16 @@ func (s *Store) ReconcileForceMerge(c restock.Config, snap restock.Snapshot, tas
 			if t.Status == "reserved" && (t.Version != c.Version || t.Plan != snap.NewPlan) {
 				continue
 			}
-			t.ForceMergeSource = stats.Sources[next]
-			if _, err = tx.Exec("INSERT INTO pro_restock_replacements(source,task_id) VALUES(?,?)", t.ForceMergeSource, t.ID); err != nil {
+			if err = linkForceMergeReplacement(tx, &t, stats.Sources[next]); err != nil {
 				return nil, err
 			}
 			persisted[i] = t
 			next++
 		}
 	}
-	links := map[string]string{}
+	links := map[string]restock.Task{}
 	for _, t := range persisted {
-		links[t.ID] = t.ForceMergeSource
+		links[t.ID] = t
 	}
 	adopted := map[string]restock.Task{}
 	for _, t := range persisted {
@@ -141,11 +155,110 @@ func (s *Store) ReconcileForceMerge(c restock.Config, snap restock.Snapshot, tas
 			adopted[t.Email] = t
 		}
 	}
+	returned := map[string]bool{}
 	for i := range tasks {
 		if t, ok := adopted[tasks[i].Email]; ok && tasks[i].DecisionID == "" {
 			tasks[i] = t
 		}
-		tasks[i].ForceMergeSource = links[tasks[i].ID]
+		tasks[i].ForceMergeSource = links[tasks[i].ID].ForceMergeSource
+		tasks[i].ForceMergeAssigned = links[tasks[i].ID].ForceMergeAssigned
+		returned[tasks[i].ID] = true
+	}
+	// A newly linked ready task can be older than the normal history window.
+	// Include it in this very evaluation, not only in the next database read.
+	for _, t := range persisted {
+		if !returned[t.ID] && t.ForceMergeSource != "" && t.Binding == snap.Binding && t.GroupID == snap.GroupID {
+			tasks = append(tasks, t)
+		}
 	}
 	return tasks, tx.Commit()
+}
+
+func linkForceMergeReplacement(tx *sql.Tx, t *restock.Task, source string) error {
+	t.ForceMergeSource, t.ForceMergeAssigned = source, true
+	if _, err := tx.Exec("INSERT INTO pro_restock_replacements(source,task_id) VALUES(?,?)", source, t.ID); err != nil {
+		return err
+	}
+	_, err := tx.Exec("UPDATE pro_restock_tasks SET payload=? WHERE id=?", mustJSON(*t), t.ID)
+	return err
+}
+
+func linkReadyForceMergeReplacements(tx *sql.Tx, c restock.Config, snap restock.Snapshot, tasks []restock.Task, sources []string) error {
+	if len(sources) == 0 {
+		return nil
+	}
+	ready := map[int64]bool{}
+	for _, a := range snap.Accounts {
+		ready[a.ID] = a.Ready && !a.Shared && !a.Leaving && a.Capacity > 0 && (a.ExpiresAt == nil || a.ExpiresAt.After(snap.At.Add(time.Duration(c.ForceMergeMinutes)*time.Minute)))
+	}
+	forecastConfig := c
+	forecastConfig.ExitMinutes = max(c.ExitMinutes, c.ForceMergeMinutes)
+	for _, row := range restock.ForecastExits(forecastConfig, snap, nil, 1, 0, snap.At).Rows {
+		if row.Risk {
+			ready[row.ID] = false
+		}
+	}
+	// The force-merge deadline is authoritative even for historical snapshots
+	// that predate the separate exit forecast field.
+	for _, a := range snap.Accounts {
+		if a.ForceMergeDeadline != nil && !a.ForceMergeDeadline.After(snap.At.Add(time.Duration(c.ForceMergeMinutes)*time.Minute)) {
+			ready[a.ID] = false
+		}
+	}
+	for _, t := range tasks {
+		if t.Status == "ready" && t.ForceMergeSource != "" && t.Binding == snap.Binding && t.GroupID == snap.GroupID {
+			ready[t.AccountID] = false
+		}
+	}
+	decisions := map[string]restock.Decision{}
+	claimed := map[string]bool{}
+	for i := range tasks {
+		t := &tasks[i]
+		if t.Status != "ready" || t.ForceMergeAssigned || t.ForceMergeSource != "" || t.Binding != snap.Binding || t.GroupID != snap.GroupID || t.Plan != snap.NewPlan || !ready[t.AccountID] || t.ReadyAt == nil || t.ReadyAt.Before(t.CreatedAt) || t.ReadyAt.After(snap.At.Add(5*time.Second)) || t.DecisionID == "" {
+			continue
+		}
+		d, ok := decisions[t.DecisionID]
+		if !ok {
+			var raw string
+			err := tx.QueryRow("SELECT payload FROM pro_restock_decisions WHERE id=?", t.DecisionID).Scan(&raw)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err == nil {
+				if err = json.Unmarshal([]byte(raw), &d); err != nil {
+					return err
+				}
+			}
+			decisions[t.DecisionID] = d
+		}
+		// New intents track assignments from creation, so excess capacity from
+		// a mixed-rule batch can also cover a later source. Older force purchases
+		// may already have served a source before assignment history was stored.
+		if (d.ForceMergeNeed > 0 && !t.ForceMergeTracked) || max(d.TimeNeed, d.ConcurrencyNeed, d.ExitNeed) == 0 || d.Snapshot.Binding != snap.Binding || d.Snapshot.GroupID != snap.GroupID || !d.At.Equal(t.CreatedAt) {
+			continue
+		}
+		original := map[string]bool{}
+		wasPresent := false
+		for _, a := range d.Snapshot.Accounts {
+			wasPresent = wasPresent || a.ID == t.AccountID
+			if a.Ready && a.EJH && a.ForceMergeKey != "" {
+				original[a.ForceMergeKey] = true
+			}
+		}
+		if wasPresent {
+			continue
+		}
+		for _, source := range sources {
+			if claimed[source] || !original[source] {
+				continue
+			}
+			if err := linkForceMergeReplacement(tx, t, source); err != nil {
+				return err
+			}
+			claimed[source] = true
+			ready[t.AccountID] = false
+			break
+		}
+	}
+	return nil
 }

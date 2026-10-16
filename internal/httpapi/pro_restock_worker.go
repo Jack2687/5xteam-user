@@ -49,7 +49,10 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			}
 			continue
 		}
-		t.OrderID, t.CardID, t.AccountID = profile.ProAuto.OrderID, profile.ProAuto.CardID, profile.Sub2AccountID
+		if profile.ProAuto.OrderID != "" {
+			t.OrderID = profile.ProAuto.OrderID
+		}
+		t.CardID, t.AccountID = profile.ProAuto.CardID, profile.Sub2AccountID
 		if t.OrderID == "" && profile.ProAuto.ID != "" {
 			order, _, lookupErr := s.store.GPTPayOrder("pro-auto-" + profile.ProAuto.ID)
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
@@ -62,6 +65,30 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 					return nil, 0, err
 				}
 			}
+		}
+		settled, err := s.restockExitSettled(profile, t.OrderID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if settled {
+			t.Status, t.Stage, t.ETA = "ready", "merge", nil
+			t.UpdatedAt = now
+			t.Message = "已完成推送并进入合并／移出阶段，不再占用补货在途；当前可用容量以监控组为准"
+			// No readiness observation was made: do not invent ReadyAt and count
+			// the account's entire consumption lifetime as provisioning latency.
+			if err = s.store.SaveProRestockTask(*t); err != nil {
+				return nil, 0, err
+			}
+			continue
+		}
+		if restockAccountExiting(profile) {
+			t.Status, t.ETA = "unknown", nil
+			t.UpdatedAt = now
+			t.Message = "账号已进入合并／移出，但原付款记录尚未核清，保留订单与在途；不承诺新增容量"
+			if err = s.store.SaveProRestockTask(*t); err != nil {
+				return nil, 0, err
+			}
+			continue
 		}
 		if !profile.ProAuto.StopRequested && profile.ProAuto.Status == "interrupted" && profile.ProAuto.Steps["oauth"] == "completed" && !s.proAutomationRunning(t.Email) {
 			next := time.Now()
@@ -157,6 +184,13 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if seen[profile.Email] || profile.ProRestockTaskID != "" {
 			continue
 		}
+		settled, err := s.restockExitSettled(profile, "")
+		if err != nil {
+			return nil, 0, err
+		}
+		if settled {
+			continue
+		}
 		if profile.ProAuto.ID == "" {
 			manual := false
 			for _, stage := range profile.ProManualStages {
@@ -178,14 +212,14 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			}
 			continue
 		}
-		if a, ok := byID[profile.Sub2AccountID]; ok && a.Ready {
+		if a, ok := byID[profile.Sub2AccountID]; ok && a.Ready && !restockAccountExiting(profile) {
 			continue
 		}
 		target, _, _, targetErr := s.proAccountPushSettings(profile)
 		if targetErr != nil || validateRestockTarget(c, target) != nil || restockBinding(target) != snap.Binding {
 			continue
 		}
-		if profile.ProAuto.Status == "completed" {
+		if profile.ProAuto.Status == "completed" && !restockAccountExiting(profile) {
 			continue
 		}
 		running := s.proAutomationRunning(profile.Email)
@@ -215,6 +249,10 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 				t.Status = "unknown"
 				t.Message = "原订单结果待确认，保留在途且不承诺未来容量"
 			}
+		}
+		if restockAccountExiting(profile) {
+			t.Status = "unknown"
+			t.Message = "账号已进入合并／移出，但原付款记录尚未核清，保留订单与在途；不承诺新增容量"
 		}
 		t.SubmittedAt = &profile.ProAuto.StartedAt
 		t.Plan = profile.ProAuto.QuotaPlan
