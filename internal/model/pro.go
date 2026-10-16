@@ -55,6 +55,7 @@ type ProSettings struct {
 	RetryCount                int            `json:"retry_count"`
 	RetryIntervalSeconds      int            `json:"retry_interval_seconds"`
 	Concurrency               int            `json:"concurrency"`
+	MergeConcurrency          int            `json:"merge_concurrency"`
 	LastQuotaSweepAt          *time.Time     `json:"last_quota_sweep_at,omitempty"`
 	NextQuotaSweepAt          *time.Time     `json:"next_quota_sweep_at,omitempty"`
 }
@@ -65,7 +66,7 @@ func DefaultProSettings() ProSettings {
 		MaxUnmerged: 5, ScheduleIntervalSeconds: 120,
 		Provider: "sub2", Sub2: DefaultSub2Settings(), CPA: DefaultCPASettings(), VM2API: DefaultVM2APISettings(),
 		QuotaUsedThreshold: 100, QuotaCheckIntervalSeconds: 120, TargetSeatType: "default",
-		RetryCount: 2, RetryIntervalSeconds: 3, Concurrency: 2,
+		RetryCount: 2, RetryIntervalSeconds: 3, Concurrency: 2, MergeConcurrency: 2,
 	}
 }
 

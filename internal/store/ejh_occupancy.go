@@ -9,8 +9,10 @@ import (
 
 // Orders and pre-payment reservations are the durable occupancy source. A
 // successful order stays occupied independently of account/card deletion,
-// worker lifetime, refund state, or whether the feature is currently enabled.
-// Releases are per order, so a later purchase cannot inherit an old removal.
+// worker lifetime, removal state, or whether the feature is currently enabled.
+// Confirmed returns or explicit audited manual states release successful orders.
+// Legacy removal releases
+// remain historical records and are never used for EJH admission.
 func (s *Store) initializeEJHOccupancy() error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -63,11 +65,19 @@ func ejhSingleActive(q proCapacityQuery, key string) (bool, error) {
 	return enabled, err
 }
 
+// Unknown payments always hold occupancy. Manual corrections override only
+// terminal orders; real return evidence is retained for restoring auto.
+const ejhOrderOccupiedSQL = `(CASE
+ WHEN u.status NOT IN ('success','failed') THEN 1
+ WHEN EXISTS(SELECT 1 FROM ejh_case_states s WHERE s.order_id=u.order_id AND s.state IN ('opened','waiting')) THEN 1
+ WHEN EXISTS(SELECT 1 FROM ejh_case_states s WHERE s.order_id=u.order_id AND s.state IN ('returned','unopened')) THEN 0
+ ELSE u.status<>'failed' AND NOT EXISTS(SELECT 1 FROM ejh_received_returns r WHERE r.order_id=u.order_id)
+ END)`
+
 func ejhCardOccupancy(q proCapacityQuery, key, exceptEmail string) (count int, email string, err error) {
 	err = q.QueryRow(`SELECT count(*),coalesce(min(email),'') FROM (
   SELECT lower(email) email FROM pro_card_reservations WHERE card_key=?
-  UNION SELECT lower(u.email) FROM pro_card_usage u WHERE u.card_key=? AND u.status<>'failed'
-  AND (u.status<>'success' OR NOT EXISTS(SELECT 1 FROM pro_card_order_releases r WHERE r.order_id=u.order_id))
+  UNION SELECT lower(u.email) FROM pro_card_usage u WHERE u.card_key=? AND `+ejhOrderOccupiedSQL+`
  ) WHERE email<>? COLLATE NOCASE`, key, key, exceptEmail).Scan(&count, &email)
 	return
 }
@@ -82,7 +92,7 @@ func validateEJHOccupancy(q proCapacityQuery, key, email string) error {
 		return err
 	}
 	if count > 0 {
-		return fmt.Errorf("EJH 银行卡正在被 %s 占用（一卡同时一个号），须移出成功后才可分配其他账号", owner)
+		return fmt.Errorf("EJH 银行卡正在被 %s 占用（一卡同时一个号），须回款确认到账后才可分配其他账号", owner)
 	}
 	return nil
 }
@@ -90,8 +100,7 @@ func validateEJHOccupancy(q proCapacityQuery, key, email string) error {
 func ejhCardOccupants(q ejhCaseQuery, key string) ([]gptpay.CardOccupant, error) {
 	rows, err := q.Query(`SELECT a.email,a.order_id,a.status,m.email IS NULL FROM (
  SELECT lower(email) email,'' order_id,'reserved' status FROM pro_card_reservations WHERE card_key=?
- UNION ALL SELECT lower(u.email),u.order_id,u.status FROM pro_card_usage u WHERE u.card_key=? AND u.status<>'failed'
- AND (u.status<>'success' OR NOT EXISTS(SELECT 1 FROM pro_card_order_releases r WHERE r.order_id=u.order_id))
+ UNION ALL SELECT lower(u.email),u.order_id,u.status FROM pro_card_usage u WHERE u.card_key=? AND `+ejhOrderOccupiedSQL+`
  ) a LEFT JOIN mail_accounts m ON m.email=a.email ORDER BY a.email,a.order_id`, key, key)
 	if err != nil {
 		return nil, err

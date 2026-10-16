@@ -120,6 +120,10 @@ func Open(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := s.EJHReconcile(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -418,6 +422,16 @@ func cleanImportedCredential(value string) string {
 }
 
 func (s *Store) SaveMailAccount(profile model.MailAccountProfile, credentials model.MailAccountCredentials) (model.MailAccountProfile, error) {
+	return s.saveImportedMailAccount(profile, credentials, false)
+}
+
+// SaveMailAccountToPro imports credentials and assigns Pro ownership in the same
+// write, so the account is never briefly visible in the mail-only list.
+func (s *Store) SaveMailAccountToPro(profile model.MailAccountProfile, credentials model.MailAccountCredentials) (model.MailAccountProfile, error) {
+	return s.saveImportedMailAccount(profile, credentials, true)
+}
+
+func (s *Store) saveImportedMailAccount(profile model.MailAccountProfile, credentials model.MailAccountCredentials, enterPro bool) (model.MailAccountProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	profile.Email = strings.ToLower(strings.TrimSpace(profile.Email))
@@ -479,6 +493,12 @@ func (s *Store) SaveMailAccount(profile model.MailAccountProfile, credentials mo
 		}
 	}
 	profile.UpdatedAt = now
+	if enterPro {
+		profile.ManagementScope = "pro"
+		if profile.ProManagedAt == nil {
+			profile.ProManagedAt = &now
+		}
+	}
 	sealed, err := s.encrypt(mustJSON(credentials))
 	if err != nil {
 		return model.MailAccountProfile{}, err
@@ -536,6 +556,8 @@ func preserveMailPlanCheck(profile *model.MailAccountProfile, old model.MailAcco
 func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccountProfile) {
 	profile.ProRestockTaskID, profile.ProRestockTargetID = old.ProRestockTaskID, old.ProRestockTargetID
 	profile.ProPushStartedAt = old.ProPushStartedAt
+	profile.ProPushTimeoutEnabled, profile.ProPushTimeoutMinutes = old.ProPushTimeoutEnabled, old.ProPushTimeoutMinutes
+	profile.ProPushDownstream = old.ProPushDownstream
 	profile.ProForceMergeNextAt, profile.ProForceMergeAttempts = old.ProForceMergeNextAt, old.ProForceMergeAttempts
 	profile.ProAuto = old.ProAuto
 	profile.ProMigration = old.ProMigration
@@ -548,6 +570,10 @@ func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccount
 	profile.VM2 = old.VM2
 	profile.Sub2AccountID, profile.Sub2AccountName, profile.CPAAuthFileName = old.Sub2AccountID, old.Sub2AccountName, old.CPAAuthFileName
 	profile.Quota5H, profile.Quota7D, profile.QuotaStatus, profile.QuotaCheckedAt = old.Quota5H, old.Quota7D, old.QuotaStatus, old.QuotaCheckedAt
+	profile.CostProvider, profile.CostConnectionIdentity = old.CostProvider, old.CostConnectionIdentity
+	profile.CostDownstreamIdentity, profile.CostDownstreamSnapshot = old.CostDownstreamIdentity, old.CostDownstreamSnapshot
+	profile.UserCostDownstreamIdentity, profile.UserCostDownstreamSnapshot = old.UserCostDownstreamIdentity, old.UserCostDownstreamSnapshot
+	profile.CostCheckedAt = old.CostCheckedAt
 	profile.SpaceMergedOnce, profile.SpaceMergedAt = old.SpaceMergedOnce, old.SpaceMergedAt
 	profile.TargetAdminID, profile.TargetTeamID, profile.TargetSeatType = old.TargetAdminID, old.TargetTeamID, old.TargetSeatType
 	profile.InviteStatus, profile.AcceptStatus, profile.TransferStatus, profile.RemoveStatus = old.InviteStatus, old.AcceptStatus, old.TransferStatus, old.RemoveStatus
@@ -579,7 +605,9 @@ func (s *Store) UpdateMailAccountManagementScope(email, scope string) (model.Mai
 	}
 	profile.ManagementScope, profile.UpdatedAt = scope, now
 	if scope == "pro" {
-		profile.ProManagedAt = &now
+		if profile.ProManagedAt == nil {
+			profile.ProManagedAt = &now
+		}
 	} else {
 		profile.ProManagedAt = nil
 	}

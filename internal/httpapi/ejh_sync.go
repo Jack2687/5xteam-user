@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"chapt-space-user/internal/ejh"
+	"chapt-space-user/internal/store"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -19,7 +21,7 @@ func (s *Server) syncEJH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	end := time.Now()
-	start := end.AddDate(0, 0, -7)
+	start := end.AddDate(0, 0, -90)
 	var e error
 	zone := time.FixedZone("CST", 8*3600)
 	if in.Start != "" {
@@ -73,6 +75,16 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 	if e != nil {
 		return e
 	}
+	savedCards, e := store.EJHRecords[ejh.CardRecord](s.store, "card")
+	if e != nil {
+		return e
+	}
+	closed := map[string]bool{}
+	for _, c := range savedCards {
+		if c.Remote.Status == "2" {
+			closed[c.Remote.OrderNo] = true
+		}
+	}
 	client := s.ejhClientLocked()
 	seenCards := map[[32]byte]bool{}
 	cardErrors := 0
@@ -90,6 +102,9 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 			return fmt.Errorf("卡台响应缺少有效 cardInfos 列表，不能确认卡片同步完整")
 		}
 		for _, remote := range out.Cards {
+			if closed[remote.OrderNo] {
+				continue
+			}
 			if _, e = s.store.ImportEJHCard(remote, false); e != nil {
 				cardErrors++
 				var rec ejh.CardRecord
@@ -114,6 +129,35 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 			return fmt.Errorf("卡片分页未结束，请检查供应商返回")
 		}
 	}
+	cards, e := store.EJHRecords[ejh.CardRecord](s.store, "card")
+	if e != nil {
+		return e
+	}
+	var failures []error
+	for _, card := range cards {
+		if card.Remote.Status == "2" || card.Remote.OrderNo == "" {
+			continue
+		}
+		if e = ctx.Err(); e != nil {
+			failures = append(failures, e)
+			break
+		}
+		if e = s.collectEJHCardTrades(ctx, client, cfg, key, card, start, end); e != nil {
+			failures = append(failures, fmt.Errorf("卡片订单 %s 交易更新失败：%w", card.Remote.OrderNo, e))
+		}
+	}
+	// A failed card retains its previous complete snapshot. Reconcile the cards
+	// that did finish, even if another card failed or the request was cancelled.
+	if e = s.store.EJHReconcile(); e != nil {
+		failures = append(failures, fmt.Errorf("自动对账失败：%w", e))
+	}
+	if cardErrors > 0 {
+		failures = append(failures, fmt.Errorf("%d 张卡片资料不完整，未加入 Pro，请在卡片页面刷新详情", cardErrors))
+	}
+	return errors.Join(failures...)
+}
+func (s *Server) collectEJHCardTrades(ctx context.Context, client *ejh.Client, cfg ejh.Settings, key string, card ejh.CardRecord, start, end time.Time) error {
+	collected := []ejh.Trade{}
 	zone := time.FixedZone("CST", 8*3600)
 	for from := start; from.Before(end); {
 		to := from.Add(89 * 24 * time.Hour)
@@ -122,23 +166,27 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 		}
 		seenTrades := map[[32]byte]bool{}
 		for page := 1; page <= 10000; page++ {
-			if e = ctx.Err(); e != nil {
+			if e := ctx.Err(); e != nil {
 				return e
 			}
 			var out struct {
 				Trades []ejh.Trade `json:"tradeInfos"`
 			}
-			if e = client.Call(ctx, cfg, key, "card.trade.info", map[string]any{"tradeTime": from.In(zone).Format("2006-01-02 15:04:05"), "endTime": to.In(zone).Format("2006-01-02 15:04:05"), "page": page, "size": 100}, &out); e != nil {
+			if e := client.Call(ctx, cfg, key, "card.trade.info", map[string]any{"orderNo": card.Remote.OrderNo, "tradeTime": from.In(zone).Format("2006-01-02 15:04:05"), "endTime": to.In(zone).Format("2006-01-02 15:04:05"), "page": page, "size": 100}, &out); e != nil {
 				return e
 			}
-			if out.Trades == nil {
+			if out.Trades == nil || len(out.Trades) > 100 {
 				return fmt.Errorf("卡台响应缺少有效 tradeInfos 列表，不能确认流水同步完整")
 			}
+			ids := map[string]bool{}
 			for _, t := range out.Trades {
-				if e = s.store.EJHSaveTrade(ejhCardID(t.OrderNo), t); e != nil {
-					return e
+				id := t.TradeNo + "|" + t.Type
+				if t.OrderNo != card.Remote.OrderNo || t.TradeNo == "" || t.Type == "" || ids[id] {
+					return fmt.Errorf("卡台交易归属或流水编号异常")
 				}
+				ids[id] = true
 			}
+			collected = append(collected, out.Trades...)
 			raw, _ := json.Marshal(out.Trades)
 			hash := sha256.Sum256(raw)
 			if len(out.Trades) > 0 && seenTrades[hash] {
@@ -154,10 +202,7 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 		}
 		from = to
 	}
-	if cardErrors > 0 {
-		return fmt.Errorf("流水已同步；%d 张卡片资料不完整，未加入 Pro，请在卡片页面刷新详情", cardErrors)
-	}
-	return nil
+	return s.store.EJHSaveTrades(card.ID, collected)
 }
 func (s *Server) startEJH(parent context.Context) {
 	s.ejh.lifecycle.Lock()
@@ -196,7 +241,7 @@ func (s *Server) startEJH(parent context.Context) {
 					continue
 				}
 				cfg, _, e := s.store.EJHSettings()
-				if e != nil || !cfg.Enabled || !cfg.SyncEnabled {
+				if e != nil || !cfg.Enabled {
 					next = time.Now().Add(time.Minute)
 					continue
 				}

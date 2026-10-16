@@ -217,6 +217,7 @@ func (s *Server) importMailAccounts(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Accounts []map[string]any `json:"accounts"`
 		Group    string           `json:"group"`
+		EnterPro bool             `json:"enter_pro"`
 	}
 	if err := decodeJSON(w, r, &input, 16<<20); err != nil {
 		return
@@ -225,15 +226,21 @@ func (s *Server) importMailAccounts(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, http.StatusBadRequest, nil, "单次请导入 1 到 1000 个邮件账号")
 		return
 	}
-	imported, updated := 0, 0
+	imported, updated, skipped := 0, 0, 0
+	proEmails := make(map[string]struct{})
 	for _, raw := range input.Accounts {
 		email := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw["email"])))
 		if !strings.Contains(email, "@") {
+			skipped++
 			continue
 		}
 		creds := model.MailAccountCredentials{Email: email, MailPassword: importedString(raw, "mail_password"), ClientID: importedString(raw, "client_id"), MailRefreshToken: importedString(raw, "mail_refresh_token"), PickupURL: importedString(raw, "pickup_url"), GptPassword: importedString(raw, "gpt_password"), TotpSecret: importedString(raw, "totp_secret"), AccessToken: importedString(raw, "access_token")}
 		_, existed := findLocalMailAccount(s.store, email)
-		_, err := s.store.SaveMailAccount(model.MailAccountProfile{Email: email, Label: email, Group: strings.TrimSpace(input.Group)}, creds)
+		save := s.store.SaveMailAccount
+		if input.EnterPro {
+			save = s.store.SaveMailAccountToPro
+		}
+		_, err := save(model.MailAccountProfile{Email: email, Label: email, Group: strings.TrimSpace(input.Group)}, creds)
 		if err != nil {
 			writeAPI(w, http.StatusBadRequest, nil, err.Error())
 			return
@@ -243,8 +250,11 @@ func (s *Server) importMailAccounts(w http.ResponseWriter, r *http.Request) {
 		} else {
 			imported++
 		}
+		if input.EnterPro {
+			proEmails[email] = struct{}{}
+		}
 	}
-	writeAPI(w, http.StatusOK, map[string]any{"success": true, "imported": imported, "updated": updated, "skipped": 0}, "")
+	writeAPI(w, http.StatusOK, map[string]any{"success": true, "imported": imported, "updated": updated, "skipped": skipped, "entered_pro": len(proEmails)}, "")
 }
 
 func (s *Server) deleteMailAccount(w http.ResponseWriter, r *http.Request) {

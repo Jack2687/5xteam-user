@@ -1,0 +1,105 @@
+package httpapi
+
+import (
+	"chapt-space-user/internal/ejh"
+	"chapt-space-user/internal/store"
+	"net/http"
+	"sort"
+	"time"
+)
+
+// Detail pagination is read-only. Complete collections are saved by the
+// background updater so browsing a partial page cannot change attribution.
+func (s *Server) queryEJHCardTrades(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Start string `json:"start"`
+		End   string `json:"end"`
+		Page  int    `json:"page"`
+	}
+	if decodeJSON(w, r, &in, 4096) != nil {
+		return
+	}
+	zone := time.FixedZone("CST", 8*3600)
+	start, e1 := time.ParseInLocation("2006-01-02", in.Start, zone)
+	end, e2 := time.ParseInLocation("2006-01-02", in.End, zone)
+	end = end.Add(24*time.Hour - time.Second)
+	if e1 != nil || e2 != nil || end.Before(start) || end.Sub(start) > 90*24*time.Hour || in.Page < 1 || in.Page > 10000 {
+		writeAPI(w, 400, nil, "请选择 1～90 天的日期范围和有效页码")
+		return
+	}
+	if !s.ejh.mu.TryLock() {
+		writeAPI(w, 409, nil, "卡台正在同步或执行操作，请稍后重试查询")
+		return
+	}
+	defer s.ejh.mu.Unlock()
+	var card ejh.CardRecord
+	if err := s.store.EJHGet("card", r.PathValue("id"), &card); err != nil || card.Remote.OrderNo == "" {
+		writeAPI(w, 404, nil, "未找到绑定卡台的银行卡")
+		return
+	}
+	if card.Remote.Status == "2" {
+		records, err := store.EJHRecords[ejh.TradeRecord](s.store, "trade")
+		if err != nil {
+			writeAPI(w, 500, nil, err.Error())
+			return
+		}
+		items := []ejh.Trade{}
+		for _, t := range records {
+			at := ejh.TradeAt(t.Trade)
+			if t.CardID == card.ID && !at.Before(start) && !at.After(end) {
+				v := t.Trade
+				v.Number = maskEJH(v.Number)
+				items = append(items, v)
+			}
+		}
+		sort.Slice(items, func(i, j int) bool {
+			a, b := ejh.TradeAt(items[i]), ejh.TradeAt(items[j])
+			if a.Equal(b) {
+				return items[i].TradeNo < items[j].TradeNo
+			}
+			return a.After(b)
+		})
+		offset := (in.Page - 1) * 100
+		if offset > len(items) {
+			offset = len(items)
+		}
+		limit := offset + 100
+		if limit > len(items) {
+			limit = len(items)
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeAPI(w, 200, map[string]any{"items": items[offset:limit], "page": in.Page, "has_more": limit < len(items), "queried_at": card.SyncedAt, "cached": true}, "")
+		return
+	}
+	cfg, key, err := s.ejhConfig()
+	if err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
+	var out struct {
+		Trades []ejh.Trade `json:"tradeInfos"`
+	}
+	err = s.ejhClientLocked().Call(r.Context(), cfg, key, "card.trade.info", map[string]any{"orderNo": card.Remote.OrderNo, "tradeTime": start.Format("2006-01-02 15:04:05"), "endTime": end.Format("2006-01-02 15:04:05"), "page": in.Page, "size": 100}, &out)
+	if err != nil {
+		writeAPI(w, 502, nil, err.Error())
+		return
+	}
+	if out.Trades == nil || len(out.Trades) > 100 {
+		writeAPI(w, 502, nil, "卡台未返回有效交易列表，保留已有记录")
+		return
+	}
+	seen := map[string]bool{}
+	for _, t := range out.Trades {
+		id := store.EJHID("trade", t.OrderNo+"|"+t.TradeNo+"|"+t.Type)
+		if t.OrderNo != card.Remote.OrderNo || t.TradeNo == "" || t.Type == "" || seen[id] {
+			writeAPI(w, 502, nil, "卡台交易归属或流水编号异常，保留已有记录")
+			return
+		}
+		seen[id] = true
+	}
+	for i := range out.Trades {
+		out.Trades[i].Number = maskEJH(out.Trades[i].Number)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeAPI(w, 200, map[string]any{"items": out.Trades, "page": in.Page, "has_more": len(out.Trades) == 100, "queried_at": time.Now()}, "")
+}

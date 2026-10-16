@@ -50,7 +50,7 @@ func TestProRestockCredentialImportPreservesOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"", p.ID} {
-		got, err := s.SaveMailAccount(model.MailAccountProfile{ID: id, Email: email}, model.MailAccountCredentials{Email: email, MailPassword: "updated-password"})
+		got, err := s.SaveMailAccountToPro(model.MailAccountProfile{ID: id, Email: email}, model.MailAccountCredentials{Email: email, MailPassword: "updated-password"})
 		if err != nil {
 			t.Fatal(err)
 		}

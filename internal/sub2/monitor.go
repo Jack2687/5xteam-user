@@ -13,6 +13,7 @@ import (
 
 // MonitorAccount deliberately excludes tokens and raw credential payloads.
 type MonitorAccount struct {
+	Type             string     `json:"type"`
 	ID               int64      `json:"id"`
 	Name             string     `json:"name"`
 	Platform         string     `json:"platform"`
@@ -126,6 +127,27 @@ type MonitorLoad struct {
 	Capacity  int   `json:"max_capacity"`
 	Known     *bool `json:"load_known"`
 }
+
+// Missing counters must not be interpreted as a legitimate zero load.
+// load_known is an optional extension; native Sub2 responses omit it.
+func (l *MonitorLoad) UnmarshalJSON(data []byte) error {
+	var v struct {
+		AccountID *int64 `json:"account_id"`
+		Used      *int   `json:"current_in_use"`
+		Waiting   *int   `json:"waiting_in_queue"`
+		Capacity  *int   `json:"max_capacity"`
+		Known     *bool  `json:"load_known"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	if v.AccountID == nil || v.Used == nil || v.Waiting == nil || v.Capacity == nil {
+		return errors.New("Sub2 账号负载缺少有效账号 ID、占用、等待或容量字段")
+	}
+	*l = MonitorLoad{AccountID: *v.AccountID, Used: *v.Used, Waiting: *v.Waiting, Capacity: *v.Capacity, Known: v.Known}
+	return nil
+}
+
 type MonitorLoads struct {
 	Enabled bool                  `json:"enabled"`
 	At      time.Time             `json:"timestamp"`
@@ -140,7 +162,7 @@ type MonitorLoads struct {
 
 func (c *Client) MonitorConcurrency(ctx context.Context, v model.Sub2Settings, password string, group int64) (MonitorLoads, error) {
 	var result MonitorLoads
-	raw, e := c.doJSON(ctx, v, password, http.MethodGet, fmt.Sprintf("/api/v1/admin/ops/concurrency?platform=openai&group_id=%d&strict=true", group), nil, nil)
+	raw, e := c.doJSON(ctx, v, password, http.MethodGet, fmt.Sprintf("/api/v1/admin/ops/concurrency?platform=openai&group_id=%d", group), nil, nil)
 	if e != nil {
 		return result, e
 	}

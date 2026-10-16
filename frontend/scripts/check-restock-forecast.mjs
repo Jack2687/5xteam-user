@@ -16,5 +16,5 @@ d=fixture();d.snapshot.accounts.push({id:2,ready:true,plan:'pro',windows:[{...wi
 r=forecastDetails(d,now);assert.equal(r.primary,null);assert.equal(r.partial,true)
 d=fixture();d.snapshot.accounts[0].windows.push({...window});assert.equal(forecastDetails(d,now).cohorts.length,0)
 d=fixture();d.snapshot.accounts[0].windows[0].reset_at=Math.floor(now/1000);assert.equal(forecastDetails(d,now).cohorts.length,0)
-d=fixture();d.snapshot.accounts[0].plan='other';assert.equal(forecastDetails(d,now).cohorts.length,0)
+d=fixture();d.snapshot.accounts[0].plan='other';assert.equal(forecastDetails(d,now).cohorts.length,1)
 console.log('Passed: observed vs forecast rates, missing/zero/stale/reset samples, partial cohorts, capped vs exact horizon')

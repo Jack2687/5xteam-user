@@ -42,7 +42,7 @@ func TestEJHResolveDeletedOccupancy(t *testing.T) {
 				if outcome == "success_removed" {
 					wantOpened = 1
 				}
-				if err != nil || !got.Available || got.ActiveAccounts != 0 || got.PendingAccounts != 0 || got.OpenedAccounts != wantOpened {
+				if err != nil || got.Available != (outcome == "not_activated") || got.ActiveAccounts != wantOpened || got.PendingAccounts != 0 || got.OpenedAccounts != wantOpened {
 					t.Fatal(got, err)
 				}
 				order, snapshot, err := s.GPTPayOrder(old.ID)
@@ -73,6 +73,9 @@ func TestEJHResolveDeletedOccupancy(t *testing.T) {
 				}
 				if err = s.UpdateGPTPayOrder(order); err != nil {
 					t.Fatal("fresh refund poll blocked", err)
+				}
+				if outcome == "success_removed" {
+					ejhReceiveForOrder(t, s, card.ID, old.ID)
 				}
 				next := transferOrder("new@example.com", "new-payment", "success")
 				next.Order.CardID = card.ID
@@ -181,7 +184,7 @@ func TestEJHResolveDeletedOccupancyAcrossStoresAndRestart(t *testing.T) {
 	}
 	defer c.Close()
 	got, _, err := c.GPTPayCard(card.ID)
-	if err != nil || got.ActiveAccounts != 0 || got.OpenedAccounts != 1 || !got.Available {
+	if err != nil || got.ActiveAccounts != 1 || got.OpenedAccounts != 1 || got.Available {
 		t.Fatal(got, err)
 	}
 	audits, err := EJHRecords[json.RawMessage](c, "match_audit")

@@ -69,7 +69,7 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 			if autoOpen && card.CardType == "ejh" && (card.RemainingAccounts == 0 || (card.SingleActiveAccount && card.ActiveAccounts > 0)) {
 				selected = ""
 			} else if card.SingleActiveAccount && card.ActiveAccounts > 0 {
-				return card, secret, fmt.Errorf("EJH 银行卡正在被 %s 占用（一卡同时一个号）；请启用 EJH 自动补卡或等待移出成功", card.ActiveEmail)
+				return card, secret, fmt.Errorf("EJH 银行卡正在被 %s 占用（一卡同时一个号）；请启用 EJH 自动补卡或等待回款确认到账", card.ActiveEmail)
 			} else {
 				return card, secret, fmt.Errorf("银行卡没有剩余开通名额或状态不可用")
 			}

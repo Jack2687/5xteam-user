@@ -7,6 +7,11 @@ import (
 )
 
 type Config struct {
+	NoRestockEnabled         bool   `json:"no_restock_enabled"`
+	NoRestockStart           string `json:"no_restock_start"`
+	NoRestockEnd             string `json:"no_restock_end"`
+	ForceMergeEnabled        bool   `json:"force_merge_enabled"`
+	ForceMergeMinutes        int    `json:"force_merge_minutes"`
 	MinNewUsePercent         int    `json:"min_new_use_percent"`
 	FaultPercent             int    `json:"fault_percent"`
 	Version                  int    `json:"version"`
@@ -27,6 +32,7 @@ type Config struct {
 	AllowSmall               bool   `json:"allow_small"`
 	MaxInflight              int    `json:"max_inflight"`
 	Reserve                  int    `json:"reserve"`
+	EmptyGroupCount          int    `json:"empty_group_count"`
 	CheckSeconds             int    `json:"check_seconds"`
 	QuotaSeconds             int    `json:"quota_seconds"`
 	CooldownSeconds          int    `json:"cooldown_seconds"`
@@ -48,9 +54,25 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
+	return Config{NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
 }
 func (c Config) Validate() error {
+	if c.NoRestockEnabled {
+		start, startOK := dailyMinute(c.NoRestockStart)
+		end, endOK := dailyMinute(c.NoRestockEnd)
+		if !startOK || !endOK {
+			return errors.New("每日禁补开始和结束时间必须为 HH:mm（00:00～23:59）")
+		}
+		if start == end {
+			return errors.New("每日禁补开始和结束时间不能相同；全天停止请关闭自动补货总开关")
+		}
+	}
+	if c.ForceMergeMinutes < 1 || c.ForceMergeMinutes > 525600 {
+		return errors.New("提前补货平均剩余时间阈值应为 1～525600 分钟")
+	}
+	if c.EmptyGroupCount < 0 || c.EmptyGroupCount > 1000 {
+		return errors.New("空分组启动补货数量应为 0～1000，0 表示关闭")
+	}
 	if c.MinNewUsePercent < 0 || c.MinNewUsePercent > 100 {
 		return errors.New("新号预计最低使用比例应为 0～100%，0 表示不限制")
 	}
@@ -104,17 +126,22 @@ func (w Window) Fresh(now time.Time, maxAge time.Duration) bool {
 }
 
 type Account struct {
-	Fault     bool       `json:"fault"`
-	ID        int64      `json:"id"`
-	Name      string     `json:"name"`
-	Plan      string     `json:"plan"`
-	Ready     bool       `json:"ready"`
-	Shared    bool       `json:"shared"`
-	Capacity  int        `json:"capacity"`
-	Used      int        `json:"used"`
-	Waiting   int        `json:"waiting"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Windows   []Window   `json:"windows"`
+	PurchasePlan       string     `json:"purchase_plan,omitempty"`
+	EJH                bool       `json:"ejh"`
+	ForceMergeKey      string     `json:"force_merge_key,omitempty"`
+	PushTimeoutEnabled *bool      `json:"push_timeout_enabled,omitempty"`
+	ForceMergeDeadline *time.Time `json:"force_merge_deadline,omitempty"`
+	Fault              bool       `json:"fault"`
+	ID                 int64      `json:"id"`
+	Name               string     `json:"name"`
+	Plan               string     `json:"plan"`
+	Ready              bool       `json:"ready"`
+	Shared             bool       `json:"shared"`
+	Capacity           int        `json:"capacity"`
+	Used               int        `json:"used"`
+	Waiting            int        `json:"waiting"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
+	Windows            []Window   `json:"windows"`
 }
 type Snapshot struct {
 	NewPlan         string    `json:"new_plan"`
@@ -129,26 +156,29 @@ type Snapshot struct {
 	Accounts        []Account `json:"accounts"`
 }
 type Task struct {
-	Plan        string               `json:"plan"`
-	ID          string               `json:"id"`
-	DecisionID  string               `json:"decision_id"`
-	Email       string               `json:"email"`
-	Version     int                  `json:"version"`
-	GroupID     int64                `json:"group_id"`
-	Binding     string               `json:"binding"`
-	Status      string               `json:"status"`
-	Stage       string               `json:"stage"`
-	Message     string               `json:"message"`
-	OrderID     string               `json:"order_id"`
-	CardID      string               `json:"card_id"`
-	AccountID   int64                `json:"account_id"`
-	Cost        int64                `json:"cost"`
-	CreatedAt   time.Time            `json:"created_at"`
-	UpdatedAt   time.Time            `json:"updated_at"`
-	SubmittedAt *time.Time           `json:"submitted_at,omitempty"`
-	ReadyAt     *time.Time           `json:"ready_at,omitempty"`
-	ETA         *time.Time           `json:"eta,omitempty"`
-	Stages      map[string]time.Time `json:"stages"`
+	ManagedExternally bool                 `json:"managed_externally,omitempty"`
+	ForceMergeSource  string               `json:"force_merge_source,omitempty"`
+	EmptyGroupStartup bool                 `json:"empty_group_startup,omitempty"`
+	Plan              string               `json:"plan"`
+	ID                string               `json:"id"`
+	DecisionID        string               `json:"decision_id"`
+	Email             string               `json:"email"`
+	Version           int                  `json:"version"`
+	GroupID           int64                `json:"group_id"`
+	Binding           string               `json:"binding"`
+	Status            string               `json:"status"`
+	Stage             string               `json:"stage"`
+	Message           string               `json:"message"`
+	OrderID           string               `json:"order_id"`
+	CardID            string               `json:"card_id"`
+	AccountID         int64                `json:"account_id"`
+	Cost              int64                `json:"cost"`
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+	SubmittedAt       *time.Time           `json:"submitted_at,omitempty"`
+	ReadyAt           *time.Time           `json:"ready_at,omitempty"`
+	ETA               *time.Time           `json:"eta,omitempty"`
+	Stages            map[string]time.Time `json:"stages"`
 }
 
 func (t Task) Active() bool {
@@ -167,31 +197,41 @@ type Limits struct {
 	LastBatch *time.Time `json:"last_batch,omitempty"`
 }
 type Decision struct {
-	DemandKnown     bool      `json:"demand_known"`
-	IdleEquivalent  float64   `json:"idle_equivalent"`
-	ID              string    `json:"id"`
-	At              time.Time `json:"at"`
-	Version         int       `json:"version"`
-	Snapshot        Snapshot  `json:"snapshot"`
-	Config          Config    `json:"config"`
-	Limits          Limits    `json:"limits"`
-	Reason          string    `json:"reason"`
-	Warnings        []string  `json:"warnings"`
-	SupplyMinutes   *float64  `json:"supply_minutes"`
-	SupplyCapped    bool      `json:"supply_capped"`
-	Coverage        float64   `json:"coverage"`
-	Usable          int       `json:"usable"`
-	Capacity        int       `json:"capacity"`
-	Used            int       `json:"used"`
-	Waiting         int       `json:"waiting"`
-	Inflight        int       `json:"inflight"`
-	LeadMinutes     float64   `json:"lead_minutes"`
-	TriggerMinutes  float64   `json:"trigger_minutes"`
-	TargetMinutes   float64   `json:"target_minutes"`
-	TimeNeed        int       `json:"time_need"`
-	ConcurrencyNeed int       `json:"concurrency_need"`
-	ReserveNeed     int       `json:"reserve_need"`
-	Suggested       int       `json:"suggested"`
-	Started         int       `json:"started"`
-	Confirmations   int       `json:"confirmations"`
+	NoRestockActive bool            `json:"no_restock_active"`
+	ForceMerge      ForceMergeStats `json:"force_merge"`
+	ForceMergeNeed  int             `json:"force_merge_need"`
+	DemandKnown     bool            `json:"demand_known"`
+	IdleEquivalent  float64         `json:"idle_equivalent"`
+	ID              string          `json:"id"`
+	At              time.Time       `json:"at"`
+	Version         int             `json:"version"`
+	Snapshot        Snapshot        `json:"snapshot"`
+	Config          Config          `json:"config"`
+	Limits          Limits          `json:"limits"`
+	Reason          string          `json:"reason"`
+	Warnings        []string        `json:"warnings"`
+	SupplyMinutes   *float64        `json:"supply_minutes"`
+	SupplyCapped    bool            `json:"supply_capped"`
+	Coverage        float64         `json:"coverage"`
+	Usable          int             `json:"usable"`
+	Capacity        int             `json:"capacity"`
+	Used            int             `json:"used"`
+	Waiting         int             `json:"waiting"`
+	Inflight        int             `json:"inflight"`
+	LeadMinutes     float64         `json:"lead_minutes"`
+	TriggerMinutes  float64         `json:"trigger_minutes"`
+	TargetMinutes   float64         `json:"target_minutes"`
+	TimeNeed        int             `json:"time_need"`
+	ConcurrencyNeed int             `json:"concurrency_need"`
+	ReserveNeed     int             `json:"reserve_need"`
+	EmptyGroupNeed  int             `json:"empty_group_need"`
+	Suggested       int             `json:"suggested"`
+	Started         int             `json:"started"`
+	Confirmations   int             `json:"confirmations"`
+}
+
+// EmptyGroupOnly identifies an explicit startup quantity, which must not be
+// rounded up to the ordinary minimum batch size.
+func (d Decision) EmptyGroupOnly() bool {
+	return d.EmptyGroupNeed > 0 && d.ForceMergeNeed == 0 && d.TimeNeed == 0 && d.ConcurrencyNeed == 0 && d.ReserveNeed == 0
 }

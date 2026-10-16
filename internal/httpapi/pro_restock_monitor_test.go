@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,6 +31,9 @@ func TestProRestockMonitorQuality(t *testing.T) {
 			}
 			items := []any{account}
 			total := 1
+			if mode == "native_empty" {
+				items, total = []any{}, 0
+			}
 			if mode == "duplicate" {
 				items = append(items, account)
 				total = 2
@@ -39,26 +43,39 @@ func TestProRestockMonitorQuality(t *testing.T) {
 			}
 			data = map[string]any{"items": items, "total": total}
 		case "/api/v1/admin/ops/concurrency":
-			if r.URL.Query().Get("strict") != "true" {
-				t.Error("missing strict query")
+			if r.URL.Query().Has("strict") {
+				t.Error("native monitoring must not require strict extension")
+			}
+			if mode == "http_error" {
+				http.Error(w, "monitor temporarily unavailable", http.StatusServiceUnavailable)
+				return
 			}
 			at := time.Now()
 			if mode == "stale" {
 				at = at.Add(-time.Hour)
 			}
 			load := map[string]any{"account_id": 1, "current_in_use": 0, "waiting_in_queue": 0, "max_capacity": 10, "load_known": true}
-			if mode == "unknown" {
+			if mode == "no_known" || strings.HasPrefix(mode, "native_") {
 				delete(load, "load_known")
+			}
+			if mode == "unknown" {
+				load["load_known"] = false
+			}
+			if mode == "native_pressure" {
+				load["current_in_use"] = 9
 			}
 			if mode == "capacity_changed" {
 				load["max_capacity"] = 20
 			}
 			quality := map[string]any{"complete": true, "expected": 1, "succeeded": 1, "failed": 0}
 			payload := map[string]any{"enabled": true, "timestamp": at, "quality": quality, "account": map[string]any{"1": load}}
-			if mode == "no_quality" {
+			if mode == "no_quality" || strings.HasPrefix(mode, "native_") {
 				delete(payload, "quality")
 			}
-			if mode == "missing_load" {
+			if mode == "incomplete_quality" {
+				quality["complete"], quality["succeeded"], quality["failed"] = false, 0, 1
+			}
+			if mode == "missing_load" || mode == "native_empty" {
 				payload["account"] = map[string]any{}
 			}
 			data = payload
@@ -74,7 +91,7 @@ func TestProRestockMonitorQuality(t *testing.T) {
 	c.Reserve = 1
 	p := model.ProSettings{Provider: "sub2", Sub2: model.Sub2Settings{URL: server.URL, Email: "admin@test.com", GroupIDs: []int64{1}, AccountConcurrency: 10}}
 	s.proRestock.quotaBinding = restockBinding(p)
-	for _, name := range []string{"zero", "no_quality", "unknown", "missing_load", "foreign_member", "duplicate", "stale", "capacity_changed", "upstream_fault"} {
+	for _, name := range []string{"zero", "no_quality", "no_known", "native_zero", "native_empty", "native_pressure", "unknown", "incomplete_quality", "http_error", "missing_load", "foreign_member", "duplicate", "stale", "capacity_changed", "upstream_fault"} {
 		t.Run(name, func(t *testing.T) {
 			mode = name
 			snap, err := s.collectProRestock(context.Background(), c, p, "test-secret")
@@ -82,9 +99,24 @@ func TestProRestockMonitorQuality(t *testing.T) {
 				snap.Valid = false
 			}
 			d := restock.Evaluate(c, snap, nil, restock.Limits{}, 2, 10, 5, time.Now())
-			if name == "zero" {
-				if err != nil || !snap.Valid || !snap.LoadValid || !d.DemandKnown || d.Used != 0 {
-					t.Fatalf("legitimate zero rejected: %+v %v", snap, err)
+			if name == "zero" || name == "no_quality" || name == "no_known" || strings.HasPrefix(name, "native_") {
+				if err != nil || !snap.Valid || !snap.LoadValid || !d.DemandKnown {
+					t.Fatalf("valid monitoring data rejected: %+v %v", snap, err)
+				}
+				if name == "native_pressure" {
+					if d.Used != 9 || d.Suggested == 0 {
+						t.Fatalf("native concurrency pressure ignored: %+v", d)
+					}
+				} else if d.Used != 0 {
+					t.Fatalf("legitimate zero misread: %+v", d)
+				}
+				if name == "native_empty" {
+					emptyConfig := c
+					emptyConfig.Reserve = 0
+					empty := restock.Evaluate(emptyConfig, snap, nil, restock.Limits{}, 2, 10, 5, time.Now())
+					if len(snap.Accounts) != 0 || empty.Suggested != 0 {
+						t.Fatalf("empty native group creates demand without reserve: %+v", empty)
+					}
 				}
 			} else if d.DemandKnown || d.Suggested != 0 {
 				t.Fatalf("unknown or faulty data used as demand: %+v", d)

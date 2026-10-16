@@ -14,7 +14,7 @@ const summary = computed(() => cardOccupancy(props.card))
     <div v-for="row in local.occupants || []" :key="row.email + ':' + (row.order_id || 'reserved')">
       <span>{{row.email}}{{row.deleted ? ' · 账号已删除' : ''}}</span>
       <small>{{paymentStatusLabel(row.status)}}<template v-if="row.order_id"> · 订单 {{row.order_id}}</template></small>
-      <button v-if="row.deleted && row.order_id" type="button" class="btn ghost compact" @click.stop="resolver.open(row,local)">核实并解除占用</button>
+      <button v-if="row.deleted && row.order_id" type="button" class="btn ghost compact" @click.stop="resolver.open(row,local)">核实开通结果</button>
     </div>
     <span v-if="!local.occupants?.length">{{local.active_email}}</span>
     <small>{{summary.detail}}</small>

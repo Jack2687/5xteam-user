@@ -47,6 +47,11 @@ func TestEJHSyncRejectsMissingLists(t *testing.T) {
 			if _, err = s.store.SaveEJHSettings(cfg, "fixture-secret"); err != nil {
 				t.Fatal(err)
 			}
+			if kind == "trades_missing" || kind == "trades_null" {
+				if _, err = s.store.ImportEJHCard(ejh.Card{OrderNo: "test-card", Number: "4242424242424242", CVV: "123", Validity: "1299", Status: "1"}, false); err != nil {
+					t.Fatal(err)
+				}
+			}
 			s.ejh.client = ejh.New()
 			s.ejh.client.HTTP = up.Client()
 			err = s.syncEJHLocked(context.Background(), time.Now().Add(-time.Hour), time.Now())

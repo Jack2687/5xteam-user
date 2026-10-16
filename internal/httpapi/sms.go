@@ -502,7 +502,7 @@ func (s *Server) getSMSPlatformHistory(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "chatgpt-space-merge/1.0")
+	req.Header.Set("User-Agent", "chapt-space-user/1.0")
 	// Cloudflare occasionally closes the first keep-alive/HTTP2 connection
 	// with EOF.  Use a short-lived HTTP/1.1 transport and retry once so the
 	// management page does not fail on an otherwise valid history request.
@@ -541,7 +541,7 @@ func (s *Server) getSMSPlatformHistory(w http.ResponseWriter, r *http.Request) {
 		fallbackURL.RawQuery = fq.Encode()
 		fallbackReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, fallbackURL.String(), nil)
 		fallbackReq.Header.Set("Accept", "application/json")
-		fallbackReq.Header.Set("User-Agent", "chatgpt-space-merge/1.0")
+		fallbackReq.Header.Set("User-Agent", "chapt-space-user/1.0")
 		if fallbackResp, fallbackErr := historyClient.Do(fallbackReq); fallbackErr == nil {
 			defer fallbackResp.Body.Close()
 			fallbackRaw, _ := io.ReadAll(io.LimitReader(fallbackResp.Body, 4<<20))

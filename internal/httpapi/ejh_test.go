@@ -96,7 +96,7 @@ func TestEJHAuthorizationRedactionAndCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := s.Handler()
-	routes := [][2]string{{"GET", "settings"}, {"PUT", "settings"}, {"GET", "dashboard"}, {"POST", "open"}, {"POST", "test"}, {"POST", "balance"}, {"POST", "sync"}, {"POST", "cards/x/action"}, {"POST", "operations/x/resolve"}, {"PUT", "trades/x/match"}, {"POST", "trades/x/unmatch"}}
+	routes := [][2]string{{"GET", "settings"}, {"PUT", "settings"}, {"GET", "dashboard"}, {"POST", "open"}, {"POST", "test"}, {"POST", "balance"}, {"POST", "sync"}, {"POST", "cards/x/action"}, {"POST", "cards/x/trades"}, {"POST", "operations/x/resolve"}, {"PUT", "trades/x/match"}, {"POST", "trades/x/unmatch"}}
 	for _, route := range routes {
 		r := httptest.NewRequest(route[0], "/api/ejh/"+route[1], strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
@@ -147,6 +147,7 @@ func TestEJHForceMergeTailAndDisabledSetting(t *testing.T) {
 			}
 			started := time.Now().Add(-2 * time.Minute)
 			_, err = st.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+				p.CaptureProPushTimeout(cfg)
 				p.ProPushStartedAt = &started
 				p.PushStatus = "completed"
 				p.ProAuto = model.ProAutoState{ID: "tail", Status: "running", QuotaUsedThreshold: 80, QuotaIntervalSeconds: 30, Steps: map[string]string{"push": "completed", "oauth": "completed", "recharge": "completed"}}
@@ -244,6 +245,7 @@ func TestEJHForceMergeGuard(t *testing.T) {
 	cfg.ForceMergeEnabled = true
 	cfg.ForceMergeMinutes = 60
 	base := model.MailAccountProfile{ManagementScope: "pro", PushStatus: "completed", ProPushStartedAt: &started}
+	base.CaptureProPushTimeout(cfg)
 	if !forceMergeDue(base, cfg, now) {
 		t.Fatal("missed deadline")
 	}

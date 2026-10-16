@@ -76,12 +76,7 @@ func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccoun
 			unlock, runErr = lockProMutex(ctx, value.(*sync.Mutex))
 		}
 		if runErr == nil {
-			var release func()
-			release, runErr = s.proMergeSlot(ctx)
-			if runErr == nil {
-				_, runErr = s.performProMerge(ctx, email)
-				release()
-			}
+			_, runErr = s.performProMerge(ctx, email)
 		}
 		// Also clear the queued flag if preparation or lock acquisition failed.
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
@@ -105,19 +100,33 @@ func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccoun
 }
 
 func (s *Server) proMergeSlot(ctx context.Context) (func(), error) {
-	settings, _, _, err := s.store.ProSettings()
-	if err != nil {
-		return nil, err
-	}
+	return s.proConcurrencySlot(ctx, true)
+}
+
+func (s *Server) proAutoSlot(ctx context.Context) (func(), error) {
+	return s.proConcurrencySlot(ctx, false)
+}
+
+func (s *Server) proConcurrencySlot(ctx context.Context, merge bool) (func(), error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		// Queued work follows saved changes. Running work is allowed to finish
+		// when the limit is lowered; no replacement enters until below it.
+		settings, _, _, err := s.store.ProSettings()
+		if err != nil {
+			return nil, err
+		}
+		limit, running := settings.Concurrency, &s.proAutoRunning
+		if merge {
+			limit, running = settings.MergeConcurrency, &s.proMergeRunning
+		}
 		s.proMergeMu.Lock()
-		if s.proMergeRunning < max(1, settings.Concurrency) {
-			s.proMergeRunning++
+		if *running < max(1, limit) {
+			*running++
 			s.proMergeMu.Unlock()
-			return func() { s.proMergeMu.Lock(); s.proMergeRunning--; s.proMergeMu.Unlock() }, nil
+			return sync.OnceFunc(func() { s.proMergeMu.Lock(); *running--; s.proMergeMu.Unlock() }), nil
 		}
 		s.proMergeMu.Unlock()
 		timer := time.NewTimer(50 * time.Millisecond)

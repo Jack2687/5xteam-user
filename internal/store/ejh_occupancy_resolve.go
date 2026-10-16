@@ -117,10 +117,7 @@ func (s *Store) ResolveEJHOccupancy(id string, in EJHOccupancyResolutionInput) e
 		return err
 	}
 	if target == "success" {
-		if _, err = tx.Exec(`INSERT OR IGNORE INTO pro_card_order_releases(order_id,released_at) VALUES(?,?)`, id, formatTime(now)); err != nil {
-			return err
-		}
-		// Verified merge/removal starts pending return; it never marks funds returned.
+		// Verified removal starts pending return and keeps the card occupied.
 		if err = ejhMarkRequestedTx(tx, email, id, "manual", now); err != nil {
 			return err
 		}

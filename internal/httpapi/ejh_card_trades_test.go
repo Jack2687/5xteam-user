@@ -1,0 +1,170 @@
+package httpapi
+
+import (
+	"chapt-space-user/internal/ejh"
+	"chapt-space-user/internal/store"
+	"crypto/des"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestEJHCardTradesQuery(t *testing.T) {
+	s, _ := ejhTestServer(t, 200)
+	card := ejh.CardRecord{ID: "selected", Remote: ejh.Card{OrderNo: "selected-order"}}
+	mode := "valid"
+	calls := 0
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v3/authenticate" {
+			fmt.Fprint(w, `{"code":"000000","data":{"authToken":"fixture-token","validity":60000}}`)
+			return
+		}
+		calls++
+		var envelope map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			t.Error(err)
+			w.WriteHeader(500)
+			return
+		}
+		cipher, err := base64.StdEncoding.DecodeString(envelope["param"])
+		if err != nil || len(cipher) == 0 || len(cipher)%8 != 0 {
+			t.Error("bad encryption")
+			w.WriteHeader(500)
+			return
+		}
+		block, _ := des.NewCipher([]byte("fixture-"))
+		plain := make([]byte, len(cipher))
+		for i := 0; i < len(cipher); i += 8 {
+			block.Decrypt(plain[i:i+8], cipher[i:i+8])
+		}
+		var body struct {
+			Method string `json:"method"`
+			Data   struct {
+				OrderNo string `json:"orderNo"`
+				Start   string `json:"tradeTime"`
+				End     string `json:"endTime"`
+				Page    int    `json:"page"`
+				Size    int    `json:"size"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(plain[:len(plain)-int(plain[len(plain)-1])], &body); err != nil {
+			t.Error(err)
+		}
+		if body.Method != "card.trade.info" || body.Data.OrderNo != "selected-order" || body.Data.Start != "2026-10-01 00:00:00" || body.Data.End != "2026-10-15 23:59:59" || body.Data.Page != 2 || body.Data.Size != 100 {
+			t.Errorf("bad card query: %+v", body)
+		}
+		trade := ejh.Trade{OrderNo: card.Remote.OrderNo, TradeNo: mode, Type: "4", Status: "2", Number: "4242424242424242", CardAmount: "100", CardCurrency: "USD"}
+		rows := []ejh.Trade{trade}
+		switch mode {
+		case "missing":
+			fmt.Fprint(w, `{"code":"000000","data":{}}`)
+			return
+		case "null":
+			rows = nil
+		case "empty":
+			rows = []ejh.Trade{}
+		case "wrong_card":
+			rows = append(rows, trade)
+			rows[1].OrderNo = "different-card"
+		case "missing_id":
+			rows[0].TradeNo = ""
+		case "duplicate":
+			rows = append(rows, trade)
+		case "full", "oversized":
+			n := 100
+			if mode == "oversized" {
+				n = 101
+			}
+			rows = nil
+			for i := 0; i < n; i++ {
+				v := trade
+				v.TradeNo = fmt.Sprintf("page-%d", i)
+				rows = append(rows, v)
+			}
+		case "error":
+			w.WriteHeader(503)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"code": "000000", "data": map[string]any{"tradeInfos": rows, "totalSize": len(rows)}})
+	}))
+	defer up.Close()
+	cfg, _, err := s.store.EJHSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.URL = up.URL
+	if _, err = s.store.SaveEJHSettings(cfg, "fixture-secret"); err != nil {
+		t.Fatal(err)
+	}
+	s.ejh.client = ejh.New()
+	s.ejh.client.HTTP = up.Client()
+	if err := s.store.EJHPut("card", card.ID, card); err != nil {
+		t.Fatal(err)
+	}
+	query := func(body, id string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/api/ejh/cards/"+id+"/trades", strings.NewReader(body))
+		r.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		s.queryEJHCardTrades(w, r)
+		return w
+	}
+	valid := `{"start":"2026-10-01","end":"2026-10-15","page":2}`
+	for _, tc := range []struct {
+		mode string
+		code int
+		more bool
+	}{{"valid", 200, false}, {"full", 200, true}, {"empty", 200, false}, {"missing", 502, false}, {"null", 502, false}, {"wrong_card", 502, false}, {"missing_id", 502, false}, {"duplicate", 502, false}, {"oversized", 502, false}, {"error", 502, false}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			mode = tc.mode
+			before, _ := store.EJHRecords[ejh.TradeRecord](s.store, "trade")
+			w := query(valid, card.ID)
+			if w.Code != tc.code {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), "4242424242424242") {
+				t.Fatal("full card number leaked")
+			}
+			if tc.code == 200 {
+				var out struct {
+					Data struct {
+						Page int  `json:"page"`
+						More bool `json:"has_more"`
+					}
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+					t.Fatal(err)
+				}
+				if out.Data.Page != 2 || out.Data.More != tc.more || w.Header().Get("Cache-Control") != "no-store" {
+					t.Fatal("bad pagination or caching")
+				}
+			} else {
+				after, _ := store.EJHRecords[ejh.TradeRecord](s.store, "trade")
+				if len(after) != len(before) {
+					t.Fatal("invalid page partially saved")
+				}
+			}
+		})
+	}
+	before := calls
+	for _, body := range []string{`{"start":"2026-01-01","end":"2026-04-01","page":1}`, `{"start":"2026-10-16","end":"2026-10-15","page":1}`, `{"start":"bad","end":"2026-10-15","page":1}`, `{"start":"2026-10-01","end":"2026-10-15","page":0}`} {
+		if w := query(body, card.ID); w.Code != 400 {
+			t.Fatal("invalid range/page accepted", w.Code)
+		}
+	}
+	if w := query(valid, "unknown"); w.Code != 404 {
+		t.Fatal("unknown card accepted")
+	}
+	s.ejh.mu.Lock()
+	w := query(valid, card.ID)
+	s.ejh.mu.Unlock()
+	if w.Code != 409 {
+		t.Fatal("busy query did not fail promptly")
+	}
+	if calls != before {
+		t.Fatal("invalid/busy requests reached supplier")
+	}
+}

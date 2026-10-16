@@ -77,7 +77,7 @@ func TestEJHOccupancyResolutionAPI(t *testing.T) {
 		}
 	}
 	got, _, err := st.GPTPayCard(card.ID)
-	if err != nil || !got.Available || got.ActiveAccounts != 0 || got.OpenedAccounts != 1 {
+	if err != nil || got.Available || got.ActiveAccounts != 1 || got.OpenedAccounts != 1 {
 		t.Fatal(got, err)
 	}
 }

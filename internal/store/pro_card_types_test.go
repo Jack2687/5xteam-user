@@ -84,6 +84,10 @@ func TestProCardTypeManualAliasesAndRemoval(t *testing.T) {
 	if _, err = s.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.RemoveStatus = "completed" }); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.SaveGPTPayCard(c, secret); err == nil {
+		t.Fatal("removal allowed type downgrade before return")
+	}
+	ejhReceiveForOrder(t, s, "manual", o.Order.ID)
 	if _, err = s.SaveGPTPayCard(c, secret); err != nil {
 		t.Fatal(err)
 	}

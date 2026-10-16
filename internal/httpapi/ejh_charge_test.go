@@ -28,23 +28,22 @@ func TestEJHChargeAPI(t *testing.T) {
 	if err = st.CreateGPTPayOrder(order, snap); err != nil {
 		t.Fatal(err)
 	}
-	trade := ejh.Trade{OrderNo: "fixture", TradeNo: "debit", Type: "4", Status: "2", Number: "4242424242424242", CardAmount: "20.00", CardCurrency: "USD"}
+	trade := ejh.Trade{OrderNo: "fixture", TradeNo: "debit", Type: "4", Status: "2", Number: "4242424242424242", CardAmount: "20.00", CardCurrency: "USD", TradeTime: now.Format(time.RFC3339)}
 	if err = st.EJHSaveTrade(card.ID, trade); err != nil {
 		t.Fatal(err)
 	}
 	s := &Server{store: st}
 	mux := http.NewServeMux()
 	s.ejhRoutes(mux)
-	id := store.EJHID("trade", "fixture|debit|4")
-	for _, tc := range []struct {
-		body   string
-		status int
-	}{{"{", 400}, {`{"trade_id":"` + id + `","evidence":""}`, 400}, {`{"trade_id":"` + id + `","evidence":"verified order reference"}`, 200}} {
+	for _, endpoint := range []struct{ method, path string }{{"PUT", "/api/ejh/cases/payment/charge"}, {"PUT", "/api/ejh/trades/payment/match"}, {"POST", "/api/ejh/trades/payment/unmatch"}} {
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/ejh/cases/payment/charge", strings.NewReader(tc.body)))
-		if w.Code != tc.status {
+		mux.ServeHTTP(w, httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader("{}")))
+		if w.Code != http.StatusGone {
 			t.Fatal(w.Code, w.Body.String())
 		}
+	}
+	if err = st.EJHReconcile(); err != nil {
+		t.Fatal(err)
 	}
 	cases, err := st.EJHCasesForEmails([]string{order.Email})
 	if err != nil || len(cases) != 1 || cases[0].Charge == nil {

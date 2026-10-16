@@ -117,7 +117,7 @@ func (s *Store) RotateDownstreamSecret(provider, endpoint, email, secret string)
 			return e
 		}
 		matches := v.Provider == provider && ((provider == "sub2" && v.Sub2.URL == endpoint && v.Sub2.Email == email) || (provider == "cpa" && v.CPA.URL == endpoint) || (provider == "vm2api" && v.VM2API.URL == endpoint))
-		if v.Scope == "pro" || !matches || v.Secret == secret {
+		if v.Scope == "pro" || v.Scope == "pro-fallback" || !matches || v.Secret == secret {
 			continue
 		}
 		v.Secret = secret

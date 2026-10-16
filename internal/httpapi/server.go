@@ -25,8 +25,8 @@ import (
 )
 
 type Server struct {
+	proFallback               proFallbackRuntime
 	proRestock                proRestockRuntime
-	proCardAdmissionMu        sync.Mutex
 	ejh                       ejhRuntime
 	downstreamMu              sync.Mutex
 	recovery                  seatRecoveryRuntime
@@ -78,6 +78,7 @@ type Server struct {
 	gptpayMonitorClosed       bool
 	proAutoMu                 sync.Mutex
 	proScheduleMu             sync.Mutex
+	proCardAdmissionMu        sync.Mutex
 	proAutoWG                 sync.WaitGroup
 	proAutoJobs               map[string]context.CancelFunc
 	proAutoClosed             bool
@@ -88,6 +89,7 @@ type Server struct {
 	proMergeJobs              map[string]context.CancelFunc
 	proMergeClosed            bool
 	proMergeRunning           int
+	proAutoRunning            int // guarded by proMergeMu; separate from merge slots
 	proMonitorMu              sync.Mutex
 	proMonitorRunning         bool
 	mail                      *mailbridge.Client // retained for API compatibility; local mail flows never call it

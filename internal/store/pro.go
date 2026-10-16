@@ -57,6 +57,12 @@ func normalizeProSettings(v *model.ProSettings) {
 	if v.Concurrency > 20 {
 		v.Concurrency = 20
 	}
+	if v.MergeConcurrency < 1 {
+		v.MergeConcurrency = 2
+	}
+	if v.MergeConcurrency > 20 {
+		v.MergeConcurrency = 20
+	}
 	normalizeSub2Settings(&v.Sub2)
 	v.Sub2.Provider = v.Provider
 	if v.CPA.StatusCheckIntervalSeconds < 10 {
@@ -209,8 +215,17 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 	}
 	wasConfirmed := p.TransferStatus == "completed" && p.ProMergeConfirmedSource != ""
 	wasRemoved := p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed"
+	previousProvider, previousSub2ID := p.PushProvider, p.Sub2AccountID
+	previousPushStatus := p.PushStatus
 	if mutate != nil {
 		mutate(&p)
+	}
+	if previousPushStatus != "completed" && p.PushStatus == "completed" && p.ProPushStartedAt == nil {
+		now := time.Now()
+		p.ProPushStartedAt = &now
+	}
+	if p.PushProvider != previousProvider || p.Sub2AccountID != previousSub2ID || p.VM2 != nil {
+		p.ClearProCostSnapshot()
 	}
 	p.UpdatedAt = time.Now()
 	p.ReconcileProAutoMerge(p.UpdatedAt)

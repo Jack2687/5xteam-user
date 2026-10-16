@@ -332,6 +332,9 @@ func (s *Store) CreateGPTPayOrder(v gptpay.Order, snapshot gptpay.Snapshot) erro
 	if !reserved && opened+pending >= limit {
 		return fmt.Errorf("银行卡已达开通上限 %d（含在途占位）", limit)
 	}
+	if err = captureProOrderTimeout(tx, v.Email); err != nil {
+		return err
+	}
 	raw, _ := json.Marshal(snapshot)
 	sealed, err := s.encrypt(string(raw))
 	if err != nil {

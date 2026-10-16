@@ -4,12 +4,14 @@ import (
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/restock"
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 )
 
 func (s *Server) registerProRestock(mux *http.ServeMux) {
+	s.registerProFallback(mux)
 	mux.HandleFunc("GET /api/pro-restock/records/{id}/tasks", func(w http.ResponseWriter, r *http.Request) {
 		items, err := s.store.ProRestockDecisionTasks(r.PathValue("id"))
 		if err != nil {
@@ -22,7 +24,14 @@ func (s *Server) registerProRestock(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/pro-restock/config", s.saveProRestockConfig)
 	mux.HandleFunc("GET /api/pro-restock/groups", s.getProRestockGroups)
 	mux.HandleFunc("POST /api/pro-restock/evaluate", func(w http.ResponseWriter, r *http.Request) {
-		s.tickProRestock(r.Context(), true)
+		if err := s.tickProRestock(r.Context(), true); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errProRestockBusy) {
+				status = http.StatusConflict
+			}
+			writeAPI(w, status, nil, err.Error())
+			return
+		}
 		s.getProRestock(w, r)
 	})
 	mux.HandleFunc("POST /api/pro-restock/reset-breaker", func(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +94,9 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 			d = records[0]
 		}
 	}
-	writeAPI(w, 200, map[string]any{"config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": time.Now()}, "")
+	now := time.Now()
+	noRestockReason := c.NoRestockReason(now)
+	writeAPI(w, 200, map[string]any{"config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason}, "")
 }
 func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	c := restock.DefaultConfig()
@@ -126,12 +137,18 @@ func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	s.proRestock.tick.Lock()
 	defer s.proRestock.tick.Unlock()
+	if !s.proFallback.tick.TryLock() {
+		writeAPI(w, 409, nil, "兜底正在核验，请稍后保存补货配置")
+		return
+	}
+	defer s.proFallback.tick.Unlock()
 	c, e := s.store.SaveProRestockConfig(c)
 	if e != nil {
 		writeAPI(w, 409, nil, e.Error())
 		return
 	}
 	_ = s.store.SaveProRestockDecision(restock.Decision{ID: randomRegistrationID(), At: time.Now(), Version: c.Version, Config: c, Reason: "配置已保存：" + c.Mode})
+	s.proFallback.next = time.Time{}
 	writeAPI(w, 200, c, "")
 }
 func (s *Server) getProRestockGroups(w http.ResponseWriter, r *http.Request) {

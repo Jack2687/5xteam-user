@@ -278,6 +278,8 @@ func TestProQuotaTriggersDetachedMergeAndPreservesUncertainty(t *testing.T) {
 			downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
+				case "/api/v1/admin/accounts/42/stats":
+					fmt.Fprint(w, `{"code":0,"data":{"summary":{"total_standard_cost":0}}}`)
 				case "/api/v1/auth/login":
 					fmt.Fprint(w, `{"code":0,"data":{"access_token":"fixture-session"}}`)
 				case "/api/v1/admin/openai/accounts/42/quota":
@@ -350,7 +352,7 @@ func TestProQuotaTriggersDetachedMergeAndPreservesUncertainty(t *testing.T) {
 func TestProMergeConcurrencyLimitAndCancellation(t *testing.T) {
 	f := newProExecutionFixture(t)
 	v, _, _, _ := f.s.store.ProSettings()
-	v.Concurrency = 1
+	v.Concurrency, v.MergeConcurrency = 3, 1
 	if _, err := f.s.store.SaveProSettings(v, "", ""); err != nil {
 		t.Fatal(err)
 	}

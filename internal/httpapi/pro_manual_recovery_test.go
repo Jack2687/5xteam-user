@@ -22,6 +22,8 @@ func TestProManualRecoveryResumesQuotaWithoutRepurchaseOrRepush(t *testing.T) {
 	quotaPercent.Store(30)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/v1/admin/accounts/42/stats":
+			fmt.Fprint(w, `{"code":0,"data":{"summary":{"total_standard_cost":0}}}`)
 		case r.URL.Path == "/api/v1/auth/login":
 			fmt.Fprint(w, `{"code":0,"data":{"access_token":"fixture-session"}}`)
 		case r.Method == "POST" && r.URL.Path == "/api/v1/admin/accounts":
@@ -54,14 +56,19 @@ func TestProManualRecoveryResumesQuotaWithoutRepurchaseOrRepush(t *testing.T) {
 	getState := func() struct {
 		model.ProAutoState
 		StageProgress model.ProStageDisplay `json:"stage_progress"`
-	} { w := f.request(f.s.getProAutomation, "GET", "/auto-pro", ""); var response struct {
-		Data struct {
-			model.ProAutoState
-			StageProgress model.ProStageDisplay `json:"stage_progress"`
-		} `json:"data"`
-	}; if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil {
-		t.Fatal(w.Body.String())
-	}; return response.Data }
+	} {
+		w := f.request(f.s.getProAutomation, "GET", "/auto-pro", "")
+		var response struct {
+			Data struct {
+				model.ProAutoState
+				StageProgress model.ProStageDisplay `json:"stage_progress"`
+			} `json:"data"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil {
+			t.Fatal(w.Body.String())
+		}
+		return response.Data
+	}
 	state := getState()
 	if state.StageProgress.Steps["oauth"] != "running" || state.Error != "" {
 		t.Fatal("dialog does not show manual retry", state)

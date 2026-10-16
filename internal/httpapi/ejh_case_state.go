@@ -1,0 +1,43 @@
+package httpapi
+
+import (
+	"database/sql"
+	"errors"
+	"net/http"
+	"sync"
+
+	"chapt-space-user/internal/store"
+)
+
+func (s *Server) setEJHCaseState(w http.ResponseWriter, r *http.Request) {
+	var in store.EJHCaseStateInput
+	if decodeJSON(w, r, &in, 8<<10) != nil {
+		return
+	}
+	order, _, err := s.store.GPTPayOrder(r.PathValue("id"))
+	if err != nil {
+		writeAPI(w, 404, nil, "原开通订单不存在")
+		return
+	}
+	v, _ := s.proLocks.LoadOrStore("account:"+order.Email, &sync.Mutex{})
+	lock := v.(*sync.Mutex)
+	if !lock.TryLock() {
+		writeAPI(w, 409, nil, "该账号正在处理，请稍后重试")
+		return
+	}
+	defer lock.Unlock()
+	if s.proAutomationRunning(order.Email) {
+		writeAPI(w, 409, nil, "该账号仍在执行自动流程，请先停止并核实结果")
+		return
+	}
+	row, err := s.store.SetEJHCaseState(order.ID, in)
+	if err != nil {
+		code := http.StatusConflict
+		if errors.Is(err, sql.ErrNoRows) {
+			code = http.StatusNotFound
+		}
+		writeAPI(w, code, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, row, "")
+}

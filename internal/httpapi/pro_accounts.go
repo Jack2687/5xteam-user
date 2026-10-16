@@ -59,6 +59,9 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 		return nil, err
 	}
 	for _, item := range items {
+		if !proCostBindingMatches(item, config) {
+			item.ClearProCostSnapshot()
+		}
 		row := proAccountListItem{MailAccountProfile: item, StageProgress: item.ProStages()}
 		row.FinancialCases = byEmail[strings.ToLower(item.Email)]
 		if row.FinancialCases == nil {
@@ -66,10 +69,7 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 		}
 		if item.ProPushStartedAt != nil {
 			row.PushElapsedMinutes = max(0, int64(time.Since(*item.ProPushStartedAt)/time.Minute))
-			if config.ForceMergeEnabled {
-				deadline := item.ProPushStartedAt.Add(time.Duration(config.ForceMergeMinutes) * time.Minute)
-				row.ForceMergeDeadline = &deadline
-			}
+			row.ForceMergeDeadline = item.ProPushDeadline()
 		}
 		row.ProAuto.Error = row.ProAuto.DisplayError()
 		if order, ok := orders[strings.ToLower(item.Email)]; ok && ((item.ProAuto.ID == "" && item.ProManualStages["recharge"].ID == "") || (order.ID == item.ProAuto.OrderID && item.ProAuto.Status != "running")) {
@@ -666,6 +666,7 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	input.ScheduledEnabled, input.MaxUnmerged, input.ScheduleIntervalSeconds = current.ScheduledEnabled, current.MaxUnmerged, current.ScheduleIntervalSeconds
 	input.EJHAutoOpen, input.EJHTemplateID, input.EJHDailyOpenLimit, input.EJHDailyAmountLimit = current.EJHAutoOpen, current.EJHTemplateID, current.EJHDailyOpenLimit, current.EJHDailyAmountLimit
 	input.ForceMergeEnabled, input.ForceMergeMinutes = current.ForceMergeEnabled, current.ForceMergeMinutes
+	input.MergeConcurrency = current.MergeConcurrency
 	now := time.Now()
 	input.LastQuotaSweepAt = current.LastQuotaSweepAt
 	if input.QuotaEnabled {
@@ -792,10 +793,7 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 	}()
 	if _, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.PushStatus, p.ProLastError = "running", ""
-		if p.ProPushStartedAt == nil {
-			now := time.Now()
-			p.ProPushStartedAt = &now
-		}
+
 	}); err != nil {
 		return profile, err
 	}
@@ -846,6 +844,8 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 	}
 	out, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.PushProvider, p.PushStatus = "sub2", "completed"
+		ref := model.ProDownstream(v)
+		p.ProPushDownstream = &ref
 		if p.ProMigration != nil {
 			p.ProMigration.Downstream = model.ProDownstream(v)
 		}
@@ -978,6 +978,9 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	}()
 	_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.QuotaStatus = "running"
+		if !proCostBindingMatches(*p, v) {
+			p.ClearProCostSnapshot()
+		}
 		if proTransferNeedsConfirmation(*p) {
 			p.TransferStatus = "unknown"
 		} else {
@@ -1005,7 +1008,30 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 			return profile, errors.New("Sub2 账号 ID 不存在")
 		}
 		var quota sub2.QuotaUsage
-		quota, err = s.sub2.QueryQuota(ctx, v.Sub2, subPassword, profile.Sub2AccountID)
+		var costs sub2.AccountCosts
+		var costErr error
+		var queries sync.WaitGroup
+		queries.Add(2)
+		go func() {
+			defer queries.Done()
+			quota, err = s.sub2.QueryQuota(ctx, v.Sub2, subPassword, profile.Sub2AccountID)
+		}()
+		go func() {
+			defer queries.Done()
+			costs, costErr = s.sub2.QueryTotalCosts(ctx, v.Sub2, subPassword, profile.Sub2AccountID)
+		}()
+		queries.Wait()
+		// Cost is advisory and independent of the 5h/7d quota result.
+		if costErr == nil {
+			var saved model.MailAccountProfile
+			saved, costErr = s.saveProCostSnapshot(profile, v, costs)
+			if costErr == nil {
+				profile = saved
+			}
+		}
+		if costErr != nil {
+			s.auditProEvent(profile, "cost", "failed", "sub2", "Pro 消耗额度更新失败，保留上次成功数据", map[string]any{"error": costErr.Error()})
+		}
 		if err == nil {
 			five, seven = quota.Windows()
 		}
@@ -1141,6 +1167,11 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 		s.auditProEvent(firstProProfile(out, profile), "space_merge", status, v.Provider, message, details)
 	}()
 	if profile.SpaceMergedOnce && (profile.RemoveStatus == "completed" || (profile.VM2 != nil && profile.RemoveStatus == "team_removed")) {
+		release, err := s.proMergeSlot(ctx)
+		if err != nil {
+			return profile, err
+		}
+		defer release()
 		return s.finishProDownstream(ctx, profile)
 	}
 	// Only a started workflow is bound to its original Team. Preselected
@@ -1195,6 +1226,13 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	}
 	unlockAdmin = sync.OnceFunc(unlockAdmin)
 	defer unlockAdmin()
+	// Wait for this Team first so same-Team queues do not consume the global
+	// merge allowance. Retain one slot through all four steps and downstream.
+	release, err := s.proMergeSlot(ctx)
+	if err != nil {
+		return profile, err
+	}
+	defer release()
 	adminSettings, err := s.settingsForAdmin(s.store.Settings(), admin)
 	if err != nil {
 		return profile, err

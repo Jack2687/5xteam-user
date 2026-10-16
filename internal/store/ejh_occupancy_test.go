@@ -59,7 +59,7 @@ func TestEJHOccupancyConcurrentManualAutomaticAcrossStores(t *testing.T) {
 	}
 }
 
-func TestEJHOccupancyUntilRemovalAndLifetimeLimit(t *testing.T) {
+func TestEJHOccupancyUntilReturnAndLifetimeLimit(t *testing.T) {
 	s := transferStore(t)
 	card := ejhFixtureCard(t, s)
 	limit := 2
@@ -111,11 +111,16 @@ func TestEJHOccupancyUntilRemovalAndLifetimeLimit(t *testing.T) {
 				t.Fatalf("released before removal: %+v %v", c, e)
 			}
 		}
-		// team_removed means the space removal succeeded even if downstream cleanup is pending.
+		// Removal alone cannot free a card while the return is outstanding.
 		if _, err = s.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.RemoveStatus = "team_removed" }); err != nil {
 			t.Fatal(err)
 		}
 		c, _, e := s.GPTPayCard(card.ID)
+		if e != nil || c.ActiveAccounts != 1 || c.Available {
+			t.Fatalf("removal released occupancy: %+v %v", c, e)
+		}
+		ejhReceiveForOrder(t, s, card.ID, o.Order.ID)
+		c, _, e = s.GPTPayCard(card.ID)
 		if e != nil || c.ActiveAccounts != 0 || c.OpenedAccounts != n || c.RemainingAccounts != 2-n || c.Available != (n < 2) {
 			t.Fatalf("release changed lifetime usage: %+v %v", c, e)
 		}
@@ -188,8 +193,13 @@ func TestEJHOccupancyRestartDeleteReimport(t *testing.T) {
 		t.Fatal(e)
 	}
 	got, _, e := s.GPTPayCard(card.ID)
+	if e != nil || got.Available {
+		t.Fatal("deletion/removal freed card without return", got, e)
+	}
+	ejhReceiveForOrder(t, s, card.ID, o.Order.ID)
+	got, _, e = s.GPTPayCard(card.ID)
 	if e != nil || !got.Available || got.OpenedAccounts != 1 {
-		t.Fatalf("removal release not durable: %+v %v", got, e)
+		t.Fatalf("return release not durable: %+v %v", got, e)
 	}
 }
 
@@ -240,6 +250,11 @@ func TestEJHOccupancySwitchAndOrdinaryCards(t *testing.T) {
 	if _, err = s.UpdateProAccount("two@example.com", func(p *model.MailAccountProfile) { p.RemoveStatus = "completed" }); err != nil {
 		t.Fatal(err)
 	}
+	ejhReceiveForOrder(t, s, card.ID, "one@example.com")
+	if err = s.ReserveProCard("three@example.com", card.ID, false); err == nil {
+		t.Fatal("second unreturned account lost")
+	}
+	ejhReceiveForOrder(t, s, card.ID, "two@example.com")
 	if err = s.ReserveProCard("three@example.com", card.ID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -344,6 +359,7 @@ func TestEJHOccupancyTransferPreservesPerOrderRelease(t *testing.T) {
 	if _, err := src.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.RemoveStatus = "completed" }); err != nil {
 		t.Fatal(err)
 	}
+	ejhReceiveForOrder(t, src, card.ID, old.Order.ID)
 	current := transferOrder(email, "new-paid", "success")
 	current.Order.CardID = card.ID
 	if err := src.CreateGPTPayOrder(current.Order, current.Snapshot); err != nil {

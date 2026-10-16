@@ -15,11 +15,11 @@ export function paymentStatusLabel(status) {
 export function cardOccupancy(card) {
   const { local } = cardInfo(card)
   const occupants = local.occupants || []
-  if (occupants.some(row => row.deleted)) return { label: '已删除账号占用待核实', detail: '账号已删除，原订单仍占用；请核实开通结果及移出情况' }
+  if (occupants.some(row => row.deleted)) return { label: '已删除账号占用待核实', detail: '账号已删除，原订单仍占用；请核实开通结果；成功订单须等待自动识别回款' }
   if (occupants.some(row => !['reserved', 'created', 'submitting', 'processing', 'success'].includes(row.status))) return { label: '支付待核实', detail: '先查询原开通订单；确认失败后释放占用' }
   if (occupants.some(row => ['created', 'submitting', 'processing'].includes(row.status))) return { label: '开通处理中', detail: '等待原开通订单结果；确认失败后释放占用' }
   if (occupants.some(row => row.status === 'reserved')) return { label: '开通前预留', detail: '登录或开通准备占位，停止任务后释放' }
-  return { label: '使用中', detail: '移出当前账号后才可再次分配' }
+  return { label: '使用中', detail: '当前账号回款确认后才可再次分配' }
 }
 export function cardUsage(card, now = new Date()) {
   const { local, linked, status, locked, end } = cardInfo(card)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import * as ejh from '../src/ejh.js'
 import { createEJHRefreshGate } from '../src/ejhRefresh.js'
 import { activationPlan } from '../src/proActivationPlan.js'
@@ -31,7 +31,8 @@ function fixture({failSync=false,holdSync=false}={}) {
   if(url==='/api/ejh/sync'){if(holdSync)await blocked;if(failSync)throw Error('sync failed')}
   return {}
  }})
- vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue};',context)
+ context.watch=watch
+ vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates};',context)
  return {...context.exposed,calls,release,unmount:()=>unmounts.forEach(fn=>fn())}
 }
 let f=fixture();await f.initialize()
@@ -69,3 +70,26 @@ assert.deepEqual(JSON.parse(JSON.stringify(f.calls[0])),{url:'/api/gptpay/cards/
 assert.equal(f.limitID.value,'')
 f.unmount()
 console.log('Passed: saved activation plans, remount cooldown, manual retry, failed/interrupted/in-flight refresh, per-card limit form')
+f=fixture()
+f.data.value.cards=['1','2','5','8'].map(state=>({id:state,remote:{status:state},local:{}}))
+assert.equal(f.lifecycleFilter.value,'normal')
+assert.deepEqual(Array.from(f.filtered.value,c=>c.id),['1','5'])
+f.setLifecycle('closed');assert.deepEqual(Array.from(f.filtered.value,c=>c.id),['2','8'])
+f.cardStatusFilter.value='5';assert.equal(f.lifecycleFilter.value,'normal');assert.equal(f.filtered.value.length,1)
+f.cardStatusFilter.value='2';assert.equal(f.lifecycleFilter.value,'closed');assert.equal(f.filtered.value[0].id,'2')
+f.clearFilters();assert.equal(f.lifecycleFilter.value,'normal')
+f.targetCardID.value='8';assert.equal(f.lifecycleFilter.value,'closed');assert.equal(f.filtered.value[0].id,'8')
+f.setLifecycle('normal');assert.equal(f.targetCardID.value,'');assert.equal(f.cardStatusFilter.value,'')
+f.unmount()
+console.log('Passed: normal default, closed/closing category, detailed filter changes, reset and exact-card navigation')
+f=fixture()
+f.data.value.cases=['unopened','opened','waiting','returned'].map(state=>({id:state,email:state+'@example.com',state}))
+f.changeTab('cases')
+assert.deepEqual(Array.from(f.filtered.value,c=>c.id),['opened','waiting','returned'])
+assert.equal(Object.hasOwn(f.accountReturnStates,'unopened'),false)
+f.query.value='unopened@example.com';assert.equal(f.filtered.value.length,0)
+f.clearFilters();assert.equal(f.filtered.value.length,3)
+f.showCaseState('unopened');assert.equal(f.tab.value,'cards')
+f.showCaseState('waiting');assert.equal(f.tab.value,'cases');assert.equal(f.filtered.value[0].id,'waiting')
+f.unmount()
+console.log('Passed: unopened accounts excluded from returns list, counts and search; unopened summary links to card management')

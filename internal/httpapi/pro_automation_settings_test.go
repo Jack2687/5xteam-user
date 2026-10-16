@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -35,5 +36,51 @@ func TestProAutomationSettingsSaveWithoutPushCredentials(t *testing.T) {
 	saved, _, _, _ = st.ProSettings()
 	if saved.QuotaUsedThreshold != 85 || saved.AutoMergeEnabled {
 		t.Fatal("failed request changed settings")
+	}
+}
+
+func TestProAutomationMergeConcurrencySettings(t *testing.T) {
+	s, st, _ := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected supplier call") })
+	pro := model.DefaultProSettings()
+	pro.Concurrency, pro.MergeConcurrency = 6, 3
+	input := map[string]any{"automation": pro, "gptpay": map[string]any{"plan_code": "pro5"}}
+	if rec := payCall(t, s.saveProAutomationSettings, "", "", input); rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	saved, _, _, _ := st.ProSettings()
+	if saved.Concurrency != 6 || saved.MergeConcurrency != 3 {
+		t.Fatal("independent settings not saved", saved)
+	}
+	for _, invalid := range []int{0, -1, 21} {
+		pro.MergeConcurrency = invalid
+		input["automation"] = pro
+		if rec := payCall(t, s.saveProAutomationSettings, "", "", input); rec.Code != 400 {
+			t.Fatal("invalid merge limit accepted", invalid)
+		}
+	}
+	// A pre-upgrade browser omitting the field must not reset the saved limit.
+	encoded, _ := json.Marshal(pro)
+	var legacy map[string]any
+	if err := json.Unmarshal(encoded, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	delete(legacy, "merge_concurrency")
+	legacy["concurrency"] = 8
+	input["automation"] = legacy
+	if rec := payCall(t, s.saveProAutomationSettings, "", "", input); rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	saved, _, _, _ = st.ProSettings()
+	if saved.Concurrency != 8 || saved.MergeConcurrency != 3 {
+		t.Fatal("legacy save reset merge limit")
+	}
+	// The separate downstream form must retain the automation-owned limit.
+	inputDownstream := map[string]any{"provider": "cpa", "cpa": map[string]any{"url": "http://cpa.invalid"}, "cpa_key": "fixture-key"}
+	if rec := payCall(t, s.saveProSettings, "", "", inputDownstream); rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	saved, _, _, _ = st.ProSettings()
+	if saved.MergeConcurrency != 3 {
+		t.Fatal("downstream settings reset merge limit")
 	}
 }

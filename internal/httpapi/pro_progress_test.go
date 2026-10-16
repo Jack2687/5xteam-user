@@ -207,6 +207,10 @@ func TestProManualPushAndQuotaRunningThenCompleted(t *testing.T) {
 					fmt.Fprint(w, `{"code":0,"data":{"access_token":"fixture-session"}}`)
 					return
 				}
+				if r.URL.Path == "/api/v1/admin/accounts/42/stats" {
+					fmt.Fprint(w, `{"code":0,"data":{"summary":{"total_standard_cost":0}}}`)
+					return
+				}
 				close(entered)
 				<-release
 				if stage == "push" {

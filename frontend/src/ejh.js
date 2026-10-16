@@ -40,6 +40,9 @@ export const returnStatusLabels = { ...returnStates, unverified: '待核实', un
 export function returnStatus(state) { return Object.hasOwn(returnStatusLabels, state) ? state : 'unknown' }
 export function cardHasCase(card, row) { return row.card_id === card.id || row.ejh_card_id === card.id }
 export const cardStates = { '1': '已激活', '2': '已销卡', '3': '活跃', '4': '未激活', '5': '已冻结', '6': '销卡失败', '7': '非活跃', '8': '销卡处理中', review: '资料待核实', unknown: '状态待核实', unlinked: '手动添加 · 未绑定卡台' }
+export function cardLifecycle(card) {
+  return ['2','8'].includes(String(card.remote?.status ?? card.local?.issuer_status ?? '')) ? 'closed' : 'normal'
+}
 export function cardState(card) {
   if (card.issuer_linked === false) return 'unlinked'
   if (card.error) return 'review'

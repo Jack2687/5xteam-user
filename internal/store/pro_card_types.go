@@ -112,7 +112,7 @@ func saveProCardTypeTx(tx *sql.Tx, id, key, kind string) error {
 			return e
 		}
 		if n > 0 {
-			return fmt.Errorf("EJH 卡仍有运行账号，请移出成功后再修改类型")
+			return fmt.Errorf("EJH 卡仍有占用账号，请回款确认到账后再修改类型")
 		}
 	}
 	if kind == "" {

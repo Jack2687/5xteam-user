@@ -43,7 +43,20 @@ type TradeRecord struct {
 	SyncedAt        time.Time  `json:"synced_at"`
 	ConfirmedAt     *time.Time `json:"confirmed_at,omitempty"`
 }
+type CaseStateOverride struct {
+	State     string    `json:"state"`
+	Reason    string    `json:"reason"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Revision  int64     `json:"revision"`
+}
+
+func ValidCaseState(state string) bool {
+	return state == "unopened" || state == "opened" || state == "waiting" || state == "returned"
+}
+
 type Case struct {
+	AutomaticState  string             `json:"automatic_state"`
+	StateOverride   *CaseStateOverride `json:"state_override,omitempty"`
 	Charge          *ActivationCharge  `json:"charge,omitempty"`
 	Credits         *ActivationCredits `json:"credits,omitempty"`
 	ChargeEvidence  string             `json:"charge_evidence,omitempty"`

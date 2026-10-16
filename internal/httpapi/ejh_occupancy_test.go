@@ -58,11 +58,46 @@ func TestEJHOccupancyManualAndAutomaticEntrypoints(t *testing.T) {
 				t.Fatal(err)
 			}
 			c, _, err := st.GPTPayCard("test-card")
-			if err != nil || c.Available != (status == "success") {
-				t.Fatal("wrong release", c, err)
+			if err != nil || c.Available {
+				t.Fatal("removal released occupancy", c, err)
+			}
+			if status == "success" {
+				ejhReceiveOrderAPI(t, s, "test-card", order.ID)
+				c, _, err = st.GPTPayCard("test-card")
+				if err != nil || !c.Available || c.ActiveAccounts != 0 {
+					t.Fatal("return did not release card", c, err)
+				}
 			}
 		})
 	}
+}
+
+func ejhReceiveOrderAPI(t *testing.T, s *Server, cardID, orderID string) {
+	t.Helper()
+	o, _, err := s.store.GPTPayOrder(orderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pay := ejh.Trade{OrderNo: "fixture-" + cardID, TradeNo: orderID + "-pay", Type: "1", Status: "1", AuthCode: orderID, CardAmount: "5794.64", CardCurrency: "PHP", TradeTime: o.CreatedAt.Format(time.RFC3339Nano)}
+	ret := pay
+	ret.Type, ret.TradeNo, ret.CardAmount = "2", orderID+"-return", "5780.87"
+	ret.TradeTime = time.Now().Add(time.Hour).Format(time.RFC3339Nano)
+	if err = s.store.EJHSaveTrades(cardID, []ejh.Trade{pay, ret}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.store.EJHReconcile(); err != nil {
+		t.Fatal(err)
+	}
+	cases, err := s.store.EJHCases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if c.ID == orderID && c.State == "returned" {
+			return
+		}
+	}
+	t.Fatal("return was not automatically matched", orderID)
 }
 
 func TestEJHOccupancySchedulerPolicy(t *testing.T) {

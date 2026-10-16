@@ -141,8 +141,8 @@ func TestArrivalExpiryAndLimits(t *testing.T) {
 		t.Fatal("breaker")
 	}
 	s.NewPlan = "other"
-	if Evaluate(c, s, nil, Limits{}, 2, 20, 2, n).SupplyMinutes != nil {
-		t.Fatal("different quota cohorts")
+	if Evaluate(c, s, nil, Limits{}, 2, 20, 2, n).SupplyMinutes == nil {
+		t.Fatal("purchase configuration must not invalidate the upstream forecast")
 	}
 }
 func TestConfigValidation(t *testing.T) {
@@ -186,11 +186,12 @@ func TestUpstreamFaultAndLifetimeGuard(t *testing.T) {
 	s.Accounts[0].Fault = false
 	c.ConcurrencyEnabled = false
 	s.Accounts[0].Used = 1
+	baseline := Evaluate(c, s, nil, Limits{}, 2, 20, 2, n)
 	c.MinNewUsePercent = 100
 	s.LifetimeMinutes = 5
 	d = Evaluate(c, s, nil, Limits{}, 2, 20, 2, n)
-	if d.TimeNeed != 0 || d.Suggested != 0 {
-		t.Fatal("unreachable lifetime caused runaway purchase")
+	if d.TimeNeed != baseline.TimeNeed || d.Suggested != baseline.Suggested || d.SupplyMinutes == nil || *d.SupplyMinutes != *baseline.SupplyMinutes {
+		t.Fatal("Pro lifetime changed upstream supply forecast")
 	}
 	c.ConcurrencyEnabled = true
 	s.Accounts[0].Used = 19

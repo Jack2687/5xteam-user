@@ -229,6 +229,7 @@ func TestEJHAllocationConcurrentManualAndReleasedReuse(t *testing.T) {
 	if _, err := s.store.UpdateProAccount("resident@example.com", func(p *model.MailAccountProfile) { p.RemoveStatus = "completed" }); err != nil {
 		t.Fatal(err)
 	}
+	ejhReceiveOrderAPI(t, s, "test-card", "resident-order")
 	for i := 0; i < 4; i++ {
 		email := fmt.Sprintf("reuse-%d@example.com", i)
 		allocationAccount(t, s, email)
@@ -244,6 +245,7 @@ func TestEJHAllocationConcurrentManualAndReleasedReuse(t *testing.T) {
 		if _, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.RemoveStatus = "completed" }); err != nil {
 			t.Fatal(err)
 		}
+		ejhReceiveOrderAPI(t, s, o.CardID, o.ID)
 	}
 	original, _, _ := s.store.GPTPayCard("test-card")
 	if original.OpenedAccounts != 4 || original.Available {

@@ -319,6 +319,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			if !resume && !paidRecovery {
+				if p.ProPushStartedAt == nil && p.ProAuto.ID == "" {
+					p.CaptureProPushTimeout(pro)
+				}
 				p.ProAuto = model.ProAutoState{ID: randomRegistrationID(), PlanCode: cfg.PlanCode, CardID: card.ID, QuotaUsedThreshold: pro.QuotaUsedThreshold, QuotaIntervalSeconds: pro.QuotaCheckIntervalSeconds, StartedAt: time.Now(), Steps: map[string]string{}}
 				p.ProAuto.StopVersion = stopVersion
 				p.ProAuto.QuotaPlan = restockPlan(cfg.Provider, cfg.PlanCode, cfg.Country, cfg.CreditQuantity)
@@ -384,8 +387,9 @@ func (s *Server) runProAutomation(ctx context.Context, email string, unlock, can
 		s.proAutoMu.Unlock()
 	}()
 	var err error
-	// Share the existing Pro concurrency bound, but release it during quota waits.
-	release, err := s.proMergeSlot(ctx)
+	// Bound the active chain from login onward; persisted quota waits release it.
+	// The four-step merge additionally acquires its own independent limit.
+	release, err := s.proAutoSlot(ctx)
 	if err == nil {
 		defer release()
 	}
@@ -795,8 +799,8 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 			}
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				next := time.Now().UTC().Add(time.Duration(max(10, p.ProAuto.QuotaIntervalSeconds)) * time.Second)
-				if forceSettings.ForceMergeEnabled && p.ProPushStartedAt != nil {
-					due := p.ProPushStartedAt.Add(time.Duration(forceSettings.ForceMergeMinutes) * time.Minute)
+				if deadline := p.ProPushDeadline(); deadline != nil {
+					due := *deadline
 					if due.After(time.Now()) && due.Before(next) {
 						next = due
 					}
@@ -819,7 +823,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	if _, err = merge(ctx, email); err != nil {
 		// Preserve original merge semantics, only reschedule a safe failed tail.
 		latest, _, readErr := s.store.MailAccountCredential(email)
-		if readErr == nil && ctx.Err() == nil && latest.ProMergeTrigger == "push_timeout" && forceSettings.ForceMergeEnabled && latest.ProForceMergeAttempts <= forceSettings.RetryCount && !proTransferNeedsConfirmation(latest) && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
+		if readErr == nil && ctx.Err() == nil && latest.ProMergeTrigger == "push_timeout" && latest.ProPushDeadline() != nil && latest.ProForceMergeAttempts <= forceSettings.RetryCount && !proTransferNeedsConfirmation(latest) && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				p.ProAuto.Status = "waiting_quota"
 				p.ProAuto.Steps["merge"] = "failed"

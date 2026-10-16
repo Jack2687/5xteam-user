@@ -20,7 +20,7 @@ export function forecastDetails(decision = {}, now = Date.now()) {
       const duplicate = seen.has(w.seconds); seen.add(w.seconds)
       if (stale) return "监控快照失效"
       if (!account.ready) return "账号不可调度"
-      if (!account.plan || account.plan !== snapshot.new_plan) return "套餐口径不匹配"
+      if (!account.plan) return "套餐口径不匹配"
       if (duplicate || !finite(w.seconds) || w.seconds <= 0 || !finite(w.used) || w.used < 0 || w.used > 100 || !finite(w.rate) || w.rate < 0) return "额度数据无效"
       if (!Number.isFinite(sampleAt) || sampleAt > now + 5000 || now - sampleAt > (config.quota_seconds || 60) * 2000 || !finite(w.reset_at) || w.reset_at * 1000 <= now) return "额度样本或窗口已过期"
       if (!finite(w.samples) || w.samples < 2) return "有效变化样本不足 2 次"
@@ -44,7 +44,7 @@ export function forecastDetails(decision = {}, now = Date.now()) {
   const cohorts = [...groups.values()].sort((a,b)=>a.seconds-b.seconds).map(g=>({...g,observed:g.observedAccounts === g.accounts ? g.observed : null}))
   const coverage = covered * 100 / Math.max(1,ready)
   const partial = coverage < 100 || windowSets.size > 1
-  const compatible = windowSets.size === 1 && !(snapshot.accounts || []).some(a=>a.ready && a.plan !== snapshot.new_plan)
+  const compatible = windowSets.size === 1 && new Set((snapshot.accounts || []).filter(a=>a.ready).map(a=>a.plan)).size === 1
   const predictionUsable = compatible && coverage >= (config.quota_coverage || 80) && cohorts.some(g=>g.rate>0)
   return {stale, rows, cohorts, coverage, partial, primary:!partial ? cohorts.find(g=>g.seconds===18000) || cohorts[0] : null, supply:supplyLabel(predictionUsable ? decision : {},stale)}
 }

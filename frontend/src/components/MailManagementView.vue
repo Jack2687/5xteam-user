@@ -43,6 +43,7 @@ import { runMailAccountTask } from "../mailAccountTask";
 import { copyText } from "../clipboard";
 import { downloadMailExport } from "../mailExport.js";
 import { parseMailAccountText } from "../mailImport.js";
+import { moveMailAccountsToPro } from "../mailProTransfer.js";
 import { formatTime } from "../utils";
 import IconButton from "./IconButton.vue";
 import MessageBar from "./MessageBar.vue";
@@ -85,8 +86,8 @@ const actionMenuEmail = ref("");
 const actionMenuStyle = ref({});
 const sensitiveMasked = ref(false);
 let actionMenuCloseTimer;
-const importForm = reactive({ raw: "", group: "free" });
-const importProgress = reactive({ total: 0, processed: 0, imported: 0, updated: 0, skipped: 0, complete: false, error: "" });
+const importForm = reactive({ raw: "", group: "free", enterPro: false });
+const importProgress = reactive({ total: 0, processed: 0, imported: 0, updated: 0, skipped: 0, enteredPro: 0, complete: false, error: "" });
 const importProgressPercent = computed(() => importProgress.total ? Math.round((importProgress.processed / importProgress.total) * 100) : 0);
 const message = reactive({ text: "", type: "" });
 const busy = ref("");
@@ -703,40 +704,48 @@ function parseImport() {
   return parseMailAccountText(importForm.raw);
 }
 function openImportDialog() {
-  Object.assign(importProgress, { total: 0, processed: 0, imported: 0, updated: 0, skipped: 0, complete: false, error: "" });
+  if (busy.value) return;
+  importForm.enterPro = false;
+  Object.assign(importProgress, { total: 0, processed: 0, imported: 0, updated: 0, skipped: 0, enteredPro: 0, complete: false, error: "" });
   importOpen.value = true;
 }
 function closeImportDialog() {
   if (busy.value !== "import") importOpen.value = false;
 }
 async function importAccounts() {
+  if (busy.value) return;
   busy.value = "import";
+  const enterPro = importForm.enterPro;
+  const group = importForm.group.trim();
   try {
     const items = parseImport();
-    Object.assign(importProgress, { total: items.length, processed: 0, imported: 0, updated: 0, skipped: 0, complete: false, error: "" });
+    Object.assign(importProgress, { total: items.length, processed: 0, imported: 0, updated: 0, skipped: 0, enteredPro: 0, complete: false, error: "" });
     const batchSize = 25;
     for (let start = 0; start < items.length; start += batchSize) {
       const batch = items.slice(start, start + batchSize);
       const result = await api("/api/mail/accounts/import", {
         method: "POST",
-        body: { accounts: batch, group: importForm.group.trim() },
+        body: { accounts: batch, group, enter_pro: enterPro },
       });
       importProgress.imported += Number(result.imported || 0);
       importProgress.updated += Number(result.updated || 0);
       importProgress.skipped += Number(result.skipped || 0);
+      importProgress.enteredPro += Number(result.entered_pro || 0);
       importProgress.processed += batch.length;
+      if (enterPro) batch.forEach(item => selectedEmails.value.delete(accountEmailKey(item)));
     }
     importProgress.complete = true;
     importForm.raw = "";
     await loadAccounts();
     setMessage(
-      `导入完成：新增 ${importProgress.imported}，更新 ${importProgress.updated}，跳过 ${importProgress.skipped}`,
+      `导入完成：新增 ${importProgress.imported}，更新 ${importProgress.updated}，跳过 ${importProgress.skipped}${enterPro ? `；已直接进入 Pro 管理 ${importProgress.enteredPro} 个` : ""}`,
       "success",
     );
   } catch (error) {
     importProgress.error = error.message;
     setMessage(error.message, "error");
   } finally {
+    if (enterPro) emit('pro-changed');
     busy.value = "";
   }
 }
@@ -1207,6 +1216,33 @@ async function moveToPro(account) {
   }
 }
 
+async function moveSelectedToPro() {
+  if (busy.value) return;
+  const emails = [...selectedEmails.value];
+  if (!emails.length) return;
+  if (!window.confirm(`确认将已选的 ${emails.length} 个账号移入 Pro 管理？移入后将不再显示在邮件账号列表，可在 Pro 管理中移回。与单个“移入 Pro 管理”规则相同。`)) return;
+  busy.value = 'pro-batch';
+  try {
+    const results = await moveMailAccountsToPro(emails, api, (done, total) => {
+      setMessage(`正在移入 Pro 管理：${done}/${total}`);
+    });
+    const succeeded = results.filter(item => item.success);
+    const failed = results.filter(item => !item.success);
+    succeeded.forEach(item => selectedEmails.value.delete(item.email));
+    emit('pro-changed');
+    const summary = `移入 Pro 管理完成：成功 ${succeeded.length}，失败 ${failed.length}`;
+    try { await loadAccounts(); } catch (error) {
+      setMessage(`${summary}；列表刷新失败，请手动刷新：${error.message}`, 'error');
+      return;
+    }
+    setMessage(`${summary}${failed.length ? `；失败账号保持选中：${failed.slice(0, 3).map(item => `${item.email}：${item.error}`).join('；')}` : ''}`, failed.length ? 'error' : 'success');
+  } catch (error) {
+    setMessage(error.message, 'error');
+  } finally {
+    busy.value = '';
+  }
+}
+
 function mailKey(item) {
   return [
     item.source,
@@ -1304,6 +1340,9 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
             <button class="btn ghost" type="button" :disabled="!!busy" @click="openSelection">
               <ListChecks :size="15" />条件选择
             </button>
+            <button class="btn ghost" type="button" :disabled="!!busy || !selectedAccounts.length" @click="moveSelectedToPro">
+              <LoaderCircle v-if="busy === 'pro-batch'" class="spin" :size="15" /><Crown v-else :size="15" />批量进入 Pro 管理<span v-if="selectedAccounts.length">（{{ selectedAccounts.length }}）</span>
+            </button>
             <button
               class="btn ghost"
               type="button"
@@ -1340,6 +1379,7 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
               class="btn primary"
               type="button"
               @click="openImportDialog"
+              :disabled="!!busy"
             >
               <Plus :size="15" />导入账号
             </button>
@@ -1803,12 +1843,14 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
           ><span>分组</span
           ><input
             v-model="importForm.group"
+            :disabled="busy === 'import'"
             maxlength="64"
             placeholder="free" /></label
         ><label class="field"
           ><span>账号数据</span
           ><textarea
             v-model="importForm.raw"
+            :disabled="busy === 'import'"
             rows="9"
             spellcheck="false"
             required
@@ -1820,6 +1862,10 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
             保存，不会保存 sessionToken。</small
           ></label
         >
+        <div class="mail-import-destination">
+          <label class="mail-option-check"><input v-model="importForm.enterPro" type="checkbox" :disabled="busy === 'import' || importProgress.complete" />直接进入 Pro 管理</label>
+          <small>勾选后，本次导入的账号直接归属 Pro 管理，不显示在邮件账号列表；可在 Pro 管理中“移回邮件管理”。执行规则与单个“移入 Pro 管理”一致。</small>
+        </div>
         <section v-if="importProgress.total" class="mail-import-progress" aria-live="polite">
           <div class="mail-import-progress-heading">
             <span>{{ importProgress.error ? '导入中断' : importProgress.complete ? '导入完成' : '正在导入' }}</span>
@@ -1833,6 +1879,7 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
             <span>新增 <strong>{{ importProgress.imported }}</strong></span>
             <span>更新 <strong>{{ importProgress.updated }}</strong></span>
             <span>跳过 <strong>{{ importProgress.skipped }}</strong></span>
+            <span v-if="importForm.enterPro">进入 Pro <strong>{{ importProgress.enteredPro }}</strong></span>
           </div>
           <small v-if="importProgress.error" class="danger-text">{{ importProgress.error }}</small>
         </section>
@@ -2569,6 +2616,8 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
 .mail-import-modal {
   width: min(620px, 100%);
 }
+.mail-import-destination { display: grid; gap: 8px; margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.mail-import-destination small { color: var(--muted); line-height: 1.6; }
 .mail-import-modal .field:first-of-type {
   margin-top: 18px;
 }

@@ -22,7 +22,7 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, evaluate, resetBreaker, loadRecords};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
 }
 
@@ -86,4 +86,81 @@ for (const action of ['pause', 'evaluate', 'resetBreaker']) {
   assert.equal(f.records.value[0].id, 'page-2', 'old page replaced current records')
   f.unmounted()
 }
-console.log('Passed: restock unmount, pause/evaluate/reset ordering, and record paging')
+// Manual retry reports the new collection result and preserves the saved mode.
+for (const scenario of ['failed', 'load_failed', 'stale', 'auto', 'observe', 'disabled', 'busy', 'no_restock']) {
+  const f = fixture()
+  f.state.value = { config: { enabled: true, mode: 'auto' }, snapshot: { valid: false } }
+  assert.equal(f.monitorUnavailable.value, true)
+  const operation = f.evaluate()
+  await tick()
+  const mutation = f.requests[0]
+  assert.equal(mutation.url, '/api/pro-restock/evaluate')
+  if (scenario === 'busy') {
+    mutation.reject(new Error('正在采集或更新补货配置，请稍后重试'))
+  } else {
+    mutation.resolve({
+      no_restock_active: scenario === 'no_restock',
+      no_restock_reason: '处于每日禁补时段，暂停新增补货',
+      config: { enabled: scenario !== 'disabled', mode: scenario === 'observe' ? 'observe' : 'auto', fresh_seconds: 20 },
+      snapshot: { valid: scenario !== 'failed', load_valid: scenario !== 'load_failed', at: new Date(Date.now() - (scenario === 'stale' ? 60000 : 0)).toISOString(), error: scenario === 'failed' ? '接口超时' : '' },
+    })
+    await tick()
+    for (const r of f.requests.filter(r => r.url.includes('/records'))) r.resolve([])
+  }
+  await operation
+  if (['failed', 'load_failed', 'stale', 'busy'].includes(scenario)) {
+    assert.ok(f.error.value || f.collectionError.value, `${scenario}: missing failure feedback`)
+    assert.equal(f.notice.value, '', `${scenario}: false success feedback`)
+    assert.equal(f.monitorUnavailable.value, true)
+  } else {
+    assert.equal(f.error.value, '')
+    assert.equal(f.monitorUnavailable.value, false)
+    assert.match(f.notice.value, scenario === 'auto' ? /恢复规则判断/ : scenario === 'observe' ? /观察模式不会/ : scenario === 'no_restock' ? /每日禁补/ : /手动暂停/)
+    assert.equal(f.noRestockActive.value, scenario === 'no_restock')
+    if (scenario === 'disabled') assert.equal(f.state.value.config.enabled, false)
+  }
+  if (scenario === 'failed') {
+    const poll = f.refresh(false, true)
+    await tick()
+    f.requests.findLast(r => r.url === '/api/pro-restock').resolve({ config: {enabled: true, mode: 'auto', fresh_seconds: 20}, snapshot: {valid: true, load_valid: true, at: new Date().toISOString()} })
+    await tick()
+    f.requests.findLast(r => r.url.includes('/records')).resolve([])
+    await poll
+    assert.equal(f.collectionError.value, '', 'automatic recovery left old manual retry failure visible')
+    assert.equal(f.monitorUnavailable.value, false)
+  }
+  f.unmounted()
+}
+// Invalid windows are rejected before sending a configuration request.
+for (const [start, end] of [['', '07:00'], ['7:00', '23:00'], ['24:00', '07:00'], ['23:00', '23:00']]) {
+  const f = fixture()
+  Object.assign(f.form, {no_restock_enabled: true, no_restock_start: start, no_restock_end: end})
+  await f.save()
+  assert.equal(f.requests.length, 0)
+  assert.match(f.error.value, /每日禁补/)
+  f.unmounted()
+}
+// Cross-midnight values survive save, subsequent polling, and form refresh.
+{
+  const f = fixture()
+  const config = {enabled: false, version: 2, no_restock_enabled: true, no_restock_start: '23:00', no_restock_end: '07:00'}
+  Object.assign(f.form, config, {version: 1})
+  const saving = f.save()
+  await tick()
+  assert.equal(f.requests[0].url, '/api/pro-restock/config')
+  assert.equal(f.requests[0].options.body.no_restock_start, '23:00')
+  assert.equal(f.requests[0].options.body.no_restock_end, '07:00')
+  f.requests[0].resolve(config)
+  await tick()
+  f.requests.findLast(r => r.url === '/api/pro-restock').resolve({config, no_restock_active: true})
+  await tick()
+  f.requests.findLast(r => r.url.includes('/records')).resolve([])
+  await saving
+  assert.equal(f.form.version, 2)
+  assert.equal(f.form.no_restock_enabled, true)
+  assert.equal(f.form.no_restock_end, '07:00')
+  assert.equal(f.noRestockActive.value, true)
+  assert.equal(f.error.value, '')
+  f.unmounted()
+}
+console.log('Passed: restock request ordering, paging, retry recovery, and daily no-restock configuration')

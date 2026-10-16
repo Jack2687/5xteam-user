@@ -27,12 +27,12 @@ EJH 通用解析器的对象/字符串兼容能力继续保留，本轮未改变
 
 - 新增后端定向回归通过，同时覆盖原有迁移续跑、消费统计与 EJH 客户端用例。
 - `go vet ./...` 通过。
-- `go build -o ../.codex-test-artifacts/space-user-comprehensive-audit.exe ./cmd/server` 通过，未启动构建产物。
+- `go build -o ../.codex-test-artifacts/space-merge-comprehensive-audit.exe ./cmd/server` 通过，未启动构建产物。
 - 前端 `npm run check` 通过。
-- 前端 `test:pro-restock`、`test:ejh`、`test:pro-vm`、`test:push-groups`、`test:list-requests` 通过。
+- 前端 `test:pro-restock`、`test:ejh`、`test:card-allocation`、`test:pro-vm`、`test:pro-cost`、`test:mail-pro-transfer`、`test:push-groups`、`test:list-requests` 通过。
 - 前端 `npm run build` 通过；仅提示主 JS 包超过 500 kB，不影响构建完成。
 - 修改的 Go 文件 `gofmt` 与 `git diff --check` 通过。
-- 全量 `go test ./... -count=1 -timeout 15m` 通过，退出码 0；HTTP API 包 414.270 秒，数据库包 92.404 秒。日志 `../.codex-test-artifacts/space-user-comprehensive-audit-full.log`。
+- 全量 `go test ./... -count=1 -timeout 15m` 通过，退出码 0；HTTP API 包 472.963 秒，数据库包 103.803 秒。日志 `../.codex-test-artifacts/space-merge-comprehensive-audit-full.log`。
 
 ## 边界
 

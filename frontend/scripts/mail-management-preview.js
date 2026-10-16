@@ -55,6 +55,17 @@ window.fetch = async (path, options = {}) => {
   const url = new URL(path, location.origin)
   const body = options.body ? JSON.parse(options.body) : {}
   fixture.requests.push({ path: url.pathname, query: url.search, body })
+  if (url.pathname === '/api/mail/accounts/import') {
+    let imported = 0, updated = 0
+    for (const account of body.accounts) {
+      const email = account.email.trim().toLowerCase()
+      let item = items.find(item => item.email === email)
+      if (item) updated++
+      else { item = { email, management_scope: 'mail', login_method: 'directurl' }; items.push(item); imported++ }
+      if (body.enter_pro) item.management_scope = 'pro'
+    }
+    return json({ imported, updated, skipped: 0, entered_pro: body.enter_pro ? body.accounts.length : 0 })
+  }
   if (url.pathname.startsWith('/api/pro-accounts/') && url.pathname.endsWith('/stage')) {
     const item = items.find(item => item.email === decodeURIComponent(url.pathname.split('/')[3]))
     if (item.pro_workflow_running || (item['pro_' + body.stage + '_status'] || '') !== body.expected_status) return new Response(JSON.stringify({ ok: false, error: '步骤状态已变化，请刷新后重新确认' }), { status: 409 })
@@ -191,6 +202,7 @@ window.fetch = async (path, options = {}) => {
   }
   if (url.pathname.startsWith('/api/mail/accounts/') && url.pathname.endsWith('/management-scope')) {
     const item = items.find(item => item.email === decodeURIComponent(url.pathname.split('/')[4]))
+    if (!item || (fixture.moveFailEmails || []).includes(item.email)) return new Response(JSON.stringify({ ok: false, error: '模拟移入失败' }), { status: 409 })
     item.management_scope = body.scope
     return json(item)
   }

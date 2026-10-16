@@ -17,10 +17,22 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 			APIKey string `json:"api_key"`
 		} `json:"gptpay"`
 	}
+	current, _, _, readErr := s.store.ProSettings()
+	if readErr != nil {
+		writeAPI(w, 500, nil, "读取 Pro 配置失败")
+		return
+	}
+	// Older clients omit the new field; retain its saved value. Explicit zero
+	// still fails validation after decoding.
+	input.Automation.MergeConcurrency = current.MergeConcurrency
 	if err := decodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	v := input.Automation
+	if v.MergeConcurrency < 1 || v.MergeConcurrency > 20 {
+		writeAPI(w, 400, nil, "合并并发数须为 1～20")
+		return
+	}
 	if err := s.validateEJHAutomation(v); err != nil {
 		writeAPI(w, 400, nil, err.Error())
 		return

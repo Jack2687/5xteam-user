@@ -44,6 +44,8 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 	return c, k, nil
 }
 func (s *Server) ejhRoutes(m *http.ServeMux) {
+	m.HandleFunc("PUT /api/ejh/cases/{id}/state", s.setEJHCaseState)
+	m.HandleFunc("POST /api/ejh/cards/{id}/trades", s.queryEJHCardTrades)
 	m.HandleFunc("GET /api/ejh/occupancy/{id}", s.getEJHOccupancyOrder)
 	m.HandleFunc("POST /api/ejh/occupancy/{id}/resolve", s.resolveEJHOccupancy)
 	m.HandleFunc("GET /api/ejh/settings", s.getEJHSettings)
@@ -365,17 +367,35 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 	}
 	s.ejh.mu.Lock()
 	defer s.ejh.mu.Unlock()
+	var card ejh.CardRecord
+	if e := s.store.EJHGet("card", r.PathValue("id"), &card); e != nil {
+		writeAPI(w, 404, nil, "卡片不存在")
+		return
+	}
+	data := map[string]any{"orderNo": card.Remote.OrderNo}
+	// Read closed cards from saved data without querying the issuer.
+	if card.Remote.Status == "2" {
+		w.Header().Set("Cache-Control", "no-store")
+		switch in.Action {
+		case "details":
+			writeAPI(w, 200, card.Remote, "")
+			return
+		case "refresh":
+			remote := card.Remote
+			remote.Number = maskEJH(remote.Number)
+			remote.CVV = ""
+			writeAPI(w, 200, remote, "")
+			return
+		case "balance":
+			writeAPI(w, 200, map[string]any{"balance": card.Balance, "cached": true, "at": card.BalanceAt}, "")
+			return
+		}
+	}
 	c, k, e := s.ejhConfig()
 	if e != nil {
 		writeAPI(w, 400, nil, e.Error())
 		return
 	}
-	var card ejh.CardRecord
-	if e = s.store.EJHGet("card", r.PathValue("id"), &card); e != nil {
-		writeAPI(w, 404, nil, "卡片不存在")
-		return
-	}
-	data := map[string]any{"orderNo": card.Remote.OrderNo}
 	switch in.Action {
 	case "details", "refresh":
 		var remote ejh.Card
@@ -606,41 +626,13 @@ func (s *Server) resolveEJHOperation(w http.ResponseWriter, r *http.Request) {
 	op.Result = nil
 	writeAPI(w, 200, op, "")
 }
+
+// Retired endpoints return a clear response to old, still-open browser tabs.
 func (s *Server) matchEJHTrade(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		OrderID    string `json:"payment_order_id"`
-		OriginalID string `json:"original_trade_id"`
-		Amount     string `json:"amount"`
-		Currency   string `json:"currency"`
-		Evidence   string `json:"evidence"`
-		Confirmed  bool   `json:"confirmed"`
-	}
-	if decodeJSON(w, r, &in, 8<<10) != nil {
-		return
-	}
-	s.ejh.mu.Lock()
-	defer s.ejh.mu.Unlock()
-	e := s.store.EJHMatchTrade(r.PathValue("id"), in.OrderID, in.OriginalID, in.Amount, strings.ToUpper(in.Currency), in.Evidence, in.Confirmed)
-	if e != nil {
-		writeAPI(w, 400, nil, e.Error())
-		return
-	}
-	writeAPI(w, 200, map[string]bool{"saved": true}, "")
+	writeAPI(w, http.StatusGone, nil, "已改为自动关联，请刷新页面")
 }
 func (s *Server) unmatchEJHTrade(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Reason string `json:"reason"`
-	}
-	if decodeJSON(w, r, &in, 8<<10) != nil {
-		return
-	}
-	s.ejh.mu.Lock()
-	defer s.ejh.mu.Unlock()
-	if e := s.store.EJHUnmatch(r.PathValue("id"), in.Reason); e != nil {
-		writeAPI(w, 400, nil, e.Error())
-		return
-	}
-	writeAPI(w, 200, map[string]bool{"saved": true}, "")
+	writeAPI(w, http.StatusGone, nil, "已改为自动关联，请刷新页面")
 }
 func (s *Server) validateEJHAutomation(v model.ProSettings) error {
 	if v.ForceMergeEnabled && (v.ForceMergeMinutes < 1 || v.ForceMergeMinutes > 525600 || v.TargetAdminID == "") {
@@ -734,8 +726,17 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 		}
 		if o.Automatic && o.Status == "completed" && o.CardID != "" {
 			prior, _, err := s.store.GPTPayCard(o.CardID)
-			if err != nil || (prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && !prior.Available) {
-				return gptpay.Card{}, fmt.Errorf("已有自动开卡尚未使用且不可用，请先核实该卡，暂停自动补卡")
+			if err != nil {
+				return gptpay.Card{}, fmt.Errorf("自动开卡记录对应的银行卡 %s 无法读取，请先核实该卡，暂停自动补卡", o.CardID)
+			}
+			closed := prior.Source == "ejh" && prior.IssuerStatus == "2"
+			if closed && (prior.IssuerLocked || prior.PendingAccounts > 0 || prior.ActiveAccounts > 0 || len(prior.Occupants) > 0) {
+				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 已销卡，但仍有未决付款、账号占用或卡片资料待核实，暂停自动补卡", prior.Last4)
+			}
+			// A confirmed closed card with no outstanding work is settled history.
+			// It must still reach the daily count and amount accounting below.
+			if !closed && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
+				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 尚无成功开通记录且当前不可用，请先核实该卡，暂停自动补卡", prior.Last4)
 			}
 		}
 		if o.Method == "open" && (o.Status == "submitting" || o.Status == "unknown" || o.Status == "import_pending") {

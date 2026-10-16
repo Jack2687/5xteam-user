@@ -2,6 +2,7 @@ package sub2
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -108,8 +109,8 @@ func TestMonitorConcurrencyRequiresExplicitAccountMap(t *testing.T) {
 			data := tc.data
 			if r.URL.Path == "/api/v1/auth/login" {
 				data = `{"access_token":"fixture"}`
-			} else if r.URL.Query().Get("strict") != "true" {
-				t.Error("missing strict quality request")
+			} else if r.URL.Query().Has("strict") || r.URL.Query().Get("group_id") != "1" {
+				t.Error("incorrect native monitoring query")
 			}
 			fmt.Fprintf(w, `{"code":0,"data":%s}`, data)
 		}))
@@ -117,6 +118,26 @@ func TestMonitorConcurrencyRequiresExplicitAccountMap(t *testing.T) {
 		up.Close()
 		if (err == nil) != tc.ok {
 			t.Fatalf("data=%s accepted=%v error=%v", tc.data, tc.ok, err)
+		}
+	}
+}
+
+func TestMonitorLoadRequiresNativeCounters(t *testing.T) {
+	for _, field := range []string{"account_id", "current_in_use", "waiting_in_queue", "max_capacity"} {
+		for _, null := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/null=%v", field, null), func(t *testing.T) {
+				load := map[string]any{"account_id": 1, "current_in_use": 0, "waiting_in_queue": 0, "max_capacity": 10}
+				if null {
+					load[field] = nil
+				} else {
+					delete(load, field)
+				}
+				raw, _ := json.Marshal(load)
+				var result MonitorLoad
+				if err := json.Unmarshal(raw, &result); err == nil {
+					t.Fatal("missing counter accepted as zero")
+				}
+			})
 		}
 	}
 }

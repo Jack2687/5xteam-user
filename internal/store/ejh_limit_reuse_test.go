@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestEJHIncreaseUsedCardLimitAndReuseWhileWaiting(t *testing.T) {
+func TestEJHIncreaseUsedCardLimitAndReuseAfterReturn(t *testing.T) {
 	s := transferStore(t)
 	card := ejhFixtureCard(t, s)
 	limit := 1
@@ -44,14 +44,18 @@ func TestEJHIncreaseUsedCardLimitAndReuseWhileWaiting(t *testing.T) {
 		t.Fatal(cases, err)
 	}
 	got, _, err := s.GPTPayCard(card.ID)
-	if err != nil || got.AccountLimit != 2 || got.OpenedAccounts != 1 || got.RemainingAccounts != 1 || !got.Available {
+	if err != nil || got.AccountLimit != 2 || got.OpenedAccounts != 1 || got.RemainingAccounts != 1 || got.Available {
 		t.Fatal(got, err)
 	}
 	if err = s.EJHBeginOperation(ejh.Operation{ID: "cannot-cancel-waiting", CardID: card.ID, OrderNo: "fixture-card", Method: "cancel", Status: "submitting"}); err == nil {
 		t.Fatal("waiting return allowed cancellation")
 	}
+	if err = s.ReserveProCard("next@example.com", card.ID, false); err == nil {
+		t.Fatal("removed but unreturned account freed card")
+	}
+	ejhReceiveForOrder(t, s, card.ID, order.Order.ID)
 	if err = s.ReserveProCard("next@example.com", card.ID, false); err != nil {
-		t.Fatal("removed waiting account blocked reuse", err)
+		t.Fatal("returned account blocked reuse", err)
 	}
 	if err = s.ReleaseProCard("next@example.com"); err != nil {
 		t.Fatal(err)

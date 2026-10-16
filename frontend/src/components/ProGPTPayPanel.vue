@@ -71,7 +71,7 @@ async function changeProvider(event) {
   })
   event.target.value = settings.provider
 }
-const automation = reactive({ scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, target_admin_id: '', target_seat_type: 'default', concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
+const automation = reactive({ scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 const selectedAdmin = computed(() => props.adminAccounts.find(a => a.id === automation.target_admin_id))
 Object.assign(automation,{ejh_auto_open:false,ejh_template_id:'',ejh_daily_open_limit:1,ejh_daily_amount_limit:'',force_merge_enabled:false,force_merge_minutes:60})
 const ejhTemplates=ref([]),cardCases=ref([]),cardDetail=ref(null)
@@ -239,6 +239,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
           </section>
           <section v-show="configSection === 'merge'" data-config-section="merge">
             <p class="config-callout">手动账号使用下方检测开关；全自动任务沿用启动时的额度配置。合并、移出仍走原流程。</p>
+            <label class="field"><span>合并并发数</span><input v-model.number="automation.merge_concurrency" type="number" min="1" max="20" required /><small>同时执行的完整四步合并任务上限，包含邀请、进入、合并、移出及后续处理；同一母号严格串行，不同母号可并行。与高级设置的全流程并发分别计数。</small></label>
             <div class="settings-fields">        <label class="field"><span>7 天已用额度达到（%）</span><input v-model.number="automation.quota_used_threshold" type="number" min="0.01" max="100" step="0.01" required /></label>
         <label class="field"><span>额度检测间隔（秒）</span><input v-model.number="automation.quota_check_interval_seconds" type="number" min="10" max="86400" required /></label>
         <label class="toggle-row wide"><div><strong>定时查额度</strong><small>定时查询已推送且未合并的手动账号，并保存最新额度到数据库。</small></div><input v-model="automation.quota_enabled" type="checkbox" /><i></i></label>
@@ -248,13 +249,13 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <div class="target-summary wide"><strong>{{ selectedAdmin?.label || selectedAdmin?.email || '尚未选择母号' }}</strong><span>{{ selectedAdmin?.team_account_id || '选择后显示目标 Team ID' }}</span></div>
 </div>
             <div class="config-divider"><h4>推送等待时限</h4><p>从首次推送开始计时，重试和重启不清零。</p></div>
-            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>推送超时执行原空间四步流程</strong><small>从首次推送开始计时，推送成功后触发。重试和重启不清零，停止、暂停和待确认任务除外。合并仅标记待回款，不调用退款接口。</small></div><input v-model="automation.force_merge_enabled" type="checkbox"/><i></i></label>
+            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>推送超时执行原空间四步流程</strong><small>开通时保存到账号，修改仅影响新账号；从首次成功推送开始计时。重试和重启不清零，停止、暂停和待确认任务除外。合并仅标记待回款，不调用退款接口。</small></div><input v-model="automation.force_merge_enabled" type="checkbox"/><i></i></label>
         <label class="field"><span>首次推送后最多等待（分钟）</span><input v-model.number="automation.force_merge_minutes" type="number" min="1" max="525600" :required="automation.force_merge_enabled"/></label>
 </div>
           </section>
           <section v-show="configSection === 'advanced'" data-config-section="advanced">
             <p class="config-callout">一般保留当前值即可。资金操作的未知结果不会因重试设置而自动重复提交。</p>
-            <div class="settings-fields">        <label class="field"><span>并发账号数</span><input v-model.number="automation.concurrency" type="number" min="1" max="20" required /></label>
+            <div class="settings-fields">        <label class="field"><span>并发账号数</span><input v-model.number="automation.concurrency" type="number" min="1" max="20" required /><small>控制从登录、开通、获取凭证到推送、额度检测及合并的活动链条。等待下一次额度检测时释放名额；进入合并阶段还需遵守空间合并页的合并并发数。</small></label>
         <label class="field"><span>失败重试次数</span><input v-model.number="automation.retry_count" type="number" min="0" max="10" required /></label>
         <label class="field"><span>重试间隔（秒）</span><input v-model.number="automation.retry_interval_seconds" type="number" min="1" required /></label>
         <label class="field"><span>登录及开通会话最长保留（分钟）</span><input v-model.number="settings.session_timeout_minutes" type="number" min="5" max="60" required /><small>出口 IP 变化或检测失败仅记录日志，继续执行；任务超时仍会停止，已提交订单可查询。</small></label>

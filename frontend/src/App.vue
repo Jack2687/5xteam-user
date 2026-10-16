@@ -145,8 +145,9 @@ onMounted(checkAuth)
   <div v-else-if="authenticated" class="app-shell">
     <header class="topbar">
       <div class="topbar-inner">
-        <button class="brand" type="button" aria-label="返回任务台" @click="selectTab('full')"><span class="brand-mark"><ArrowLeftRight :size="18" /></span><span><strong>Space Console</strong><small>Team Automation</small></span></button>
-        <nav class="desktop-nav" aria-label="主导航"><button v-for="item in nav" :key="item.id" type="button" :class="{ active: isNavActive(item) }" @click="selectTab(item.id === 'space-merge' ? 'full' : item.id)"><component :is="item.icon" :size="15" />{{ item.label }}</button></nav>
+        <button class="brand" type="button" aria-label="返回任务台" @click="selectTab('full')"><span class="brand-mark"><ArrowLeftRight :size="18" /></span><span><strong>Space Console</strong><small>WORKSPACE</small></span></button>
+        <nav class="desktop-nav" aria-label="主导航"><span class="nav-section-label">工作台</span><template v-for="item in nav" :key="item.id"><span v-if="item.id === 'admins'" class="nav-section-label nav-section-divider">资源与系统</span><button type="button" :class="{ active: isNavActive(item) }" :aria-current="isNavActive(item) ? 'page' : undefined" @click="selectTab(item.id === 'space-merge' ? 'full' : item.id)"><component :is="item.icon" :size="16" />{{ item.label }}</button></template></nav>
+        <div class="sidebar-footer"><span class="sidebar-avatar">SC</span><div><strong>Space 工作空间</strong><small>账号 · 空间 · 资源</small></div></div>
       </div>
       <div class="context-bar"><div class="context-inner"><span><component :is="activeNav.icon" :size="14" />{{ activeNav.group }}</span><ChevronDown :size="13" /><strong>{{ activeNav.label }}</strong><i></i><small>{{ anyActive ? '有任务正在执行' : `运行地址 ${runtimeHost}` }}</small></div></div>
       <nav v-if="mobileOpen" class="mobile-nav" aria-label="移动端导航"><button v-for="item in nav" :key="item.id" type="button" :class="{ active: isNavActive(item) }" @click="selectTab(item.id === 'space-merge' ? 'full' : item.id)"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></button></nav>
@@ -155,8 +156,8 @@ onMounted(checkAuth)
     <div class="topbar-actions" aria-label="账户与系统操作"><StatusPill :tone="health ? 'success' : 'danger'">{{ health ? '服务正常' : '连接异常' }}</StatusPill><button class="icon-button" type="button" title="修改密码" @click="passwordDialog = true"><KeyRound :size="17" /></button><button class="icon-button" type="button" title="退出登录" @click="logout"><LogOut :size="17" /></button><button class="icon-button theme-button" type="button" :title="theme === 'dark' ? '切换浅色主题' : '切换深色主题'" @click="theme = theme === 'dark' ? 'light' : 'dark'"><Sun v-if="theme === 'dark'" :size="17" /><Moon v-else :size="17" /></button><button class="icon-button mobile-menu" type="button" :aria-label="mobileOpen ? '关闭导航' : '打开导航'" @click="mobileOpen = !mobileOpen"><X v-if="mobileOpen" :size="18" /><Menu v-else :size="17" /></button></div>
 
     <main class="app-main">
-      <ProRestockView v-if="settings && current === 'pro-restock'" />
       <div v-if="loadingError" class="global-alert"><strong>数据加载失败</strong><span>{{ loadingError }}</span><button type="button" @click="loadingError = ''; load()">重试</button></div>
+      <ProRestockView v-if="settings && current === 'pro-restock'" />
       <ProManagementView v-if="settings && current === 'pro'" :accounts="proAccounts" :admin-accounts="adminAccounts" :default-page-size="settings.default_page_size || 10" @reload="syncProAccounts" @open-ejh-card="openEJHCard" />
       <EJHManagementView v-if="settings && current === 'ejh'" :entry="ejhEntry" @entry-applied="ejhEntry=null" />
       <template v-if="spaceMergeVisited">

@@ -2,7 +2,7 @@
 
 更新日期：2026-09-16
 
-适用项目：chatgpt-space-merge、chapt-space-user
+适用项目：chapt-space-user、chapt-space-user
 
 验证范围：邮件管理手动刷新 GPT 信息，复用现有 Pro 套餐识别请求头。
 
@@ -264,8 +264,8 @@ cf_ray
 部署本次实现时，需要重新构建并启动镜像，不是只 restart：
 
 ~~~sh
-# 在 chatgpt-space-merge 项目目录
-docker compose up -d --build chatgpt-space-merge
+# 在 chapt-space-user 项目目录
+docker compose up -d --build chapt-space-user
 
 # 在 chapt-space-user 项目目录
 docker compose up -d --build chapt-space-user
@@ -274,7 +274,7 @@ docker compose up -d --build chapt-space-user
 检查运行镜像中的依赖，例如：
 
 ~~~sh
-docker compose exec chatgpt-space-merge python3 -c "import sys, curl_cffi; print(sys.version); print(curl_cffi.__version__)"
+docker compose exec chapt-space-user python3 -c "import sys, curl_cffi; print(sys.version); print(curl_cffi.__version__)"
 ~~~
 
 另一个项目替换服务名为 chapt-space-user。以上依赖检查不请求 OpenAI。

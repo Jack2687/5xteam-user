@@ -10,7 +10,7 @@ import (
 
 func ejhCardID(order string) string { return store.EJHID("card", order) }
 func forceMergeDue(p model.MailAccountProfile, c model.ProSettings, now time.Time) bool {
-	if !c.ForceMergeEnabled || c.ForceMergeMinutes < 1 || p.ManagementScope != "pro" || p.ProPushStartedAt == nil || p.PushStatus != "completed" || p.ProWorkflowRunning || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) || proTransferNeedsConfirmation(p) {
+	if p.ProPushDeadline() == nil || p.ManagementScope != "pro" || p.ProPushStartedAt == nil || p.PushStatus != "completed" || p.ProWorkflowRunning || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) || proTransferNeedsConfirmation(p) {
 		return false
 	}
 	if p.TransferStatus == "completed" && p.RemoveStatus == "completed" {
@@ -22,14 +22,14 @@ func forceMergeDue(p model.MailAccountProfile, c model.ProSettings, now time.Tim
 	if p.ProForceMergeNextAt != nil && now.Before(*p.ProForceMergeNextAt) {
 		return false
 	}
-	return !now.Before(p.ProPushStartedAt.Add(time.Duration(c.ForceMergeMinutes) * time.Minute))
+	return !now.Before(*p.ProPushDeadline())
 }
 func (s *Server) tickProForceMerge(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
 	cfg, _, _, e := s.store.ProSettings()
-	if e != nil || !cfg.ForceMergeEnabled {
+	if e != nil {
 		return
 	}
 	now := time.Now()
@@ -70,7 +70,7 @@ func (s *Server) tickProForceMerge(ctx context.Context) {
 		if _, e = s.startProMergeJob(p.Email, lock.Unlock); e != nil {
 			lock.Unlock()
 		} else {
-			s.auditProEvent(latest, "space_merge", "pending", cfg.Provider, "推送等待超时，跳过额度等待并执行四步", map[string]any{"minutes": cfg.ForceMergeMinutes})
+			s.auditProEvent(latest, "space_merge", "pending", cfg.Provider, "推送等待超时，跳过额度等待并执行四步", map[string]any{"minutes": latest.ProPushTimeoutMinutes})
 		}
 	}
 }

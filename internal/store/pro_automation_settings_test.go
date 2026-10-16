@@ -24,12 +24,15 @@ func TestProAutomationSettingsAtomicAndPreservePush(t *testing.T) {
 	input := model.DefaultProSettings()
 	input.QuotaEnabled, input.AutoMergeEnabled, input.TargetAdminID = true, true, "mother-8"
 	input.QuotaUsedThreshold, input.QuotaCheckIntervalSeconds = 86, 45
-	input.Concurrency, input.RetryCount = 4, 3
+	input.Concurrency, input.MergeConcurrency, input.RetryCount = 4, 2, 3
 	_, pay, err := s.SaveProAutomationSettings(input, gptpay.Settings{PlanCode: "pro20"}, "")
 	if err != nil || !pay.KeyPresent {
 		t.Fatalf("save failed: %v", err)
 	}
 	saved, password, cpa, err := s.ProSettings()
+	if saved.Concurrency != 4 || saved.MergeConcurrency != 2 {
+		t.Fatal("concurrency limits were not saved independently")
+	}
 	if err != nil || password != "sub-secret" || cpa != "cpa-secret" || saved.Sub2.URL != pro.Sub2.URL || len(saved.Sub2.GroupIDs) != 2 {
 		t.Fatal("push config was overwritten")
 	}

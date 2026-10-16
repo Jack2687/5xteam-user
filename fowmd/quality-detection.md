@@ -2,7 +2,7 @@
 
 ## 部署
 
-本功能同时提供于 chatgpt-space-merge 与 chapt-space-user。先更新配套 Qerkai-sub2api 后端，再更新管理端。答题复用现有单账号测试接口，新增的接口仅用于轻量模型日志查询（沿用管理员认证）：
+本功能同时提供于 chapt-space-user 与 chapt-space-user。先更新配套 Qerkai-sub2api 后端，再更新管理端。答题复用现有单账号测试接口，新增的接口仅用于轻量模型日志查询（沿用管理员认证）：
 
 - `POST /api/v1/admin/accounts/{id}/test`（现有接口）
 - `GET /api/v1/admin/usage/model-audit-capabilities`
