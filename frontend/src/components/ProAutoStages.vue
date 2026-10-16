@@ -1,14 +1,17 @@
 <script setup>
 import { LoaderCircle } from 'lucide-vue-next'
-defineProps({ state: { type: Object, default: () => ({}) } })
+const props = defineProps({ state: { type: Object, default: () => ({}) }, editable: Boolean, disabled: Boolean })
+const emit = defineEmits(['change'])
 const steps = [['login','登录'],['recharge','开通'],['oauth','RT/AT'],['push','推送'],['quota','额度'],['merge','合并']]
-const names = {pending:'待处理',running:'执行中',waiting:'等待额度',completed:'已完成',skipped:'已跳过',failed:'失败',interrupted:'已中断',unknown:'待确认'}
+const names = {not_started:'未开始',pending:'待处理',running:'执行中',waiting:'等待额度',completed:'已完成',skipped:'已跳过',failed:'失败',interrupted:'已中断',unknown:'待确认'}
+function change(key,label,event) { const status=event.target.value;event.target.value=props.state.steps?.[key]||'not_started';emit('change',{key,label,status}) }
 </script>
-<template><div class="pro-auto-stages"><span v-for="[key,label] in steps" :key="key" :data-stage="key" :class="state.steps?.[key] || 'pending'" :title="label + '：' + (state.errors?.[key] || names[state.steps?.[key]] || '未开始')"><LoaderCircle v-if="state.steps?.[key] === 'running'" :size="11" class="spin" />{{ label }}<small>{{ names[state.steps?.[key]] || '未开始' }}</small></span></div></template>
+<template><div class="pro-auto-stages" :class="{editable}"><span v-for="[key,label] in steps" :key="key" :data-stage="key" :class="state.steps?.[key] || 'pending'" :title="label + '：' + (state.errors?.[key] || names[state.steps?.[key]] || '未开始') + (state.manual?.[key] ? '（手动修正）' : '')"><LoaderCircle v-if="state.steps?.[key] === 'running'" :size="11" class="spin" />{{ label }}<select v-if="editable" :value="state.steps?.[key]||'not_started'" :aria-label="'全自动'+label+'阶段状态'" :disabled="disabled" @change="change(key,label,$event)"><option value="not_started">未开始</option><option value="pending">待处理</option><option v-if="state.steps?.[key]==='running'" value="running" disabled>执行中</option><option v-if="key==='quota'" value="waiting">等待额度</option><option value="completed">已完成</option><option value="failed">失败</option><option value="skipped">已跳过</option><option value="interrupted">已中断</option><option value="unknown">待确认</option></select><small v-else>{{ names[state.steps?.[key]] || '未开始' }}</small><i v-if="state.manual?.[key]" class="manual-mark" aria-label="手动修正">手</i></span></div></template>
 <style scoped>
 .pro-auto-stages { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;min-width:260px; }
 .pro-auto-stages>span {display:flex;align-items:center;gap:4px;padding:4px 6px;font-size:11px;border:1px solid var(--line);border-radius:5px;color:var(--muted);white-space:nowrap;}
 small {font-size:10px;}
+.editable{min-width:310px}.editable select{width:76px;min-width:0;border:0;background:transparent;color:inherit;padding:0;font:inherit;cursor:pointer}.editable select:disabled{cursor:default}.editable select:focus-visible{outline:2px solid var(--green);outline-offset:2px}.manual-mark{font-size:9px;font-style:normal;border:1px solid currentColor;border-radius:3px;padding:0 2px}
 .completed {color:var(--green-strong)!important;background:var(--green-bg);border-color:var(--green)!important;}
 .running,.waiting,.unknown {color:var(--amber)!important;background:var(--amber-bg);}
 .failed,.interrupted {color:var(--red)!important;background:var(--red-bg);}

@@ -76,6 +76,7 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 			progress := proPaymentStage(order)
 			row.StageProgress.Steps["recharge"], row.StageProgress.Errors["recharge"] = progress.Status, progress.Error
 		}
+		item.ApplyProStageOverrides(&row.StageProgress)
 		if card, ok := cards[strings.ToLower(strings.TrimSpace(item.Email))]; ok {
 			row.ActivationCard = &card
 		}

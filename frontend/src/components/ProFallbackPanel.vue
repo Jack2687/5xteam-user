@@ -2,7 +2,9 @@
 import {ref,reactive,computed,onMounted,onUnmounted} from 'vue'
 import {api} from '../api'
 import {createLatestRequest} from '../latestRequest'
-defineProps({settings:Boolean})
+defineProps({settings:Boolean,compact:Boolean})
+const detailDialog=ref(null)
+const fetchError=ref('')
 const state=ref(null),form=reactive({account_ids:[]}),password=ref(''),groups=ref([]),accounts=ref([]),search=ref(''),busy=ref(false),error=ref(''),notice=ref(''),dirty=ref(false),loaded=ref(false)
 const request=createLatestRequest(),clock=ref(Date.now()),clockOffset=ref(0)
 let timer,disposed=false,revision=0
@@ -12,10 +14,18 @@ const fmt=t=>t&&!String(t).startsWith('0001')?new Date(t).toLocaleString('zh-CN'
 const stale=computed(()=>!state.value?.checked_at||String(state.value.checked_at).startsWith('0001')||clock.value+clockOffset.value-Date.parse(state.value.checked_at)>1000*(Number(state.value?.config?.check_seconds||10)+50))
 const unresolved=computed(()=>state.value?.accounts?.filter(a=>a.error||a.observed==null||a.observed!==a.desired)||[])
 const pending=computed(()=>state.value?.config?.enabled?state.value.config.account_ids.filter(id=>!state.value.accounts.some(a=>a.id===id&&!a.old_connection)).length:0)
+const cardStatus=computed(()=>{
+ if(fetchError.value)return '读取异常'
+ if(!state.value)return '读取中…'
+ if(state.value.error||state.value.monitor?.error||state.value.plan.hold)return '核验异常'
+ if(stale.value&&(state.value.config.enabled||state.value.accounts.length))return '待核验'
+ if(pending.value||unresolved.value.length||state.value.accounts.some(a=>a.desired!==(!a.old_connection&&state.value.config.account_ids.includes(a.id)&&state.value.plan.active)))return '切换待确认'
+ return {active:'兜底已开启',off:'兜底已关闭',disabled:'未启用',unknown:'保持当前调度'}[state.value.plan.phase]||'待核验'
+})
 async function refresh(initial=false,background=false){
  if(disposed||(background&&busy.value))return
  const version=revision
- try{await request.run(signal=>api('/api/pro-restock/fallback',{signal}),data=>{if(disposed||version!==revision)return;state.value=data;clock.value=Date.now();const at=Date.parse(data.server_time);if(Number.isFinite(at))clockOffset.value=at-clock.value;if(initial){Object.assign(form,data.config);form.account_ids=[...(data.config.account_ids||[])];dirty.value=false;password.value=''}},{background})}catch(e){if(!disposed&&version===revision)error.value=e.message}
+ try{await request.run(signal=>api('/api/pro-restock/fallback',{signal}),data=>{if(disposed||version!==revision)return;state.value=data;fetchError.value='';clock.value=Date.now();const at=Date.parse(data.server_time);if(Number.isFinite(at))clockOffset.value=at-clock.value;if(initial){Object.assign(form,data.config);form.account_ids=[...(data.config.account_ids||[])];dirty.value=false;password.value=''}},{background})}catch(e){if(!disposed&&version===revision)fetchError.value=e.message}
 }
 async function action(fn){if(busy.value||disposed)return;busy.value=true;revision++;error.value='';notice.value='';try{await fn()}catch(e){if(!disposed)error.value=e.message}finally{busy.value=false}}
 function input(preview=false){return {...form,enabled:preview?false:form.enabled,password:password.value,account_ids:[...form.account_ids]}}
@@ -35,9 +45,12 @@ onMounted(async()=>{await refresh(true);if(!disposed)timer=setInterval(()=>{cloc
 onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose()})
 </script>
 <template>
+<article v-if="compact" class="fallback-card" aria-label="空组兜底调度"><span>空组兜底调度</span><strong>{{cardStatus}}</strong><p>{{state?phases[state.plan.phase]:'正在读取状态'}} · 已选 {{state?.config?.account_ids?.length||0}} 个</p><p :title="fetchError||state?.error||state?.monitor?.error||state?.plan?.reason">{{fetchError||state?.error||state?.monitor?.error||(state?.monitor?'监控组 '+(state.monitor.count??'未知')+' 个账号 · '+(state.config.check_seconds||3)+' 秒检查':'等待监控数据')}}</p><button type="button" aria-haspopup="dialog" @click="detailDialog?.showModal()">查看兜底详情</button></article>
+<component :is="compact?'dialog':'div'" ref="detailDialog" :class="{'fallback-dialog':compact}" :aria-label="compact?'空组兜底调度详情':undefined" @click="compact&&$event.target===detailDialog&&detailDialog.close()">
 <article class="fallback-panel" aria-label="空组兜底调度">
+ <button v-if="compact" type="button" class="close-detail" aria-label="关闭兜底详情" @click="detailDialog.close()">✕</button>
  <header><div><h2>空组兜底调度</h2><p>主监控分组为空时开启兜底，有账号时关闭 · 全天独立运行</p></div><span class="badge">{{state?phases[state.plan.phase]:'读取状态中…'}}</span></header>
- <p v-if="error" class="alert error" role="alert">{{error}}</p><p v-if="notice" class="alert" role="status">{{notice}}</p>
+ <p v-if="error||fetchError" class="alert error" role="alert">{{error||fetchError}}</p><p v-if="notice" class="alert" role="status">{{notice}}</p>
  <template v-if="state">
   <p>{{state.plan.reason}}</p>
   <p v-if="state.monitor">主监控组：{{state.monitor.group_name||'未读取名称'}} #{{state.monitor.group_id||'未设置'}} · {{state.monitor.error||state.plan.hold?'最近成功采集':'当前采集'}}账号数：<b>{{state.monitor.count??'未知'}}</b> · 采集时间：{{fmt(state.monitor.at)}}</p>
@@ -74,8 +87,10 @@ onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose()
   </form>
  </template>
 </article>
+</component>
 </template>
 <style scoped>
+.fallback-card{height:100%;box-sizing:border-box;background:#fff;border:1px solid var(--border,#dce7e9);border-radius:11px;padding:21px;min-width:0;color:var(--ink,#234752)}.fallback-card>span{font-size:12px;color:var(--muted,#708a94)}.fallback-card>strong{display:block;font-size:22px;font-weight:550;margin:21px 0 5px;overflow-wrap:anywhere}.fallback-card p{font-size:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.fallback-dialog{border:0;border-radius:13px;padding:0;width:min(850px,calc(100vw - 32px));max-height:85vh;color:var(--ink,#234752);background:#fff;box-shadow:0 24px 100px #12383d33}.fallback-dialog::backdrop{background:#102e3c77;backdrop-filter:blur(3px)}.fallback-dialog .fallback-panel{margin:0;position:relative;padding-top:50px}.close-detail{position:absolute;right:15px;top:12px}:global([data-theme=dark]) .fallback-card,:global([data-theme=dark]) .fallback-dialog{background:#192e38}@media(max-width:600px){.fallback-card{padding:15px}.fallback-card>strong{font-size:18px}}
 fieldset{border:0;padding:0;margin:0;min-width:0}
 .fallback-panel{background:#fff;border:1px solid var(--border,#dce7e9);border-radius:11px;padding:21px;margin-bottom:18px;color:var(--ink,#234752);font-size:13px}header,footer,.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h2{font-size:15px;margin:0 0 8px}p{color:var(--muted,#708a94);line-height:1.8;margin:8px 0}button,input,select{font:inherit;border:1px solid var(--border,#dce7e9);border-radius:6px;background:white;color:inherit;padding:9px 12px}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}.primary{background:#008786;color:white;border-color:#008786}.badge,.alert{background:#edf7f5;color:#31736e;border-radius:6px;padding:9px 12px}.warn{background:#fff8ec;color:#976f31}.error{background:#fff1f0;color:#a45148}.fields{display:grid;grid-template-columns:1fr 1fr;gap:16px 20px}label{display:block;margin:12px 0;font-size:12px}input:not([type=checkbox]),select{display:block;width:100%;box-sizing:border-box;min-width:0;margin-top:8px}.check{display:flex;gap:10px;align-items:center}.check input{accent-color:#008786;width:16px;height:16px;flex-shrink:0}.toolbar{justify-content:flex-start;margin:12px 0}.toolbar span,footer>span{color:var(--muted,#708a94);font-size:12px}.selection{border:1px solid var(--border,#dce7e9);padding:14px;border-radius:8px;margin:18px 0}.account-list{max-height:320px;overflow:auto;display:grid;grid-template-columns:1fr 1fr;gap:8px}.account{padding:10px;border:1px solid var(--border,#dce7e9);border-radius:6px;margin:0;overflow-wrap:anywhere;min-width:0}.account span{min-width:0}small{display:block;color:var(--muted,#708a94);margin-top:6px}footer{border-top:1px solid var(--border,#dce7e9);padding-top:12px}summary{cursor:pointer;padding:8px 0}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:620px}th,td{padding:10px;border-bottom:1px solid var(--border,#dce7e9);text-align:left;max-width:300px;overflow-wrap:anywhere}th{font-size:12px}:focus-visible{outline:2px solid #008786;outline-offset:2px}:global([data-theme=dark]) .fallback-panel,:global([data-theme=dark]) .fallback-panel :is(button,input,select){background:#192e38}:global([data-theme=dark]) .fallback-panel .primary{background:#007b78}:global([data-theme=dark]) .fallback-panel :is(.badge,.alert){background:#193b38;color:#b4e4d9}:global([data-theme=dark]) .fallback-panel .warn{background:#3c3222;color:#efd3a1}:global([data-theme=dark]) .fallback-panel .error{background:#412a2b;color:#f3b4af}@media(max-width:650px){.fields,.account-list{grid-template-columns:1fr}.fallback-panel{padding:15px}}
 </style>

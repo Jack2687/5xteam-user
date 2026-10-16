@@ -339,6 +339,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pro-accounts/quota", s.checkProAccountQuotas)
 	mux.HandleFunc("POST /api/pro-accounts/{email}/merge", s.mergeProAccount)
 	mux.HandleFunc("PUT /api/pro-accounts/{email}/stage", s.updateProAccountStage)
+	mux.HandleFunc("PUT /api/pro-accounts/{email}/auto-stage", s.updateProAutoStage)
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events", s.listProAccountEvents)
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events/export", s.exportProAccountEvents)
 	mux.HandleFunc("GET /api/pro-settings", s.getProSettings)

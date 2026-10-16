@@ -47,6 +47,7 @@ func proMergeTargetPinned(p model.MailAccountProfile) bool {
 }
 
 func setProStage(p *model.MailAccountProfile, stage, status string) {
+	delete(p.ProStageOverrides, "merge")
 	switch stage {
 	case "invite":
 		p.InviteStatus = status

@@ -19,6 +19,7 @@ func (s *Store) StartProManualStage(email, stage, id string) error {
 			p.ProManualStages = map[string]model.ProStageProgress{}
 		}
 		now := time.Now()
+		delete(p.ProStageOverrides, stage)
 		p.ProManualStages[stage] = model.ProStageProgress{ID: id, Status: "running", StartedAt: now, UpdatedAt: now}
 	})
 	return err

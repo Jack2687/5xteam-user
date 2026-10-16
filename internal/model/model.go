@@ -92,6 +92,7 @@ type MailAccountProfile struct {
 	ProRestockTargetID         string                      `json:"pro_restock_target_id,omitempty"`
 	ProMigration               *ProMigrationState          `json:"pro_migration,omitempty"`
 	ProManualStages            map[string]ProStageProgress `json:"pro_manual_stages,omitempty"`
+	ProStageOverrides          map[string]ProStageOverride `json:"pro_stage_overrides,omitempty"`
 	ProPostMergeGroups         *ProPostMergeGroups         `json:"pro_post_merge_groups,omitempty"`
 	ChatGPTSessionPresent      bool                        `json:"chatgpt_session_present"`
 	ATCheckedAt                *time.Time                  `json:"at_checked_at,omitempty"`

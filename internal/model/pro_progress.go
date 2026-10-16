@@ -15,6 +15,26 @@ type ProStageProgress struct {
 type ProStageDisplay struct {
 	Steps  map[string]string `json:"steps"`
 	Errors map[string]string `json:"errors,omitempty"`
+	Manual map[string]bool   `json:"manual,omitempty"`
+}
+
+// Operator annotations are separate from execution checkpoints and payment facts.
+type ProStageOverride struct {
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (p MailAccountProfile) ApplyProStageOverrides(v *ProStageDisplay) {
+	for stage, edit := range p.ProStageOverrides {
+		if edit.UpdatedAt.Before(p.ProAuto.StartedAt) {
+			continue
+		}
+		if v.Manual == nil {
+			v.Manual = map[string]bool{}
+		}
+		v.Steps[stage], v.Manual[stage] = edit.Status, true
+		delete(v.Errors, stage)
+	}
 }
 
 // ReconcileProAutoManual repairs an existing paid workflow after successful
@@ -159,6 +179,7 @@ func (p MailAccountProfile) ProStages() ProStageDisplay {
 			v.Errors["merge"] = p.VM2.Error
 		}
 	}
+	p.ApplyProStageOverrides(&v)
 	return v
 }
 

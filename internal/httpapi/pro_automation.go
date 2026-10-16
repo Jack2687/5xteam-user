@@ -69,6 +69,7 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 			progress.Steps["recharge"], progress.Errors["recharge"] = payment.Status, payment.Error
 		}
 	}
+	p.ApplyProStageOverrides(&progress)
 	state.Error = progress.Errors[state.Stage]
 	writeAPI(w, 200, struct {
 		model.ProAutoState
@@ -83,6 +84,7 @@ func (s *Server) autoProUpdate(email, stage, status, message string) error {
 		}
 		// A fresh automatic execution supersedes the manual display for this step.
 		delete(p.ProManualStages, stage)
+		delete(p.ProStageOverrides, stage)
 		p.ProAuto.Stage = stage
 		p.ProAuto.Steps[stage] = status
 		p.ProAuto.UpdatedAt = time.Now()
@@ -342,6 +344,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			if paidRecovery {
 				p.ProAuto.Steps["recharge"] = "completed"
 				delete(p.ProManualStages, "recharge")
+				delete(p.ProStageOverrides, "recharge")
 			}
 			if !resume {
 				p.ProAuto.Stage = "login"

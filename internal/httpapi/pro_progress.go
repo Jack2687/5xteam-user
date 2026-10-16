@@ -92,6 +92,9 @@ func (s *Server) updateProPaymentStage(order gptpay.Order) {
 		if previous.ID == order.ID && (previous.Status == "completed" || previous.Status == "failed") && previous.Status != progress.Status {
 			return
 		}
+		if previous.ID != progress.ID || previous.Status != progress.Status || previous.Error != progress.Error {
+			delete(p.ProStageOverrides, "recharge")
+		}
 		p.ProManualStages["recharge"] = progress
 	})
 }
