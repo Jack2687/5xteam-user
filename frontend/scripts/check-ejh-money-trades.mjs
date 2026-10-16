@@ -25,6 +25,17 @@ const unconfirmed=accountAmounts({charge,returns:[returned('a','10','USD',{confi
 assert.equal(unconfirmed.pending,2)
 assert.equal(unconfirmed.returned.length,0)
 assert.equal(unconfirmed.difference,'100.30')
+const timedReturn=(id,time,extra={})=>returned(id,'10','USD',{trade:{tradeType:'5',tradeStatus:'2',tradeTime:time},...extra})
+const firstReturn=timedReturn('first','2026-10-16T01:00:00Z')
+const lastReturn=timedReturn('last','2026-10-16T02:00:00Z')
+const pendingReturn=timedReturn('pending','2026-10-16T03:00:00Z',{confirmed:false})
+for(const returns of [[lastReturn,firstReturn,pendingReturn],[firstReturn,pendingReturn,lastReturn]]){
+ assert.equal(accountAmounts({charge,returns}).returnedAt,Date.parse('2026-10-16T02:00:00Z'),'latest confirmed return time, independent of list order')
+}
+assert.equal(accountAmounts({charge,returns:[pendingReturn]}).returnedAt,0)
+assert.equal(accountAmounts({charge,returns:[returned('missing','10','USD',{confirmed_at:'2026-10-16T03:00:00Z',synced_at:'2026-10-16T04:00:00Z'})]}).returnedAt,0,'sync/association time must not be shown as return time')
+assert.equal(accountAmounts({charge,returns:[timedReturn('invalid','not-a-date')]}).returnedAt,0)
+assert.equal(accountAmounts({charge,returns:[timedReturn('reversal','2026-10-16 10:00:00',{trade:{tradeType:'2',tradeStatus:'1',tradeTime:'2026-10-16 10:00:00'}})]}).returnedAt,Date.parse('2026-10-16T10:00:00+08:00'))
 
 const code=readFileSync(new URL('../src/components/EJHCardTrades.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const calls=[],unmounts=[]

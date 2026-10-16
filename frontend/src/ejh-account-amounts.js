@@ -52,7 +52,7 @@ export function accountAmounts(row){
  const charge=row?.charge
  const paid=charge&&['1','4'].includes(charge.type)&&['1','2'].includes(charge.status)&&currencyOK(charge.card_currency)?units(charge.card_amount):null
  const totals=new Map(),seen=new Set()
- let pending=0,invalid=false
+ let pending=0,invalid=false,returnedAt=0
  for(const t of row?.returns||[]){
   if(!['2','5','16'].includes(t.trade?.tradeType))continue
   if(!t.confirmed||!returnReceived(t.trade)){pending++;continue}
@@ -61,10 +61,11 @@ export function accountAmounts(row){
   const n=units(t.confirmed_amount),currency=t.confirmed_currency
   if(n===null||!currencyOK(currency)){invalid=true;continue}
   totals.set(currency,(totals.get(currency)||0n)+n)
+  returnedAt=Math.max(returnedAt,tradeAt(t))
  }
  const returned=[...totals].sort(([a],[b])=>a.localeCompare(b)).map(([currency,n])=>({amount:format(n),currency}))
  const comparable=paid!==null&&(charge.status==='2'||charge.type==='1'&&charge.status==='1')&&!invalid&&[...totals.keys()].every(c=>c===charge.card_currency)
- return {paid:paid===null?null:format(paid),currency:paid===null?'':charge.card_currency,authorization:charge?.type==='1',posted:charge?.status==='2',returned,pending,invalid,
+ return {paid:paid===null?null:format(paid),currency:paid===null?'':charge.card_currency,authorization:charge?.type==='1',posted:charge?.status==='2',returned,pending,invalid,returnedAt,
   difference:comparable?format(paid-(totals.get(charge.card_currency)||0n)):null,
   reason:paid===null?'等待自动识别付款或金额缺失':charge.status!=='2'&&charge.type!=='1'?'付款流水待入账':invalid?'回款金额待核实':!comparable?'币种不同，不能直接相减':''}
 }
