@@ -194,7 +194,7 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	}
 	stats := restock.ForceMergeSummary(c, d.Snapshot, persisted, d.At)
 	if d.ForceMergeNeed > 0 {
-		need := max(d.TimeNeed, d.ConcurrencyNeed, d.ReserveNeed, d.EmptyGroupNeed, len(stats.Sources))
+		need := max(d.TimeNeed, d.ConcurrencyNeed, d.ReserveNeed, d.EmptyGroupNeed, d.ExitNeed, len(stats.Sources))
 		if need == 0 {
 			return nil, errors.New("接替已由原任务覆盖，未重复预留")
 		}
@@ -211,7 +211,7 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 		n = min(n, int(max(int64(0), c.DayBudget-l.DayCost)/max(int64(1), c.UnitCost)))
 	}
 	cooldown := c.CooldownSeconds
-	if d.Waiting >= c.EmergencyQueue {
+	if d.Waiting >= c.EmergencyQueue || (c.ExitEnabled && d.ExitNeed > 0 && d.Exit != nil && d.Exit.Emergency) {
 		cooldown = c.EmergencyCooldownSeconds
 	}
 	if l.Failures >= c.FailureLimit || (l.LastBatch != nil && d.At.Sub(*l.LastBatch) < time.Duration(cooldown)*time.Second) {
@@ -247,6 +247,9 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	for i, email := range emails {
 		t := restock.Task{ID: fmt.Sprintf("%s-%d", d.ID, i+1), Plan: d.Snapshot.NewPlan, DecisionID: d.ID, Email: email, Version: c.Version, GroupID: c.GroupID, Binding: d.Snapshot.Binding, Status: "reserved", Stage: "queued", Cost: c.UnitCost, CreatedAt: d.At, UpdatedAt: d.At, Stages: map[string]time.Time{"reserved": d.At}}
 		t.EmptyGroupStartup = d.EmptyGroupOnly()
+		if d.Trace != nil {
+			t.Capacity = d.Trace.NewAccountCapacity
+		}
 		var raw string
 		var p model.MailAccountProfile
 		if err = tx.QueryRow(`SELECT profile FROM mail_accounts WHERE email=?`, email).Scan(&raw); err != nil {

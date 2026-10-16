@@ -128,7 +128,9 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 	if e != nil {
 		return e
 	}
+	card.IssuerCancelStatus = ""
 	if issuer != nil {
+		card.IssuerCancelStatus = issuer.IssuerCancelStatus
 		card.Source, card.IssuerOrderNo, card.IssuerStatus, card.IssuerLocked, card.IssuerEnd = issuer.Source, issuer.IssuerOrderNo, issuer.IssuerStatus, issuer.IssuerLocked, issuer.IssuerEnd
 	}
 	limit, err := proCardLimit(s.db, key)

@@ -16,28 +16,29 @@ import (
 
 type proRestockContextKey struct{}
 type proRestockRuntime struct {
-	money           map[int64]*restock.AccountMoney
-	moneyNext       time.Time
-	moneyBusy       bool
-	moneyScope      string
-	moneyGeneration uint64
-	tasks           []restock.Task
-	tick            sync.Mutex
-	mu              sync.Mutex
-	next            time.Time
-	quotaNext       time.Time
-	quotaBusy       bool
-	quota           map[int64][]restock.Window
-	quotaPlans      map[int64]string
-	quotaBinding    string
-	lastSnapshot    restock.Snapshot
-	decision        restock.Decision
-	confirmation    int
-	lastVersion     int
-	lastSample      time.Time
-	lastRecord      time.Time
-	lastReason      string
-	monitor         func(context.Context, restock.Config, model.ProSettings, string) (restock.Snapshot, error)
+	money            map[int64]*restock.AccountMoney
+	moneyNext        time.Time
+	moneyBusy        bool
+	moneyScope       string
+	moneyGeneration  uint64
+	tasks            []restock.Task
+	tick             sync.Mutex
+	mu               sync.Mutex
+	next             time.Time
+	quotaNext        time.Time
+	quotaBusy        bool
+	quota            map[int64][]restock.Window
+	quotaPlans       map[int64]string
+	quotaBinding     string
+	lastSnapshot     restock.Snapshot
+	decision         restock.Decision
+	exitConfirmation int
+	confirmation     int
+	lastVersion      int
+	lastSample       time.Time
+	lastRecord       time.Time
+	lastReason       string
+	monitor          func(context.Context, restock.Config, model.ProSettings, string) (restock.Snapshot, error)
 }
 
 func restockBinding(p model.ProSettings) string {
@@ -206,6 +207,7 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 			v.ExpiresAt = &t
 		}
 		if local, ok := byID[a.ID]; ok {
+			applyRestockExitPolicy(&v, local, p)
 			if local.ProAuto.QuotaPlan != "" {
 				v.PurchasePlan = local.ProAuto.QuotaPlan
 			}

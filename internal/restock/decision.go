@@ -116,6 +116,17 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		return block("推送设置的单账号并发无效")
 	}
 	d.DemandKnown = true
+	exit := ForecastExits(c, s, tasks, newSlots, lead, now)
+	d.Exit = &exit
+	if c.ExitEnabled && exit.Confirmed {
+		d.ExitNeed = exit.Need
+	}
+	if c.ExitEnabled && float64(c.ExitMinutes) < lead+float64(c.MarginMinutes) {
+		d.Warnings = append(d.Warnings, "退出前补货提前时间小于预计就绪耗时＋安全余量，可能来不及接替；仍采用手动配置时间")
+	}
+	if c.ExitEnabled && exit.TransientGap {
+		d.Warnings = append(d.Warnings, "账号退出时可能短暂容量不足；新增数量按任务能够到位时的缺口计算，不因晚到重复补货")
+	}
 	d.Trace.StopStage = "rules"
 	d.ForceMerge = ForceMergeSummary(c, s, tasks, now)
 	if d.ForceMerge.Triggered {
@@ -166,7 +177,7 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	if len(s.Accounts) == 0 && c.EmptyGroupCount > 0 {
 		d.EmptyGroupNeed = max(0, c.EmptyGroupCount-groupInflight)
 	}
-	need := max(d.TimeNeed, d.ConcurrencyNeed, d.ReserveNeed, d.EmptyGroupNeed, d.ForceMergeNeed)
+	need := max(d.TimeNeed, d.ConcurrencyNeed, d.ReserveNeed, d.EmptyGroupNeed, d.ForceMergeNeed, d.ExitNeed)
 	d.Trace.NetNeed = need
 	if need == 0 {
 		if len(s.Accounts) == 0 && c.EmptyGroupCount > 0 && groupInflight > 0 {
@@ -179,7 +190,7 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		return block("连续失败已达熔断阈值，处理原因后在配置页重置熔断")
 	}
 	cooldown := c.CooldownSeconds
-	if d.Waiting >= c.EmergencyQueue {
+	if d.Waiting >= c.EmergencyQueue || (c.ExitEnabled && d.ExitNeed > 0 && d.Exit != nil && d.Exit.Emergency) {
 		cooldown = c.EmergencyCooldownSeconds
 	}
 	d.Trace.CooldownSeconds = &cooldown
@@ -216,7 +227,7 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		return block("达到在途、账号池、小时／日数量或预算上限")
 	}
 	d.Trace.StopStage = "complete"
-	d.Reason = "时间、并发、备用、空分组与强制合并接替净缺口取最大值，各规则已扣除适用在途"
+	d.Reason = "时间、并发、退出前补货、备用、空分组与强制合并接替净缺口取最大值，各规则已扣除适用在途"
 	if d.EmptyGroupOnly() {
 		d.Reason = "监控分组为 0 个账号，按空分组启动数量补货；已扣除同组全部在途"
 	}

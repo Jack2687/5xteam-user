@@ -266,6 +266,7 @@ func (s *Server) startEJH(parent context.Context) {
 				return
 			case <-ticker.C:
 				if time.Now().Before(next) {
+					s.tickEJHCancellations(ctx)
 					continue
 				}
 				cfg, _, e := s.store.EJHSettings()

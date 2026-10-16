@@ -49,7 +49,7 @@ go build -o chapt-space-user.exe ./cmd/server
 
 ## turb 注册结果回调
 
-`turb-gpt-free-register` 的 Roxy 注册在最终读取 `/api/auth/session` 并拿到 `accessToken` 后才返回成功。因此可以让 turb 专门负责注册，完成后自动把 AT 推送到本项目的“Team 轮转”账号列表，不需要再次在本项目登录邮箱获取 AT。
+`turb-gpt-free-register` 完成注册并拿到 `accessToken` 后，可将账号及凭证推送到本项目的邮件管理，或选择直接归入 Pro 管理。
 
 空间合并项目提供接口：
 
@@ -59,7 +59,16 @@ Authorization: Basic <Space Console 账号密码>
 Content-Type: application/json
 ```
 
-请求体至少包含 `access_token`，也可带 `email`、`name`、`user_id`、`account_id`、`plan_type`。AT 会在服务端加密后写入 Free 账号库。
+请求体至少包含 `access_token`，也可带 `email`、`name`、`user_id`、`account_id`、`plan_type`，以及已有的邮箱、ChatGPT、2FA、OAuth 和完整 Session 凭证。凭证在服务端加密保存，不进入 Team 轮转。
+
+可选布尔字段 `enter_pro` 与邮件导入页面的「直接进入 Pro 管理」含义相同：
+
+- `true`：保存凭证时直接归入 Pro 管理，要求能从 `email` 或 AT 解析出邮箱；不启动 Pro 任务。
+- 省略或 `false`：新账号进入邮件管理；已有账号保留当前归属，不会把 Pro 账号移回邮件管理。
+- 重复推送更新同一账号，保留账号 ID 和进入 Pro 的时间；移回邮件管理使用 Space 的归属操作。
+
+成功响应的 `data.mail_account_saved` 表示邮件账号凭证已保存，`data.management_scope` 返回实际归属 `mail` 或 `pro`，`data.entered_pro` 表示本次请求已执行直接归入 Pro。
+在 turb 的「配置 → Space 推送」开启「直接进入 Pro 管理」并保存即可，自动和手动推送共用此设置。
 
 如果 turb 与本项目不在同一台机器，需让本项目监听可访问的地址，例如设置 `APP_ADDR=0.0.0.0:18121` 并在防火墙/反向代理中限制来源；turb 的 `REMOTE_IMPORT_URL` 填实际地址。修改本项目登录密码后，记得同步更新 turb 的 `REMOTE_IMPORT_PASSWORD`。
 

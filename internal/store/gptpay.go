@@ -311,6 +311,7 @@ func (s *Store) gptPayOrderLocked(where, arg string) (gptpay.Order, gptpay.Snaps
 func (s *Store) CreateGPTPayOrder(v gptpay.Order, snapshot gptpay.Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	retainGPTPaySuccessTime(&v, gptpay.Order{})
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -399,6 +400,7 @@ func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
 	} else if v.OccupancyResolution != nil {
 		return fmt.Errorf("请使用核实解除入口记录订单处理结果")
 	}
+	retainGPTPaySuccessTime(&v, current)
 	raw, _ := json.Marshal(v)
 	_, err = tx.Exec("UPDATE gptpay_orders SET profile=?,active=? WHERE id=?", string(raw), v.Active(), v.ID)
 	if err != nil {
@@ -412,6 +414,34 @@ func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
 	}
 	return tx.Commit()
 }
+
+// Cancellation/status polling must not turn an older successful activation
+// into the newest one. Preserve the first saved success across stale callers.
+func retainGPTPaySuccessTime(v *gptpay.Order, previous gptpay.Order) {
+	if previous.SucceededAt != nil && !previous.SucceededAt.IsZero() {
+		v.SucceededAt = previous.SucceededAt
+		return
+	}
+	if v.Status != "success" {
+		v.SucceededAt = nil
+		return
+	}
+	if v.SucceededAt != nil && !v.SucceededAt.IsZero() {
+		return
+	}
+	at := v.UpdatedAt
+	if previous.Status == "success" && !previous.UpdatedAt.IsZero() {
+		at = previous.UpdatedAt
+	}
+	if at.IsZero() {
+		at = v.CreatedAt
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	v.SucceededAt = &at
+}
+
 func (s *Store) GPTPayOrders(limit, offset int, email string) ([]gptpay.Order, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -337,7 +337,9 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	s.proRestock.mu.Lock()
 	if c.Version != s.proRestock.lastVersion || snap.Binding != s.proRestock.lastSnapshot.Binding || !snap.Valid || !snap.LoadValid {
 		s.proRestock.confirmation = 0
+		s.proRestock.exitConfirmation = 0
 	}
+	snap.ExitDemand = restock.ObserveExitDemand(c, snap, s.proRestock.lastSnapshot, time.Now())
 	fresh := snap.At.After(s.proRestock.lastSample)
 	if fresh {
 		if restock.Pressure(c, snap) {
@@ -345,8 +347,15 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 		} else {
 			s.proRestock.confirmation = 0
 		}
+		exit := restock.ForecastExits(c, snap, tasks, p.Sub2.AccountConcurrency, lead, time.Now())
+		if c.ExitEnabled && exit.Valid && exit.Pressure {
+			s.proRestock.exitConfirmation++
+		} else {
+			s.proRestock.exitConfirmation = 0
+		}
 		s.proRestock.lastSample = snap.At
 	}
+	snap.ExitConfirmations = s.proRestock.exitConfirmation
 	confirm := s.proRestock.confirmation
 	s.proRestock.lastVersion = c.Version
 	s.proRestock.mu.Unlock()
@@ -365,7 +374,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 		}
 	}
 	gross := restock.Evaluate(c, snap, committed, restock.Limits{}, confirm, p.Sub2.AccountConcurrency, lead, now)
-	drop := gross.DemandKnown && !restock.Pressure(c, snap) && gross.TimeNeed == 0 && gross.ReserveNeed == 0 && gross.EmptyGroupNeed == 0 && gross.ForceMergeNeed == 0 && (!c.TimeEnabled || gross.SupplyMinutes != nil || (d.Used == 0 && d.Waiting == 0))
+	drop := gross.DemandKnown && !restock.Pressure(c, snap) && gross.TimeNeed == 0 && gross.ReserveNeed == 0 && gross.EmptyGroupNeed == 0 && gross.ForceMergeNeed == 0 && gross.ExitNeed == 0 && (!c.ExitEnabled || (gross.Exit != nil && gross.Exit.Complete && !gross.Exit.Pressure)) && (!c.TimeEnabled || gross.SupplyMinutes != nil || (d.Used == 0 && d.Waiting == 0))
 	keepReserved := gross.Suggested
 	startupPending := false
 	for _, t := range tasks {

@@ -1,0 +1,402 @@
+package restock
+
+import (
+	"math"
+	"sort"
+	"time"
+)
+
+// ExitDemand is a bounded memory of demand observed before capacity disappeared.
+// It travels with the saved snapshot so restart cannot turn saturation into a
+// false traffic drop. Values are never inferred from user concurrency limits.
+type ExitDemand struct {
+	Version    int       `json:"version"`
+	Value      int       `json:"value"`
+	At         time.Time `json:"at"`
+	Capacity   int       `json:"capacity"`
+	LowSamples int       `json:"low_samples"`
+	Held       bool      `json:"held"`
+}
+
+type ExitRow struct {
+	ID               int64    `json:"id"`
+	Name             string   `json:"name"`
+	Capacity         int      `json:"capacity"`
+	DepletionMinutes *float64 `json:"depletion_minutes,omitempty"`
+	ExitMinutes      *float64 `json:"exit_minutes,omitempty"`
+	Reason           string   `json:"reason"`
+	Threshold        *float64 `json:"threshold,omitempty"`
+	UsedPercent      *float64 `json:"used_percent,omitempty"`
+	Risk             bool     `json:"risk"`
+	WarningOnly      bool     `json:"warning_only"`
+	Known            bool     `json:"known"`
+	// Internal timeline, never reconstructed from rounded UI values.
+	exitAt *time.Time
+}
+
+type ExitPoint struct {
+	Minutes         float64 `json:"minutes"`
+	Capacity        int     `json:"capacity"`
+	Pending         int     `json:"pending"`
+	PendingCapacity int     `json:"pending_capacity"`
+	SizingMinutes   float64 `json:"sizing_minutes"`
+	SizingCapacity  int     `json:"sizing_capacity"`
+	LaterPending    int     `json:"later_pending"`
+	Need            int     `json:"need"`
+	Gap             bool    `json:"gap"`
+}
+
+type ExitForecast struct {
+	Rows            []ExitRow   `json:"rows"`
+	Points          []ExitPoint `json:"points"`
+	Valid           bool        `json:"valid"`
+	Complete        bool        `json:"complete"`
+	Demand          int         `json:"demand"`
+	ObservedDemand  int         `json:"observed_demand"`
+	DemandHeld      bool        `json:"demand_held"`
+	CurrentCapacity int         `json:"current_capacity"`
+	AfterCapacity   int         `json:"after_capacity"`
+	AtRisk          int         `json:"at_risk"`
+	Unknown         int         `json:"unknown"`
+	Pressure        bool        `json:"pressure"`
+	Emergency       bool        `json:"emergency"`
+	Confirmed       bool        `json:"confirmed"`
+	Confirmations   int         `json:"confirmations"`
+	Need            int         `json:"need"`
+	TransientGap    bool        `json:"transient_gap"`
+	EarliestMinutes *float64    `json:"earliest_minutes,omitempty"`
+}
+
+func exitLoad(s Snapshot, now time.Time) (used, capacity, waiting int) {
+	for _, a := range s.Accounts {
+		if availableAccount(a, now) {
+			used += a.Used
+			capacity += a.Capacity
+		}
+		waiting += a.Waiting
+	}
+	return
+}
+
+func exitSnapshotValid(c Config, s Snapshot, now time.Time) bool {
+	return s.Valid && s.LoadValid && !s.At.IsZero() && !s.At.After(now.Add(5*time.Second)) && now.Sub(s.At) <= time.Duration(c.FreshSeconds)*time.Second
+}
+
+func ObserveExitDemand(c Config, current, previous Snapshot, now time.Time) *ExitDemand {
+	if !c.ExitEnabled {
+		return nil
+	}
+	if !exitSnapshotValid(c, current, now) {
+		p := previous.ExitDemand
+		if p != nil && p.Version == c.Version && previous.Binding == current.Binding && previous.GroupID == current.GroupID && !p.At.After(now) && now.Sub(p.At) <= time.Duration(c.ExitDemandHoldSeconds)*time.Second {
+			copy := *p
+			return &copy
+		}
+		return nil
+	}
+	u, capacity, waiting := exitLoad(current, now)
+	d := &ExitDemand{Version: c.Version, Value: u + waiting, At: current.At, Capacity: capacity}
+	p := previous.ExitDemand
+	if p == nil || p.Version != c.Version || previous.Binding != current.Binding || previous.GroupID != current.GroupID || p.At.IsZero() || p.At.After(now.Add(5*time.Second)) || now.Sub(p.At) > time.Duration(c.ExitDemandHoldSeconds)*time.Second {
+		return d
+	}
+	if !current.At.After(previous.At) {
+		copy := *p
+		return &copy
+	}
+	if p.Value <= d.Value {
+		return d
+	}
+	if capacity >= p.Capacity && !p.Held {
+		return d
+	}
+	low := 0
+	if capacity > 0 && waiting == 0 && u*100 < capacity*c.TriggerPercent {
+		low = p.LowSamples + 1
+	}
+	if low >= 2 {
+		return d
+	}
+	return &ExitDemand{Version: c.Version, Value: p.Value, At: p.At, Capacity: p.Capacity, LowSamples: low, Held: true}
+}
+
+func exitRow(c Config, a Account, now time.Time) ExitRow {
+	r := ExitRow{ID: a.ID, Name: a.Name, Capacity: a.Capacity, Reason: "额度样本不足", Threshold: a.QuotaMergeThreshold}
+	setExit := func(at time.Time, reason string, warning bool) {
+		if r.exitAt == nil || at.Before(*r.exitAt) || (at.Equal(*r.exitAt) && !warning) {
+			r.exitAt = &at
+			r.ExitMinutes = moneyPtr(math.Max(0, at.Sub(now).Minutes()))
+			r.Reason = reason
+			r.WarningOnly = warning
+		}
+	}
+	// Dollars and utilization are paired within a single account/window, as in
+	// the existing money forecast. A reset before depletion cancels that event.
+	seen := map[int64]bool{}
+	if a.Money != nil {
+		for _, w := range a.Money.Windows {
+			copyMoney := *a.Money
+			copyMoney.Windows = []MoneyWindow{w}
+			copyAccount := a
+			copyAccount.Money = &copyMoney
+			row := accountMoneyRow(copyAccount, now, moneyWindowMinutes(c.MoneyWindowMinutes))
+			// Fresh usage can prove a reached threshold even before a rate exists.
+			if row.Reason == "采样中" && row.TotalUSD != nil {
+				at := a.Money.BudgetAt
+				if at.IsZero() {
+					at = a.Money.At
+				}
+				threshold := 100.
+				reason := "额度已耗完"
+				if w.Seconds == 604800 && a.QuotaMergeThreshold != nil {
+					threshold = *a.QuotaMergeThreshold
+					reason = "达到额度合并阈值"
+					r.UsedPercent = moneyPtr(w.UsedPercent)
+				}
+				if w.UsedPercent >= threshold {
+					r.Known = true
+					setExit(now, reason, false)
+				} else if c.ExitWarningPercent > 0 && threshold-w.UsedPercent <= float64(c.ExitWarningPercent) && now.Add(time.Duration(c.ExitMinutes)*time.Minute).Before(w.ResetAt) {
+					setExit(now.Add(time.Duration(c.ExitMinutes)*time.Minute), "接近额度阈值，退出时间暂不可估", true)
+				}
+				// A newer budget/reset sample supersedes an older percent reading.
+				for _, old := range a.Windows {
+					if old.Seconds == w.Seconds && !old.At.After(at) {
+						seen[w.Seconds] = true
+					}
+				}
+			}
+			if row.Reason != "" {
+				continue
+			}
+			seen[w.Seconds] = true
+			r.Known = true
+			at := a.Money.BudgetAt
+			if at.IsZero() {
+				at = a.Money.At
+			}
+			threshold := 100.
+			reason := "额度预计耗完"
+			if w.Seconds == 604800 && a.QuotaMergeThreshold != nil {
+				threshold = *a.QuotaMergeThreshold
+				reason = "达到额度合并阈值"
+				r.UsedPercent = moneyPtr(w.UsedPercent)
+			}
+			if threshold <= 0 || threshold > 100 {
+				continue
+			}
+			if *row.RateUSD > 0 && moneyNumber(*row.RemainingUSD / *row.RateUSD) && *row.RemainingUSD / *row.RateUSD < 525600 {
+				depleted := at.Add(time.Duration(*row.RemainingUSD / *row.RateUSD * float64(time.Minute)))
+				if depleted.Before(w.ResetAt) {
+					left := math.Max(0, depleted.Sub(now).Minutes())
+					if r.DepletionMinutes == nil || left < *r.DepletionMinutes {
+						r.DepletionMinutes = moneyPtr(left)
+					}
+				}
+			}
+			gap := math.Max(0, *row.TotalUSD*threshold/100-*row.UsedUSD)
+			if gap == 0 {
+				setExit(now, reason, false)
+			} else if *row.RateUSD > 0 {
+				minutes := gap / *row.RateUSD
+				if moneyNumber(minutes) && minutes < 525600 {
+					exit := at.Add(time.Duration(minutes * float64(time.Minute)))
+					if exit.Before(w.ResetAt) {
+						setExit(exit, reason, false)
+					}
+				}
+			} else if r.exitAt == nil {
+				r.Reason = "近期无消耗"
+			}
+		}
+	}
+	// Percent samples are a fallback, never mixed across plans or reset windows.
+	for _, w := range a.Windows {
+		if seen[w.Seconds] || !w.Fresh(now, time.Duration(c.QuotaSeconds*2)*time.Second) {
+			continue
+		}
+		threshold := 100.
+		reason := "额度预计耗完"
+		if w.Seconds == 604800 && a.QuotaMergeThreshold != nil {
+			threshold = *a.QuotaMergeThreshold
+			reason = "达到额度合并阈值"
+			r.UsedPercent = moneyPtr(w.Used)
+		}
+		gap := math.Max(0, threshold-w.Used)
+		if gap == 0 {
+			r.Known = true
+			setExit(now, reason, false)
+		} else if w.Samples > 0 && w.Rate > 0 {
+			r.Known = true
+			minutes := gap / w.Rate
+			if moneyNumber(minutes) && minutes < 525600 {
+				at := w.At.Add(time.Duration(minutes * float64(time.Minute)))
+				if at.Unix() < w.ResetAt {
+					setExit(at, reason, false)
+				}
+			}
+			minutes = (100 - w.Used) / w.Rate
+			if moneyNumber(minutes) && minutes < 525600 {
+				at := w.At.Add(time.Duration(minutes * float64(time.Minute)))
+				if at.Unix() < w.ResetAt {
+					left := math.Max(0, at.Sub(now).Minutes())
+					if r.DepletionMinutes == nil || left < *r.DepletionMinutes {
+						r.DepletionMinutes = moneyPtr(left)
+					}
+				}
+			}
+		} else if w.Samples > 0 && w.Rate == 0 {
+			r.Known = true
+			if r.exitAt == nil {
+				r.Reason = "近期无消耗"
+			}
+		} else if c.ExitWarningPercent > 0 && gap <= float64(c.ExitWarningPercent) && now.Add(time.Duration(c.ExitMinutes)*time.Minute).Unix() < w.ResetAt {
+			setExit(now.Add(time.Duration(c.ExitMinutes)*time.Minute), "接近额度阈值，退出时间暂不可估", true)
+		}
+	}
+	if a.ExitDeadline != nil {
+		setExit(*a.ExitDeadline, "推送等待时限到达", false)
+	}
+	if a.Leaving {
+		r.Known = true
+		setExit(now, "已进入合并移出流程", false)
+	}
+	if r.exitAt != nil {
+		r.Risk = !r.exitAt.After(now.Add(time.Duration(c.ExitMinutes) * time.Minute))
+		if r.WarningOnly {
+			r.ExitMinutes = nil
+		}
+	}
+	return r
+}
+
+func ForecastExits(c Config, s Snapshot, tasks []Task, newSlots int, lead float64, now time.Time) ExitForecast {
+	f := ExitForecast{Rows: []ExitRow{}, Points: []ExitPoint{}, Valid: exitSnapshotValid(c, s, now), Complete: true, Confirmations: s.ExitConfirmations}
+	u, capacity, waiting := exitLoad(s, now)
+	f.CurrentCapacity = capacity
+	f.AfterCapacity = capacity
+	f.Demand = u + waiting
+	f.ObservedDemand = f.Demand
+	if p := s.ExitDemand; p != nil && p.Version == c.Version && p.Held && !p.At.After(now) && now.Sub(p.At) <= time.Duration(c.ExitDemandHoldSeconds)*time.Second {
+		f.Demand = max(f.Demand, p.Value)
+		f.DemandHeld = f.Demand > f.ObservedDemand
+	}
+	if !f.Valid || newSlots < 1 || !moneyNumber(lead) {
+		f.Complete = false
+		return f
+	}
+	readyIDs := map[int64]bool{}
+	events := []time.Time{}
+	for _, a := range s.Accounts {
+		if a.Shared {
+			f.Valid = false
+			f.Complete = false
+			return f
+		}
+		if !availableAccount(a, now) {
+			continue
+		}
+		readyIDs[a.ID] = true
+		r := exitRow(c, a, now)
+		if !r.Known {
+			f.Unknown++
+			f.Complete = false
+		}
+		if r.Risk {
+			f.AtRisk++
+			f.AfterCapacity -= r.Capacity
+			events = append(events, maxExitTime(now, *r.exitAt))
+		}
+		if r.ExitMinutes != nil && (f.EarliestMinutes == nil || *r.ExitMinutes < *f.EarliestMinutes) {
+			f.EarliestMinutes = moneyPtr(*r.ExitMinutes)
+		}
+		f.Rows = append(f.Rows, r)
+	}
+	if f.DemandHeld {
+		events = append(events, now)
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].Before(events[j]) })
+	baseAt := func(at time.Time) (int, bool) {
+		v := capacity
+		certain := false
+		for _, r := range f.Rows {
+			if r.Risk && !r.exitAt.After(at) {
+				v -= r.Capacity
+				certain = certain || !r.WarningOnly
+			}
+		}
+		return max(0, v), certain
+	}
+	pendingAt := func(at time.Time) (count, slots int) {
+		ids := map[string]bool{}
+		accounts := map[int64]bool{}
+		for _, t := range tasks {
+			if !t.Predictable() || t.Binding != s.Binding || t.GroupID != s.GroupID || readyIDs[t.AccountID] || t.ETA.Before(now) || t.ETA.After(at) || ids[t.ID] || (t.AccountID > 0 && accounts[t.AccountID]) {
+				continue
+			}
+			ids[t.ID] = true
+			if t.AccountID > 0 {
+				accounts[t.AccountID] = true
+			}
+			count++
+			n := t.Capacity
+			if n < 1 {
+				n = newSlots
+			}
+			slots += n
+		}
+		return
+	}
+	arrival := now.Add(time.Duration(lead * float64(time.Minute)))
+	for i, at := range events {
+		if i > 0 && at.Equal(events[i-1]) {
+			continue
+		}
+		base, certain := baseAt(at)
+		pending, slots := pendingAt(at)
+		point := ExitPoint{Minutes: math.Max(0, at.Sub(now).Minutes()), Capacity: base, Pending: pending, PendingCapacity: slots}
+		sizingAt := maxExitTime(at, arrival)
+		sizingBase, _ := baseAt(sizingAt)
+		later, laterSlots := pendingAt(sizingAt)
+		point.SizingMinutes = sizingAt.Sub(now).Minutes()
+		point.SizingCapacity = sizingBase + laterSlots
+		point.LaterPending = later - pending
+		if f.Demand > 0 && float64(f.Demand)*100 >= float64(base*c.TriggerPercent) {
+			f.Pressure = true
+			point.Need = max(0, int(math.Ceil((float64(f.Demand)*100/float64(max(1, c.TargetPercent))-float64(point.SizingCapacity))/float64(newSlots))))
+			point.Gap = f.Demand > base+slots
+			f.TransientGap = f.TransientGap || point.Gap
+			f.Emergency = f.Emergency || (point.Gap && (certain || f.DemandHeld))
+			f.Need = max(f.Need, point.Need)
+		}
+		f.Points = append(f.Points, point)
+	}
+	// Future shortage is still a prediction: a single demand spike must not
+	// order a batch. Only actual account-side emergency queues skip confirmation.
+	f.Confirmed = f.Pressure && (waiting >= c.EmergencyQueue || s.ExitConfirmations >= c.Confirmations)
+	return f
+}
+
+func maxExitTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+// Refresh more often while approaching an exit or collecting initial samples;
+// the normal money sampler stays at one minute when the pool is stable.
+func ExitRefreshInterval(c Config, s Snapshot, now time.Time) time.Duration {
+	if c.ExitEnabled {
+		for _, a := range s.Accounts {
+			if !availableAccount(a, now) {
+				continue
+			}
+			r := exitRow(c, a, now)
+			if !r.Known || r.Risk || (r.ExitMinutes != nil && *r.ExitMinutes <= float64(c.ExitMinutes)+2) {
+				return time.Duration(min(60, max(5, c.ExitRefreshSeconds))) * time.Second
+			}
+		}
+	}
+	return time.Minute
+}

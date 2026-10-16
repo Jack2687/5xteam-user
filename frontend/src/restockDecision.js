@@ -27,6 +27,9 @@ export function decisionReport(d = {}) {
   rule('concurrency','持续并发压力',c.concurrency_enabled,d.concurrency_need,concurrencyTriggered,
    `占用 ${value(d.used)} / 容量 ${value(d.capacity)}（${utilization===null?'无有效容量':value(utilization,'%')}），触发 ≥ ${value(c.trigger_percent,'%')}；账号侧等待 ${value(d.waiting)}，有等待也参与触发；连续确认 ${value(d.confirmations)} / ${value(c.confirmations)} 次。`,
    `补后目标利用率 ${value(c.target_percent,'%')}。`+(tr&&known?` 需求槽位按（占用 ${value(d.used)} + 等待 ${value(d.waiting)}）÷ ${value(c.target_percent,'%')} 计算，扣除预计到货时有效容量 ${tr.future_capacity} 及 ${tr.timely_inflight} 个及时在途 × 每号 ${tr.new_account_capacity} 槽位，再按每号容量向上取整。`:'')),
+  rule('exit','账号退出前补货',c.exit_enabled,d.exit_need,d.exit?.pressure,
+   `手动提前 ${minutes(c.exit_minutes)}；临期 ${value(d.exit?.at_risk)} 个，当前容量 ${value(d.exit?.current_capacity)}，退出后容量 ${value(d.exit?.after_capacity)}，采用需求 ${value(d.exit?.demand)}。`,
+   `沿用并发触发 ${value(c.trigger_percent,'%')}、目标 ${value(c.target_percent,'%')}；退出压力确认 ${value(d.exit?.confirmations)} / ${value(c.confirmations)} 次${d.exit?.emergency?'，预测存在容量不足，确认后采用紧急冷却':''}。`+(d.exit?.demand_held?' 当前占用受容量下降限制，暂保留退出前的近期需求。':'')+(d.exit?.transient_gap?' 存在短时衔接缺口，按新增任务到位时的容量计算，避免重复开通。':'')),
   rule('reserve','最低备用',c.reserve>0,d.reserve_need,d.reserve_need>0,
    `目标 ${value(c.reserve)} 个 − 当前可用 ${value(d.usable)} 个${tr?` − 预计及时就绪在途 ${tr.timely_inflight} 个`:''}。`),
   rule('empty','空分组启动',c.empty_group_count>0,d.empty_group_need,known&&Array.isArray(s.accounts)&&s.accounts.length===0,
@@ -36,10 +39,10 @@ export function decisionReport(d = {}) {
    `已就绪接替 ${value(d.force_merge?.ready)} 个，在途接替 ${value(d.force_merge?.pending)} 个；剩余需接替 ${value(d.force_merge_need)} 个。`),
  ]
  const active=rules.filter(r=>r.active).map(r=>r.name)
- const net=tr?tr.net_need:Math.max(0,...[d.time_need,d.concurrency_need,d.reserve_need,d.empty_group_need,d.force_merge_need].filter(number))
+ const net=tr?tr.net_need:Math.max(0,...[d.time_need,d.concurrency_need,d.reserve_need,d.empty_group_need,d.force_merge_need,d.exit_need].filter(number))
  const outcome=d.started>0?`已预留 ${d.started} 个全自动 Pro 任务`:d.suggested>0?`本轮建议 ${d.suggested} 个，未新增预留`:'本轮未新增补货'
  const steps=[known?`各规则净缺口取最大值：${value(net)} 个，不累加。`:'监控数据不足，本轮未完成净缺口计算。']
- if(tr?.after_minimum!=null)steps.push(tr.strict_minimum?`按最小批量 ${value(c.min_batch)} 个处理后：${tr.after_minimum} 个。`:d.empty_group_need>0&&net===d.empty_group_need&&!d.time_need&&!d.concurrency_need&&!d.reserve_need&&!d.force_merge_need?'仅空组启动，按启动数量执行，不抬高到最小批量。':'允许少补，按实际净缺口执行。')
+ if(tr?.after_minimum!=null)steps.push(tr.strict_minimum?`按最小批量 ${value(c.min_batch)} 个处理后：${tr.after_minimum} 个。`:d.empty_group_need>0&&net===d.empty_group_need&&!d.time_need&&!d.concurrency_need&&!d.reserve_need&&!d.force_merge_need&&!d.exit_need?'仅空组启动，按启动数量执行，不抬高到最小批量。':'允许少补，按实际净缺口执行。')
  if(tr?.hard_limit!=null)steps.push(`本轮硬上限 ${Math.max(0,tr.hard_limit)} 个；最终建议 ${value(d.suggested)} 个${d.no_restock_active?'（每日禁补已覆盖建议）':''}。`)
  steps.push(`实际新增预留 ${value(d.started)} 个。预留后仍需经过登录、开通、推送和入组核验，未就绪前不计为可用账号。`)
  if(d.started>0&&d.started<d.suggested)steps.push('实际预留少于建议数量；执行时还会复核可领取账号和各项上限。具体限制以本条执行结果为准。')

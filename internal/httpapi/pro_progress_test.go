@@ -113,6 +113,13 @@ func TestProManualPaymentProgressAndOldOrder(t *testing.T) {
 	if p.ProManualStages["recharge"].ID != order.ID {
 		t.Fatal("old order replaced latest")
 	}
+	succeededAt := p.ProManualStages["recharge"].UpdatedAt
+	order.Status, order.UpdatedAt = "success", succeededAt.Add(time.Hour)
+	s.updateProPaymentStage(order)
+	p, _, _ = st.MailAccountCredential(email)
+	if !p.ProManualStages["recharge"].UpdatedAt.Equal(succeededAt) {
+		t.Fatal("repeated status query changed activation success time")
+	}
 }
 
 func TestProManualMergeProgressUntilRemoved(t *testing.T) {

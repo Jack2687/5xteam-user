@@ -443,7 +443,7 @@ func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]
 	if err := s.db.QueryRow(cte+` SELECT COUNT(*) FROM accounts`+where, query, like, mergeState, mergeState).Scan(&total); err != nil {
 		return nil, 0, summary, err
 	}
-	rows, err := s.db.Query(cte+` SELECT profile, encrypted_credentials FROM accounts`+where+` ORDER BY managed_at DESC LIMIT ? OFFSET ?`, query, like, mergeState, mergeState, limit, offset)
+	rows, err := s.db.Query(cte+` SELECT profile, encrypted_credentials FROM accounts`+where+` ORDER BY `+proAccountsOrderSQL(mergeState)+` LIMIT ? OFFSET ?`, query, like, mergeState, mergeState, limit, offset)
 	if err != nil {
 		return nil, 0, summary, err
 	}

@@ -492,7 +492,7 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, o := range ops {
-		if o.CardID == card.ID && (o.Status == "unknown" || o.Status == "submitting") {
+		if o.CardID == card.ID && (o.Status == "unknown" || o.Status == "submitting" || o.Status == "processing") {
 			writeAPI(w, 409, nil, "该卡有待确认操作，请先核对，禁止重复提额或销卡")
 			return
 		}
@@ -522,15 +522,22 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 			op.Status, op.Error = "unknown", "提额未返回有效余额，请核对"
 		}
 	} else {
-		card.Remote.Status = "2"
-		_, e = s.store.ImportEJHCard(card.Remote, false)
-		if e != nil {
-			op.Error = e.Error()
-		}
+		op.Status, op.Note = "processing", "销卡申请已提交，正在查询卡台处理结果"
 	}
 	op.UpdatedAt = time.Now()
 	if e = s.store.EJHPut("operation", op.ID, op); e != nil {
 		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	if in.Action == "cancel" {
+		job, done := context.WithTimeout(r.Context(), 12*time.Second)
+		op, e = s.checkEJHCancellationLocked(job, c, k, op)
+		done()
+		if e != nil {
+			writeAPI(w, 500, nil, "销卡已提交，查询记录保存失败，请查看操作记录")
+			return
+		}
+		writeAPI(w, 200, op, "")
 		return
 	}
 	if e = s.store.EJHPut("card", card.ID, card); e != nil {

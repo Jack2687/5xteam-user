@@ -1,7 +1,7 @@
 import { isClosedCard } from '../src/card-status.js'
 import { createEJHRefreshGate } from '../src/ejhRefresh.js'
 import assert from 'node:assert/strict'
-import { newestCards, cancelCardReason, runEJHBatch } from '../src/ejh.js'
+import { newestCards, cancelCardReason, runEJHBatch, refreshCancellationProgress } from '../src/ejh.js'
 import { currencies, currencyOptions, searchCurrencyOptions } from '../src/ejh-currencies.js'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -13,7 +13,7 @@ const parsed=ts.createSourceFile('ejh.js',script,ts.ScriptTarget.Latest,true,ts.
 const methods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','cardAction','openCards','cancelSelected'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 function fixture(result){
  const calls=[],message={text:'',type:''},openForm={count:3,request_id:'',input:{cardAmount:'20',cardCurrency:'USD'}},detail={value:null}
- const ctx=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),message,openForm,detail,busy:{value:false},operationStates,window:{confirm:()=>true,prompt:()=> '20'},crypto:{randomUUID:()=> 'fixture-id'},load:async()=>{},api:async(path,options)=>{calls.push({path,options});return result}})
+ const ctx=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,refreshCancellationProgress,cancelReason:()=>String(),message,openForm,detail,busy:{value:false},operationStates,window:{confirm:()=>true,prompt:()=> '20'},crypto:{randomUUID:()=> 'fixture-id'},load:async()=>{},api:async(path,options)=>{calls.push({path,options});return result}})
  vm.runInContext(methods+'\nthis.methods={cardAction,openCards,cancelSelected}',ctx)
  return {ctx,calls,message,openForm,detail}
 }
@@ -23,6 +23,8 @@ for(const action of ['refresh','balance']){const f=fixture({status:'1'});await f
 {const f=fixture({status:'unknown'});await f.ctx.methods.openCards();assert.equal(f.calls.length,1,'Batch must stop at unknown result');assert.equal(f.openForm.request_id,'fixture-id','Keep request ID after uncertainty')}
 {const f=fixture({status:'completed'});await f.ctx.methods.openCards();assert.equal(f.calls.length,3);assert.equal(f.openForm.request_id,'')}
 {const f=fixture({cardNo:'fixture'});await f.ctx.methods.cardAction(card,'details');assert.equal(f.detail.value.data.cardNo,'fixture')}
+{const f=fixture({status:'processing'});await f.ctx.methods.cardAction(card,'cancel');assert.equal(f.message.type,'info');assert.equal(f.ctx.progress.value.waitingForIssuer,true);assert.match(f.message.text,/处理中/);assert.equal(f.calls.length,1)}
+{const f=fixture({status:'unknown',error:'EJH 300002'});await f.ctx.methods.cardAction(card,'cancel');assert.equal(f.message.type,'info');assert.equal(f.ctx.progress.value.unknown,1);assert.match(f.message.text,/暂未确认/);assert.equal(f.calls.length,1)}
 assert.deepEqual([...returnTypes],['2','5','16'])
 assert.ok(caseSummary({email:'fixture@example.com',state:'returned'}).includes('已回款'))
 assert.ok(!returnTypes.has('17'),'Card closure is not an account refund')
@@ -37,7 +39,7 @@ assert.deepEqual(summarizeCardBalances([]).totals,[])
 const balanceMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','load','refreshAllBalances','queryAccountBalance'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 for(const stop of [false,true]){
  const calls=[],allCards=[{id:'one',remote:{orderNo:'one'}},{id:'two',remote:{orderNo:'two'}},{id:'closed',remote:{status:'2',orderNo:'closed'}}]
- const ctx=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),message:{text:'',type:''},busy:{value:false},disposed:false,data:{value:{cards:allCards}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{calls.push({path,options});if(path==='/api/ejh/dashboard')return {cards:allCards};if(path.includes('/one/')){if(stop)ctx.disposed=true;throw Error('fixture card failure')}return {}}})
+ const ctx=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,refreshCancellationProgress,cancelReason:()=>String(),message:{text:'',type:''},busy:{value:false},disposed:false,data:{value:{cards:allCards}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{calls.push({path,options});if(path==='/api/ejh/dashboard')return {cards:allCards};if(path.includes('/one/')){if(stop)ctx.disposed=true;throw Error('fixture card failure')}return {}}})
  vm.runInContext(balanceMethods+'\nthis.run=refreshAllBalances;this.load=load',ctx)
  await ctx.load();assert.equal(calls.length,1,'Reading saved snapshots must not query supplier balances')
  await ctx.run()
@@ -125,7 +127,7 @@ console.log('Passed: searchable currencies, code/name/region matching, legacy an
 const currencyMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['save','action','show','chooseTemplate','cardStatus'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 const settings={templates:[{id:'currency-template',name:'币种测试',valid_days:30,cardType:'fixture',cardAmount:'20',cardCurrency:'CNH',billCurrency:'EUR'}]}
 const calls=[]
-const currencyContext=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),cardStates,cardState,settings,data:{value:{}},openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
+const currencyContext=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,refreshCancellationProgress,cancelReason:()=>String(),cardStates,cardState,settings,data:{value:{}},openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
 vm.runInContext(currencyMethods+'\nthis.run={save,chooseTemplate,cardStatus}',currencyContext)
 await currencyContext.run.save()
 assert.equal(calls[0].path,'/api/ejh/settings')
@@ -158,7 +160,7 @@ console.log('Passed: EJH switch false/true payloads, card type column/default/se
 const entryMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['action','show','load','refreshAllBalances','refreshPage','initialize'].includes(s.name?.text)).map(s=>s.getText(parsed)).join(';')
 for(const enabled of [false,true]) for(const syncFails of [false,true]) {
  const calls=[], cards=[{id:'one',remote:{orderNo:'one'}},{id:'local',issuer_linked:false,remote:{}}]
- const ctx=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),message:{text:'',type:''},busy:{value:false},ready:{value:false},settings:{enabled:false},disposed:false,data:{value:{cards:[]}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{
+ const ctx=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,refreshCancellationProgress,cancelReason:()=>String(),message:{text:'',type:''},busy:{value:false},ready:{value:false},settings:{enabled:false},disposed:false,data:{value:{cards:[]}},balanceProgress:{value:null},balanceFailures:{value:[]},api:async(path,options)=>{
   calls.push({path,options});if(path==='/api/ejh/settings')return {enabled};if(path==='/api/ejh/dashboard')return {cards};if(path==='/api/ejh/sync'&&syncFails)throw Error('sync unavailable');return {}
  }})
  vm.runInContext(entryMethods+';this.initialize=initialize;this.refreshPage=refreshPage',ctx)
@@ -185,6 +187,25 @@ assert.equal(cancelCardReason(usable,[],[{card_id:'other',state:'waiting'}]),'')
 for(const card of [{...usable,issuer_linked:false},{...usable,remote:{status:'2'}},{...usable,remote:{status:'8'}},{...usable,error:'review'}])assert.ok(cancelCardReason(card))
 assert.ok(cancelCardReason(usable,[{card_id:'card',status:'unknown'}]))
 assert.ok(cancelCardReason(usable,[{order_no:'order',status:'submitting'}]))
+assert.ok(cancelCardReason(usable,[{order_no:'order',status:'processing'}]))
+assert.equal(cardState({remote:{status:'8',isLocked:'1'},error:'stale detail error'}),'8')
+assert.equal(cardState({remote:{status:'2',isLocked:'1'}}),'2')
+assert.equal(cardState({...usable,local:{issuer_cancel_status:'processing',issuer_locked:true}}),'8')
+assert.equal(cardState({...usable,local:{issuer_cancel_status:'unknown',issuer_locked:true}}),'cancel_pending')
+{
+ const p={cancellation:true,startedAt:Date.now(),done:0,success:0,failed:0,unknown:0,results:[]},calls=[]
+ await runEJHBatch([1,2].map(i=>({method:'cancel',label:'card '+i,request_id:'cancel-'+i})),p,async item=>{calls.push(item.request_id);return {status:'processing'}})
+ refreshCancellationProgress(p)
+ assert.equal(calls.length,2,'Accepted pending cancellation must not stop unrelated selected cards')
+ assert.equal(p.processing,2);assert.equal(p.success,0);assert.equal(p.waitingForIssuer,true)
+ refreshCancellationProgress(p,[{id:'cancel-1',method:'cancel',status:'completed'},{id:'cancel-2',method:'cancel',status:'processing',check_error:'timeout'}])
+ assert.equal(p.success,1);assert.equal(p.processing,1);assert.match(p.phase,/后台将重试/)
+ refreshCancellationProgress(p,[{id:'cancel-1',method:'cancel',status:'completed'},{id:'cancel-2',method:'cancel',status:'completed'}])
+ assert.equal(p.success,2);assert.equal(p.processing,0);assert.equal(p.waitingForIssuer,false)
+ const endedAt=p.cancellationFinishedAt, elapsed=p.elapsed, now=Date.now
+ try{Date.now=()=>endedAt+60000;refreshCancellationProgress(p);assert.equal(p.elapsed,elapsed,'Completed cancellation duration must stop increasing')}finally{Date.now=now}
+ assert.equal(calls.length,2,'Progress refresh never resubmits')
+}
 for(const status of ['completed','unknown','failed','throw','stop']) {
  const p={done:0,success:0,failed:0,unknown:0,results:[]},calls=[]
  await runEJHBatch([1,2,3].map(i=>({label:'card '+i,request_id:'request-'+i})),p,async item=>{

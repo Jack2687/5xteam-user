@@ -31,6 +31,7 @@ func (s *Server) importTurbRegistration(w http.ResponseWriter, r *http.Request) 
 		PickupURL        string          `json:"pickup_url"`
 		TotpSecret       string          `json:"totp_secret"`
 		ChatGPTSession   json.RawMessage `json:"chatgpt_session"`
+		EnterPro         bool            `json:"enter_pro"`
 	}
 	if err := decodeJSON(w, r, &input, 2<<20); err != nil {
 		return
@@ -52,6 +53,10 @@ func (s *Server) importTurbRegistration(w http.ResponseWriter, r *http.Request) 
 	// registration in the mailbox/OpenAI credential stores only; creating a
 	// FreeAccountProfile here would put it in Team rotation.
 	email := firstImportValue(strings.TrimSpace(input.Email), info.Email)
+	if input.EnterPro && email == "" {
+		writeAPI(w, http.StatusBadRequest, nil, "直接进入 Pro 管理需要邮箱地址")
+		return
+	}
 	userID := firstImportValue(strings.TrimSpace(input.UserID), info.UserID)
 	accountID := firstImportValue(stringValue(input.AccountID), info.AccountID)
 	chatgptSession, sessionErr := normalizeChatGPTSession(input.ChatGPTSession)
@@ -60,6 +65,7 @@ func (s *Server) importTurbRegistration(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	mailSaved := false
+	managementScope := ""
 	if email != "" {
 		mailCreds := model.MailAccountCredentials{Email: email, MailPassword: strings.TrimSpace(input.MailPassword), ClientID: strings.TrimSpace(input.ClientID), MailRefreshToken: strings.TrimSpace(input.MailRefreshToken), PickupURL: strings.TrimSpace(input.PickupURL), GptPassword: strings.TrimSpace(input.GptPassword), TotpSecret: strings.TrimSpace(input.TotpSecret), AccessToken: token, ChatGPTSession: chatgptSession}
 		if _, old, oldErr := s.store.MailAccountCredential(email); oldErr == nil {
@@ -85,7 +91,11 @@ func (s *Server) importTurbRegistration(w http.ResponseWriter, r *http.Request) 
 				mailCreds.ChatGPTSession = old.ChatGPTSession
 			}
 		}
-		_, mailErr := s.store.SaveMailAccount(model.MailAccountProfile{
+		save := s.store.SaveMailAccount
+		if input.EnterPro {
+			save = s.store.SaveMailAccountToPro
+		}
+		mailProfile, mailErr := save(model.MailAccountProfile{
 			Email:              email,
 			Label:              email,
 			Group:              "free",
@@ -96,6 +106,10 @@ func (s *Server) importTurbRegistration(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		mailSaved = true
+		managementScope = mailProfile.ManagementScope
+		if managementScope == "" {
+			managementScope = "mail"
+		}
 	}
 	oauthAttached := false
 	// Keep ChatGPT AT/RT in the standalone OpenAI account store. This is also
@@ -129,7 +143,15 @@ func (s *Server) importTurbRegistration(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	writeAPI(w, http.StatusOK, map[string]any{"account": openAIProfile, "created": openAIID == "", "mail_account_saved": mailSaved, "oauth_attached": oauthAttached, "message": "注册完成，账号资料已保存（未进入 Team 轮转）"}, "")
+	message := "注册完成，账号资料已保存（未进入 Team 轮转）"
+	if managementScope == "pro" {
+		message = "注册完成，账号资料已保存至 Pro 管理（未进入 Team 轮转）"
+	}
+	writeAPI(w, http.StatusOK, map[string]any{
+		"account": openAIProfile, "created": openAIID == "", "mail_account_saved": mailSaved,
+		"oauth_attached": oauthAttached, "management_scope": managementScope,
+		"entered_pro": input.EnterPro && managementScope == "pro", "message": message,
+	}, "")
 }
 
 func normalizeChatGPTSession(raw json.RawMessage) (string, error) {

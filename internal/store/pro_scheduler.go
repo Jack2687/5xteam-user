@@ -19,7 +19,7 @@ const proScheduleCandidateSQL = `SELECT m.email FROM mail_accounts m WHERE json_
 	AND NOT EXISTS(SELECT 1 FROM gptpay_orders o WHERE o.email=m.email)
 	AND NOT EXISTS(SELECT 1 FROM pro_card_reservations r WHERE r.email=m.email)
 	AND NOT EXISTS(SELECT 1 FROM json_each(json_extract(m.profile,'$.pro_manual_stages')) j WHERE json_extract(j.value,'$.status')='running')
-	ORDER BY json_extract(m.profile,'$.created_at'),m.email LIMIT ?`
+	ORDER BY ` + proManagedTimeSQL + ` IS NULL, ` + proManagedTimeSQL + ` ASC,m.email ASC LIMIT ?`
 
 func (s *Store) ProScheduleCandidates(limit int) ([]string, error) {
 	s.mu.Lock()

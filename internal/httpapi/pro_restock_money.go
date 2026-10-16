@@ -77,7 +77,7 @@ func (s *Server) refreshRestockMoney(c restock.Config, p model.ProSettings, pass
 		return
 	}
 	s.proRestock.moneyBusy = true
-	s.proRestock.moneyNext = time.Now().Add(time.Minute)
+	s.proRestock.moneyNext = time.Now().Add(restock.ExitRefreshInterval(c, snap, time.Now()))
 	generation := s.proRestock.moneyGeneration
 	s.proRestock.mu.Unlock()
 	s.proAutoMu.Lock()

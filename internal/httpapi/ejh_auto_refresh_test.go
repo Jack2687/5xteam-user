@@ -48,7 +48,11 @@ func ejhFixtureTransport(t *testing.T, response func(string, map[string]any) any
 			}
 			data = response(body.Method, body.Data)
 		}
-		raw, err := json.Marshal(map[string]any{"code": "000000", "data": data})
+		envelope := map[string]any{"code": "000000", "data": data}
+		if apiErr, ok := data.(*ejh.APIError); ok {
+			envelope = map[string]any{"code": apiErr.Code, "msg": apiErr.Message}
+		}
+		raw, err := json.Marshal(envelope)
 		if err != nil {
 			t.Fatal(err)
 		}

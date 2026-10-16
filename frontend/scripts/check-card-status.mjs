@@ -14,6 +14,12 @@ assert.equal(cardUsage(active, now).label, '可用于开通')
 assert.equal(cardUsage({ ...active, source: '', card_type: 'other', issuer_status: '2' }, now).label, '已销卡', 'Linked physical aliases still carry issuer restrictions')
 assert.equal(isClosedCard({ card_type: 'ejh', enabled: true, available: true }), false, 'A manual EJH label is not a supplier binding')
 assert.equal(cardUsage({ ...active, issuer_status: '8' }, now).label, '销卡处理中')
+for(const status of ['processing','unknown','submitting']){
+ const pending={...active,issuer_locked:true,issuer_cancel_status:status}
+ assert.equal(cardUsage(pending,now).label,status==='processing'?'销卡处理中':'销卡结果确认中')
+ assert.equal(cardUsage({local:pending,remote:{status:'3'}},now).tone,'pending')
+ assert.equal(cardUsage({...pending,issuer_status:'2'},now).label,'已销卡')
+}
 assert.equal(cardUsage({ ...active, issuer_status: '5' }, now).label, '已冻结 / 受限')
 assert.equal(cardUsage({ ...active, issuer_status: '4' }, now).label, '未激活')
 assert.equal(cardUsage({ ...active, issuer_status: '' }, now).label, '卡台状态待核实')

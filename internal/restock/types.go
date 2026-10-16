@@ -7,6 +7,11 @@ import (
 )
 
 type Config struct {
+	ExitEnabled              bool   `json:"exit_enabled"`
+	ExitMinutes              int    `json:"exit_minutes"`
+	ExitWarningPercent       int    `json:"exit_warning_percent"`
+	ExitRefreshSeconds       int    `json:"exit_refresh_seconds"`
+	ExitDemandHoldSeconds    int    `json:"exit_demand_hold_seconds"`
 	NoRestockEnabled         bool   `json:"no_restock_enabled"`
 	NoRestockStart           string `json:"no_restock_start"`
 	NoRestockEnd             string `json:"no_restock_end"`
@@ -55,9 +60,12 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, MoneyWindowMinutes: DefaultMoneyWindowMinutes, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
+	return Config{ExitMinutes: 5, ExitWarningPercent: 5, ExitRefreshSeconds: 15, ExitDemandHoldSeconds: 60, NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, MoneyWindowMinutes: DefaultMoneyWindowMinutes, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
 }
 func (c Config) Validate() error {
+	if c.ExitMinutes < 1 || c.ExitMinutes > 1440 || c.ExitWarningPercent < 0 || c.ExitWarningPercent > 20 || c.ExitRefreshSeconds < 5 || c.ExitRefreshSeconds > 60 || c.ExitDemandHoldSeconds < 5 || c.ExitDemandHoldSeconds > 600 {
+		return errors.New("退出前补货：提前时间应为 1～1440 分钟，额度预警为 0～20 个百分点，临期刷新为 5～60 秒，需求保留为 5～600 秒")
+	}
 	if c.MoneyWindowMinutes < 1 || c.MoneyWindowMinutes > MaxMoneyWindowMinutes {
 		return errors.New("消耗计算窗口应为 1～60 分钟的整数")
 	}
@@ -130,37 +138,43 @@ func (w Window) Fresh(now time.Time, maxAge time.Duration) bool {
 }
 
 type Account struct {
-	Money              *AccountMoney `json:"money,omitempty"`
-	PurchasePlan       string        `json:"purchase_plan,omitempty"`
-	EJH                bool          `json:"ejh"`
-	ForceMergeKey      string        `json:"force_merge_key,omitempty"`
-	PushTimeoutEnabled *bool         `json:"push_timeout_enabled,omitempty"`
-	ForceMergeDeadline *time.Time    `json:"force_merge_deadline,omitempty"`
-	Fault              bool          `json:"fault"`
-	ID                 int64         `json:"id"`
-	Name               string        `json:"name"`
-	Plan               string        `json:"plan"`
-	Ready              bool          `json:"ready"`
-	Shared             bool          `json:"shared"`
-	Capacity           int           `json:"capacity"`
-	Used               int           `json:"used"`
-	Waiting            int           `json:"waiting"`
-	ExpiresAt          *time.Time    `json:"expires_at,omitempty"`
-	Windows            []Window      `json:"windows"`
+	QuotaMergeThreshold *float64      `json:"quota_merge_threshold,omitempty"`
+	ExitDeadline        *time.Time    `json:"exit_deadline,omitempty"`
+	Leaving             bool          `json:"leaving"`
+	Money               *AccountMoney `json:"money,omitempty"`
+	PurchasePlan        string        `json:"purchase_plan,omitempty"`
+	EJH                 bool          `json:"ejh"`
+	ForceMergeKey       string        `json:"force_merge_key,omitempty"`
+	PushTimeoutEnabled  *bool         `json:"push_timeout_enabled,omitempty"`
+	ForceMergeDeadline  *time.Time    `json:"force_merge_deadline,omitempty"`
+	Fault               bool          `json:"fault"`
+	ID                  int64         `json:"id"`
+	Name                string        `json:"name"`
+	Plan                string        `json:"plan"`
+	Ready               bool          `json:"ready"`
+	Shared              bool          `json:"shared"`
+	Capacity            int           `json:"capacity"`
+	Used                int           `json:"used"`
+	Waiting             int           `json:"waiting"`
+	ExpiresAt           *time.Time    `json:"expires_at,omitempty"`
+	Windows             []Window      `json:"windows"`
 }
 type Snapshot struct {
-	NewPlan         string    `json:"new_plan"`
-	LifetimeMinutes int       `json:"lifetime_minutes"`
-	ID              string    `json:"id"`
-	At              time.Time `json:"at"`
-	GroupID         int64     `json:"group_id"`
-	Binding         string    `json:"binding"`
-	Valid           bool      `json:"valid"`
-	LoadValid       bool      `json:"load_valid"`
-	Error           string    `json:"error"`
-	Accounts        []Account `json:"accounts"`
+	ExitConfirmations int         `json:"exit_confirmations"`
+	ExitDemand        *ExitDemand `json:"exit_demand,omitempty"`
+	NewPlan           string      `json:"new_plan"`
+	LifetimeMinutes   int         `json:"lifetime_minutes"`
+	ID                string      `json:"id"`
+	At                time.Time   `json:"at"`
+	GroupID           int64       `json:"group_id"`
+	Binding           string      `json:"binding"`
+	Valid             bool        `json:"valid"`
+	LoadValid         bool        `json:"load_valid"`
+	Error             string      `json:"error"`
+	Accounts          []Account   `json:"accounts"`
 }
 type Task struct {
+	Capacity          int                  `json:"capacity,omitempty"`
 	ManagedExternally bool                 `json:"managed_externally,omitempty"`
 	ForceMergeSource  string               `json:"force_merge_source,omitempty"`
 	EmptyGroupStartup bool                 `json:"empty_group_startup,omitempty"`
@@ -202,6 +216,8 @@ type Limits struct {
 	LastBatch *time.Time `json:"last_batch,omitempty"`
 }
 type Decision struct {
+	Exit            *ExitForecast   `json:"exit,omitempty"`
+	ExitNeed        int             `json:"exit_need"`
 	Trace           *DecisionTrace  `json:"trace,omitempty"`
 	Money           MoneyForecast   `json:"money"`
 	NoRestockActive bool            `json:"no_restock_active"`
@@ -240,5 +256,5 @@ type Decision struct {
 // EmptyGroupOnly identifies an explicit startup quantity, which must not be
 // rounded up to the ordinary minimum batch size.
 func (d Decision) EmptyGroupOnly() bool {
-	return d.EmptyGroupNeed > 0 && d.ForceMergeNeed == 0 && d.TimeNeed == 0 && d.ConcurrencyNeed == 0 && d.ReserveNeed == 0
+	return d.EmptyGroupNeed > 0 && d.ExitNeed == 0 && d.ForceMergeNeed == 0 && d.TimeNeed == 0 && d.ConcurrencyNeed == 0 && d.ReserveNeed == 0
 }

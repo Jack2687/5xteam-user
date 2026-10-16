@@ -1,6 +1,7 @@
 package store
 
 import (
+	"chapt-space-user/internal/ejh"
 	"chapt-space-user/internal/gptpay"
 	"database/sql"
 	"encoding/json"
@@ -38,7 +39,25 @@ func (s *Store) issuerForPhysicalCard(q proCapacityQuery, key string) (*gptpay.C
 	if e = q.QueryRow(`SELECT EXISTS(SELECT 1 FROM ejh_card_links l JOIN ejh_operation_claims c ON c.scope='card:'||l.card_id WHERE l.card_key=?)`, key).Scan(&pending); e != nil {
 		return nil, e
 	}
-	return &gptpay.Card{Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "" || pending, IssuerEnd: record.Remote.End}, nil
+	card := &gptpay.Card{Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "" || pending, IssuerEnd: record.Remote.End}
+	if pending {
+		var operationSealed string
+		if e = q.QueryRow(`SELECT r.sealed FROM ejh_card_links l JOIN ejh_operation_claims c ON c.scope='card:'||l.card_id JOIN ejh_records r ON r.kind='operation' AND r.id=c.operation_id WHERE l.card_key=?`, key).Scan(&operationSealed); e != nil {
+			return nil, e
+		}
+		plain, err := s.decrypt(operationSealed)
+		if err != nil {
+			return nil, err
+		}
+		var op ejh.Operation
+		if err = json.Unmarshal([]byte(plain), &op); err != nil {
+			return nil, err
+		}
+		if op.Method == "cancel" {
+			card.IssuerCancelStatus = op.Status
+		}
+	}
+	return card, nil
 }
 func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 	c, e := s.issuerForPhysicalCard(q, key)

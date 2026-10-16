@@ -45,6 +45,13 @@ func TestEJHClosedRefundRecovery(t *testing.T) {
 				case "card.cancel.info":
 					cancelCalls++
 					return map[string]any{"orderNo": remote.OrderNo, "status": "SUCCESS"}
+				case "card.query.info":
+					if source != "cancel_action" || cancelCalls != 1 {
+						t.Fatal("unexpected cancellation check")
+					}
+					closed := remote
+					closed.Status = "2"
+					return closed
 				case "card.list.info":
 					closed := remote
 					closed.Status = "2"

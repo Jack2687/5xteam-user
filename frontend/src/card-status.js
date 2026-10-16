@@ -26,7 +26,8 @@ export function cardUsage(card, now = new Date()) {
   const blocked = (label, detail = '不能用于开通', tone = 'danger') => ({ label, detail, tone })
   if (linked) {
     if (status === '2') return blocked('已销卡')
-    if (status === '8') return blocked('销卡处理中', '暂不能用于开通', 'pending')
+    if (status === '8' || local.issuer_cancel_status === 'processing') return blocked('销卡处理中', '卡台正在处理，完成后自动更新，无需重复提交', 'pending')
+    if (['submitting','unknown'].includes(local.issuer_cancel_status)) return blocked('销卡结果确认中', '后台正在查询卡台结果，请勿重复提交', 'pending')
     if (card?.error) return blocked('资料待核实', '核实卡台资料后才能开通', 'pending')
     if (locked || status === '5') return blocked('已冻结 / 受限')
     if (!['1', '3'].includes(status)) {

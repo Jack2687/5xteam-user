@@ -65,15 +65,21 @@ func (s *Server) trackProStageResponse(w http.ResponseWriter, email, stage strin
 
 func proPaymentStage(order gptpay.Order) model.ProStageProgress {
 	status := "running"
+	updatedAt := time.Now()
 	switch order.Status {
 	case "success":
 		status = "completed"
+		if order.SucceededAt != nil && !order.SucceededAt.IsZero() {
+			updatedAt = *order.SucceededAt
+		} else if !order.UpdatedAt.IsZero() {
+			updatedAt = order.UpdatedAt
+		}
 	case "failed":
 		status = "failed"
 	case "submission_unknown", "manual_review":
 		status = "unknown"
 	}
-	return model.ProStageProgress{ID: order.ID, Status: status, Error: order.Error, StartedAt: order.CreatedAt, UpdatedAt: time.Now()}
+	return model.ProStageProgress{ID: order.ID, Status: status, Error: order.Error, StartedAt: order.CreatedAt, UpdatedAt: updatedAt}
 }
 
 func (s *Server) updateProPaymentStage(order gptpay.Order) {
@@ -94,6 +100,9 @@ func (s *Server) updateProPaymentStage(order gptpay.Order) {
 		}
 		if previous.ID != progress.ID || previous.Status != progress.Status || previous.Error != progress.Error {
 			delete(p.ProStageOverrides, "recharge")
+		}
+		if previous.ID == progress.ID && previous.Status == "completed" && progress.Status == "completed" {
+			progress.UpdatedAt = previous.UpdatedAt
 		}
 		p.ProManualStages["recharge"] = progress
 	})

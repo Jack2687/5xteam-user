@@ -275,6 +275,9 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 	if e := s.EJHPut("card", id, record); e != nil {
 		return empty, e
 	}
+	if e := s.reconcileEJHCancellation(remote); e != nil {
+		return empty, e
+	}
 	if len(remote.Validity) != 4 {
 		return empty, fmt.Errorf("有效期非 MMYY，卡已保存但未加入 Pro，请核对")
 	}

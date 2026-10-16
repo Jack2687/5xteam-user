@@ -47,6 +47,7 @@ type Card struct {
 	IssuerOrderNo       string         `json:"issuer_order_no,omitempty"`
 	IssuerStatus        string         `json:"issuer_status,omitempty"`
 	IssuerLocked        bool           `json:"issuer_locked,omitempty"`
+	IssuerCancelStatus  string         `json:"issuer_cancel_status,omitempty"`
 	IssuerEnd           string         `json:"issuer_end,omitempty"`
 	MaxAccounts         *int           `json:"max_accounts,omitempty"`
 	OpenedAccounts      int            `json:"opened_accounts"`
@@ -173,6 +174,7 @@ type Order struct {
 	Remote              RemoteOrder          `json:"remote"`
 	CreatedAt           time.Time            `json:"created_at"`
 	UpdatedAt           time.Time            `json:"updated_at"`
+	SucceededAt         *time.Time           `json:"succeeded_at,omitempty"`
 }
 
 func (o Order) Active() bool { return o.Status != "success" && o.Status != "failed" }

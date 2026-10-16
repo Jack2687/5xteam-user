@@ -1,0 +1,98 @@
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"chapt-space-user/internal/ejh"
+)
+
+// Only a matching issuer card snapshot confirms cancellation. Business error
+// codes alone never establish acceptance or success; keep admission blocked.
+func (s *Store) reconcileEJHCancellation(remote ejh.Card) error {
+	if remote.Status != "8" && remote.Status != "2" && remote.Status != "6" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var sealed string
+	id := EJHID("card", remote.OrderNo)
+	err = tx.QueryRow(`SELECT r.sealed FROM ejh_operation_claims c JOIN ejh_records r ON r.kind='operation' AND r.id=c.operation_id WHERE c.scope=?`, "card:"+id).Scan(&sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	plain, err := s.decrypt(sealed)
+	if err != nil {
+		return err
+	}
+	var op ejh.Operation
+	if err = json.Unmarshal([]byte(plain), &op); err != nil {
+		return err
+	}
+	if op.Method != "cancel" || op.CardID != id || op.OrderNo != remote.OrderNo ||
+		(op.Status != "submitting" && op.Status != "unknown" && op.Status != "processing") {
+		return nil
+	}
+	op.Status, op.Error, op.CheckError, op.UpdatedAt = "processing", "", "", time.Now()
+	op.Note = "卡台已确认销卡处理中，后台自动查询结果，无需重复提交"
+	if remote.Status == "2" {
+		op.Status, op.Note, op.NextCheckAt = "completed", "卡台已确认销卡成功", nil
+	} else if remote.Status == "6" {
+		op.Status, op.Error, op.Note, op.NextCheckAt = "failed", "卡台确认销卡失败，请核实后处理", "", nil
+	}
+	if err = s.ejhPutTx(tx, "operation", op.ID, op); err != nil {
+		return err
+	}
+	if op.Status != "processing" {
+		if _, err = tx.Exec(`DELETE FROM ejh_operation_claims WHERE operation_id=?`, op.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Read only outstanding claims, so completed operation history is not scanned
+// on every poll. Unknown operations from earlier versions recover here too.
+func (s *Store) EJHPendingCancellations(now time.Time, limit int) ([]ejh.Operation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT r.sealed FROM ejh_operation_claims c JOIN ejh_records r ON r.kind='operation' AND r.id=c.operation_id ORDER BY r.updated_at,r.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ejh.Operation
+	for rows.Next() {
+		var sealed string
+		if err = rows.Scan(&sealed); err != nil {
+			return nil, err
+		}
+		plain, err := s.decrypt(sealed)
+		if err != nil {
+			return nil, err
+		}
+		var op ejh.Operation
+		if err = json.Unmarshal([]byte(plain), &op); err != nil {
+			return nil, err
+		}
+		if op.Method != "cancel" || (op.Status != "submitting" && op.Status != "unknown" && op.Status != "processing") ||
+			(op.NextCheckAt != nil && op.NextCheckAt.After(now)) {
+			continue
+		}
+		out = append(out, op)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}

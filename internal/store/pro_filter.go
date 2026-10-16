@@ -2,6 +2,12 @@ package store
 
 import "strings"
 
+// Use the time the account entered Pro management, not later status refreshes.
+// Old imports without that timestamp fall back to their original creation time.
+const proManagedTimeSQL = `COALESCE(
+	julianday(NULLIF(json_extract(profile,'$.pro_managed_at'),'0001-01-01T00:00:00Z')),
+	julianday(NULLIF(json_extract(profile,'$.created_at'),'0001-01-01T00:00:00Z')))`
+
 // Listing, counts and filtered export share the same partition. Defaults such
 // as an empty ProAuto object or pending merge steps do not mean work started.
 // Include persisted manual/legacy progress, matching the stages shown by the UI.
@@ -27,9 +33,29 @@ const proAccountsCTE = `WITH accounts AS (
 			OR EXISTS (SELECT 1 FROM gptpay_orders o WHERE o.email=mail_accounts.email)
 		THEN 'in_progress' ELSE 'unmerged' END AS merge_state,
 		LOWER(email || ' ' || COALESCE(json_extract(profile,'$.current_plan_type'),'') || ' ' || COALESCE(json_extract(profile,'$.push_provider'),'')) AS search_text,
-		COALESCE(NULLIF(json_extract(profile,'$.pro_managed_at'),''), NULLIF(json_extract(profile,'$.updated_at'),''), updated_at) AS managed_at
+		` + proManagedTimeSQL + ` AS managed_at,
+		COALESCE(
+			julianday(NULLIF(json_extract(profile,'$.pro_auto.stage_times."recharge:completed"'),'0001-01-01T00:00:00Z')),
+			CASE WHEN json_extract(profile,'$.pro_manual_stages.recharge.status')='completed' THEN julianday(NULLIF(json_extract(profile,'$.pro_manual_stages.recharge.updated_at'),'0001-01-01T00:00:00Z')) END,
+			(SELECT MAX(julianday(NULLIF(json_extract(o.profile,'$.succeeded_at'),'0001-01-01T00:00:00Z'))) FROM gptpay_orders o WHERE o.email=mail_accounts.email AND json_extract(o.profile,'$.status')='success'),
+			(SELECT MAX(julianday(NULLIF(json_extract(o.profile,'$.updated_at'),'0001-01-01T00:00:00Z'))) FROM gptpay_orders o WHERE o.email=mail_accounts.email AND json_extract(o.profile,'$.status')='success')
+		) AS activated_at,
+		julianday(NULLIF(json_extract(profile,'$.space_merged_at'),'0001-01-01T00:00:00Z')) AS merged_at
 	FROM mail_accounts WHERE LOWER(COALESCE(json_extract(profile,'$.management_scope'),''))='pro'
 )`
+
+func proAccountsOrderSQL(state string) string {
+	switch state {
+	case "unmerged":
+		return "managed_at IS NULL, managed_at ASC, email ASC"
+	case "in_progress":
+		return "activated_at DESC, managed_at IS NULL, managed_at ASC, email ASC"
+	case "merged":
+		return "merged_at DESC, managed_at DESC, email ASC"
+	default:
+		return "managed_at DESC, email ASC"
+	}
+}
 
 func normalizeProMergeFilter(value string) string {
 	switch value = strings.ToLower(strings.TrimSpace(value)); value {
