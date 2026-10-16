@@ -244,9 +244,9 @@ func ForecastMoney(c Config, s Snapshot, now time.Time) MoneyForecast {
 	return f
 }
 
-func moneyTimeNeed(c Config, s Snapshot, f MoneyForecast, tasks []Task, target, lead float64, now time.Time) (int, string) {
+func moneyTimeNeed(c Config, s Snapshot, f MoneyForecast, tasks []Task, target, lead float64, now time.Time) (int, string, *MoneySizing) {
 	if f.State != "ready" || f.RateUSD == nil || *f.RateUSD <= 0 || f.RemainingUSD == nil {
-		return 0, ""
+		return 0, "", nil
 	}
 	newBudget := math.Inf(1)
 	readyIDs := map[int64]bool{}
@@ -264,7 +264,7 @@ func moneyTimeNeed(c Config, s Snapshot, f MoneyForecast, tasks []Task, target, 
 		}
 	}
 	if math.IsInf(newBudget, 1) {
-		return 0, "新开通套餐缺少美元额度样本，暂停时间侧新增"
+		return 0, "新开通套餐缺少美元额度样本，暂停时间侧新增", nil
 	}
 	pending := 0
 	for _, t := range tasks {
@@ -273,8 +273,13 @@ func moneyTimeNeed(c Config, s Snapshot, f MoneyForecast, tasks []Task, target, 
 		}
 	}
 	gap := *f.RateUSD*target - *f.RemainingUSD - float64(pending)*newBudget
-	if gap <= 0 {
-		return 0, ""
+	sizing := &MoneySizing{NewBudgetUSD: newBudget, Pending: pending, GapUSD: gap}
+	if math.IsNaN(gap) || math.IsInf(gap, 0) {
+		// Evidence must not make an otherwise serializable decision unsavable.
+		sizing = nil
 	}
-	return int(math.Min(float64(c.MaxInflight), math.Ceil(gap/newBudget))), ""
+	if gap <= 0 {
+		return 0, "", sizing
+	}
+	return int(math.Min(float64(c.MaxInflight), math.Ceil(gap/newBudget))), "", sizing
 }

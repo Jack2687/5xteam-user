@@ -202,6 +202,7 @@ type Limits struct {
 	LastBatch *time.Time `json:"last_batch,omitempty"`
 }
 type Decision struct {
+	Trace           *DecisionTrace  `json:"trace,omitempty"`
 	Money           MoneyForecast   `json:"money"`
 	NoRestockActive bool            `json:"no_restock_active"`
 	ForceMerge      ForceMergeStats `json:"force_merge"`

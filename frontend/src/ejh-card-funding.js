@@ -18,7 +18,7 @@ function money(value, currency) {
   const amount = units(value)
   return amount !== null && currencyOK(currency) ? `${format(amount)} ${currency}` : '未记录'
 }
-const matches = (card, op) => op.card_id === card.id || !!card.remote?.orderNo &&
+const matches = (card, op) => !!card.id && op.card_id === card.id || !!card.remote?.orderNo &&
   (op.order_no === card.remote.orderNo || op.result?.orderNo === card.remote.orderNo)
 
 function openingOperation(card, operations) {
@@ -135,18 +135,24 @@ export function cardFundingSummary(card, operations = [], trades = []) {
   }
 }
 
-// Estimate the saved card balance in USD at its original opening settlement
-// ratio. This is not a live FX quote or the supplier's refundable USD amount.
-export function summarizeCardBalancesUSD(cards = [], operations = []) {
-  const included = cards.filter(card => !isClosedCard(card))
+// Convert each amount using its own card's original opening settlement ratio.
+// Historical estimates are independent of current balance, availability or closure.
+export function summarizeCardAmountsUSD(entries = [], cards = [], operations = []) {
+  const byID = new Map(cards.filter(card => card.id).map(card => [card.id, card]))
+  const byOrder = new Map(cards.filter(card => card.remote?.orderNo).map(card => [card.remote.orderNo, card]))
+  const rates = new Map()
   let total = 0n, known = 0, estimated = 0
-  for (const card of included) {
-    const text = String(card.balance ?? ''), negative = text.startsWith('-')
-    const amount = units(negative ? text.slice(1) : text), currency = card.remote?.cardCurrency
-    if (!card.balance_at || amount === null || !currencyOK(currency)) continue
+  for (const entry of entries) {
+    const text = String(entry.amount ?? ''), negative = text.startsWith('-')
+    const amount = units(negative ? text.slice(1) : text), currency = entry.currency
+    if (amount === null || !currencyOK(currency)) continue
     let usd = amount
     if (currency !== 'USD' && amount !== 0n) {
-      const initial = openingValues(card, operations)
+      if (!entry.card_id && !entry.order_no) continue
+      const card = byID.get(entry.card_id) || byOrder.get(entry.order_no) || { id: entry.card_id || '', remote: { orderNo: entry.order_no || '' } }
+      const key = card.id ? `id:${card.id}` : `order:${card.remote.orderNo}`
+      if (!rates.has(key)) rates.set(key, openingValues(card, operations))
+      const initial = rates.get(key)
       const base = units(initial.amount), quote = units(initial.settlement)
       if (initial.currency !== currency || initial.settlementCurrency !== 'USD' || base === null || base <= 0n || quote === null || quote <= 0n) continue
       usd = amount * quote / base
@@ -158,5 +164,14 @@ export function summarizeCardBalancesUSD(cards = [], operations = []) {
   // Keep six decimal places while summing, then round the displayed total once.
   const absolute = total < 0n ? -total : total, cents = (absolute + 5000n) / 10000n
   const amount = `${total < 0n && cents !== 0n ? '-' : ''}${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`
-  return { amount: known ? amount : null, known, estimated, missing: included.length - known, total: included.length }
+  return { amount: known ? amount : null, known, estimated, missing: entries.length - known, total: entries.length }
+}
+
+// This is not a live FX quote or the supplier's refundable USD amount.
+export function summarizeCardBalancesUSD(cards = [], operations = []) {
+  const included = cards.filter(card => !isClosedCard(card))
+  return summarizeCardAmountsUSD(included.map(card => ({
+    card_id: card.id, order_no: card.remote?.orderNo,
+    amount: card.balance_at ? card.balance : null, currency: card.remote?.cardCurrency,
+  })), included, operations)
 }

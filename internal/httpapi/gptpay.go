@@ -326,6 +326,10 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Preserve validation responses for an explicitly selected invalid card.
+	if err = s.validateGPTPayNewPurchase(email, v); err != nil {
+		writeAPI(w, 409, nil, err.Error())
+		return
+	}
 	if input.CardID != "" {
 		selected, secret, e := s.store.GPTPayCard(input.CardID)
 		if e != nil || !selected.Enabled {
@@ -392,6 +396,14 @@ func (s *Server) submitGPTPayOrder(ctx context.Context, order gptpay.Order, snap
 			order.Status = "failed"
 		}
 		order.Error = err.Error()
+		if apiErr != nil && snapshot.Provider == gptpay.CMSNav {
+			order.Remote.Retryable = apiErr.Retryable
+			order.Remote.RetryHint = gptpay.Redact(apiErr.RetryHint, snapshot)
+			order.Remote.ErrorCode = apiErr.ErrorCode
+			if order.Remote.RetryHint != "" {
+				order.Error += "；" + order.Remote.RetryHint
+			}
+		}
 	} else {
 		order.Remote = remote
 		order.Status = remote.Status
@@ -428,7 +440,7 @@ func (s *Server) retryGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取订单失败")
 		return
 	}
-	if o.Remote.ID != "" || !o.Active() {
+	if o.Status == "manual_review" || o.Remote.ID != "" || !o.Active() {
 		writeAPI(w, 200, o, "")
 		return
 	}
@@ -507,6 +519,7 @@ func (s *Server) queryGPTPayOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range items {
 		items[i].FailureReason = gptpay.Redact(items[i].FailureReason, gptpay.Snapshot{APIKey: key})
+		items[i].RetryHint = gptpay.Redact(items[i].RetryHint, gptpay.Snapshot{APIKey: key})
 	}
 	writeAPI(w, 200, map[string]any{"orders": items}, "")
 }

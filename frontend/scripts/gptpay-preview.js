@@ -51,6 +51,7 @@ window.fetch = async (path, options = {}) => {
     return fail?reply(null,502):reply(data)
   }
   await new Promise(resolve=>setTimeout(resolve,30))
+  if(url.pathname==='/api/ejh/settings')return reply({enabled:false,templates:[]})
   if(url.pathname==='/api/pro-accounts/delete'){
     await delay(250)
     const items=body.emails.map(email=>{

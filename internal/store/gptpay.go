@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -261,6 +262,20 @@ func (s *Store) GPTPayCards(limit, offset int, enabledOnly bool) ([]gptpay.Card,
 			items = append(items, v.card)
 		}
 	}
+	// Selection uses the oldest eligible card first, before pagination. The
+	// management list remains newest first; refreshes never reset CreatedAt.
+	if enabledOnly {
+		sort.SliceStable(items, func(i, j int) bool {
+			a, b := items[i], items[j]
+			if a.CreatedAt.IsZero() != b.CreatedAt.IsZero() {
+				return !a.CreatedAt.IsZero()
+			}
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
+			return a.ID < b.ID
+		})
+	}
 	total := len(items)
 	offset = min(max(0, offset), total)
 	return items[offset:min(total, offset+max(0, limit))], total, nil
@@ -438,6 +453,7 @@ func (s *Store) GPTPayOrdersDue(now time.Time, limit int) ([]gptpay.Order, error
 	limit = min(20, max(1, limit))
 	rows, err := s.db.Query(`SELECT o.profile FROM gptpay_orders o
 		WHERE COALESCE(json_extract(o.profile,'$.remote.id'),'')<>''
+		AND COALESCE(json_extract(o.profile,'$.status'),'')<>'manual_review'
 		AND (o.active=1 OR json_extract(o.profile,'$.remote.cancellationStatus') IN ('waiting','pending'))
 		AND COALESCE(json_extract(o.profile,'$.next_status_check_at'),'')<=?
 		AND NOT EXISTS (SELECT 1 FROM mail_accounts m WHERE m.email=o.email AND json_extract(m.profile,'$.pro_auto.status')='running')

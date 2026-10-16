@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chapt-space-user/internal/gptpay"
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/restock"
 	"context"
@@ -382,7 +383,14 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 			startupPending = startupPending || t.EmptyGroupStartup || t.ForceMergeSource != ""
 		}
 	}
-	if c.Enabled && c.Mode == "auto" && d.Suggested > 0 && fresh && snap.Valid && ctx.Err() == nil {
+	payConfig, _, purchaseErr := s.store.GPTPaySettings()
+	if purchaseErr == nil {
+		purchaseErr = gptpay.ValidatePurchase(payConfig)
+	}
+	if purchaseErr != nil {
+		d.Suggested, d.Reason = 0, purchaseErr.Error()
+	}
+	if purchaseErr == nil && c.Enabled && c.Mode == "auto" && d.Suggested > 0 && fresh && snap.Valid && ctx.Err() == nil {
 		target, e := s.store.SaveDownstreamTarget(model.DownstreamTarget{Scope: "pro-restock", Provider: "sub2", Sub2: p.Sub2, Secret: password})
 		if e == nil {
 			var reserved []restock.Task
@@ -400,7 +408,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if startupPending && gross.DemandKnown && gross.Suggested == 0 {
 		d.Reason += "；启动或提前接替批次仍有预留，按工作并发继续执行"
 	}
-	if c.Enabled && c.Mode == "auto" && !d.NoRestockActive && snap.Valid && snap.LoadValid && (gross.Suggested > 0 || (startupPending && gross.DemandKnown)) && limits.Failures < c.FailureLimit && ctx.Err() == nil {
+	if purchaseErr == nil && c.Enabled && c.Mode == "auto" && !d.NoRestockActive && snap.Valid && snap.LoadValid && (gross.Suggested > 0 || (startupPending && gross.DemandKnown)) && limits.Failures < c.FailureLimit && ctx.Err() == nil {
 		s.dispatchProRestock(ctx, c, p, snap, gross.Suggested == 0)
 	}
 	s.proRestock.mu.Lock()

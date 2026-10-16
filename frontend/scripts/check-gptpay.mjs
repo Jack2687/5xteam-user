@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { parseCardText, needsPayPoll, proPlanName, catalogProPlans } from '../src/gptpay.js'
+import { parseCardText, needsPayPoll, proPlanName, catalogProPlans, paymentRetryBlocked, supplierPaymentLabel } from '../src/gptpay.js'
 for (const date of ['202812','2028-12','2028/12','12/28','12/2028','2812']) {
   assert.deepEqual(parseCardText(`4242 4242 4242 4242----${date}----012`), { number: '4242424242424242', cvv: '012', exp_year: 2028, exp_month: 12 })
 }
@@ -23,3 +23,17 @@ assert.equal(needsPayPoll({status:'success', remote:{id:'test', cancellationStat
 assert.equal(needsPayPoll({status:'processing', remote:{id:'test'}}), true)
 assert.equal(needsPayPoll({status:'submission_unknown', remote:{}}), false)
 console.log('GPTPay card parsing, plan labels and polling conditions passed')
+assert.equal(needsPayPoll({status:'manual_review',remote:{id:'review',cancellationStatus:'pending'}}),false)
+assert.equal(needsPayPoll({status:'submission_unknown',remote:{id:'original'}}),true)
+assert.equal(paymentRetryBlocked({provider:'cmsnav',status:'failed',remote:{id:'original',retryable:false}}),true)
+assert.equal(paymentRetryBlocked({provider:'cmsnav',status:'failed',remote:{retryable:false,errorCode:'INSUFFICIENT_CREDITS'}}),false)
+assert.equal(paymentRetryBlocked({provider:'cmsnav',status:'failed',remote:{errorCode:'PAYMENT_VERIFICATION_REQUIRED'}}),true)
+assert.equal(paymentRetryBlocked({provider:'tokenseek',status:'failed',remote:{retryable:false}}),false)
+assert.equal(supplierPaymentLabel({paymentAmount:'8919.64',paymentCurrency:'PHP'}),'8919.64 PHP')
+assert.equal(supplierPaymentLabel({paymentAmountMinor:891964,paymentCurrency:'PHP'}),'8919.64 PHP')
+assert.equal(supplierPaymentLabel({paymentAmountMinor:123,paymentCurrency:'JPY'}),'123 JPY')
+assert.equal(supplierPaymentLabel({paymentAmountMinor:1234,paymentCurrency:'BHD'}),'1.234 BHD')
+assert.equal(supplierPaymentLabel({paymentAmountMinor:0,paymentCurrency:'USD'}),'0.00 USD')
+assert.equal(supplierPaymentLabel({paymentAmountMinor:null,paymentCurrency:'USD'}),'待返回')
+assert.equal(supplierPaymentLabel({paymentAmount:'10.00'}),'待返回')
+console.log('CMSNav retry policy, manual review polling and currency amounts passed')

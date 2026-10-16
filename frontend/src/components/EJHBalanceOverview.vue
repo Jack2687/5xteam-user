@@ -11,7 +11,7 @@ const props = defineProps({ data: { type: Object, required: true }, busy: Boolea
 const emit = defineEmits(['refresh', 'ledger-updated'])
 const balances = computed(() => summarizeCardBalances(props.data.cards))
 const usd = computed(() => summarizeCardBalancesUSD(props.data.cards, props.data.operations))
-const inFlight = computed(() => summarizeInFlightPayments(props.data.cases))
+const inFlight = computed(() => summarizeInFlightPayments(props.data.cases, props.data.cards, props.data.operations))
 const ledger = computed(() => props.data.recharge_ledger || { amount: '' })
 const editing = ref(false), saving = ref(false), draft = ref(''), error = ref(''), amountInput = ref(null)
 const valid = computed(() => draft.value.trim() === '' || /^\d{1,12}(\.\d{1,2})?$/.test(draft.value.trim()))
@@ -65,10 +65,12 @@ async function saveLedger() {
       <dt>{{label}}</dt><dd><strong v-for="amount in inFlight[kind]" :key="amount.currency">{{amount.amount}} <em>{{amount.currency}}</em></strong><strong v-if="!inFlight[kind].length">{{missing?'待核实':kind==='settlement'&&inFlight.pendingSettlement?'待结算':'0.00'}}</strong><small v-if="missing">{{missing}} 笔金额待核实，未计入</small><small v-if="kind==='settlement'&&inFlight.pendingSettlement&&(inFlight.settlement.length||missing)">{{inFlight.pendingSettlement}} 笔待结算，未计入</small></dd>
      </div>
     </dl>
+    <div class="overview-usd" title="按各卡初始开卡的 USD 结算比例估算"><span>卡内付款折合 USD{{inFlight.paymentUSD.missing&&inFlight.paymentUSD.known?'（部分）':''}}</span><strong>{{inFlight.paymentUSD.estimated?'≈ ':''}}{{inFlight.paymentUSD.amount??(inFlight.paymentUSD.missing?'—':'0.00')}} <em>USD</em></strong></div>
+    <small v-if="inFlight.paymentUSD.missing">{{inFlight.paymentUSD.missing}} 笔缺少金额或 USD 折算依据，未计入</small>
     <small>已开通 + 已申请待回款<span v-if="inFlight.authorizations"> · 含授权占用</span></small>
    </div>
   </div>
-  <footer class="overview-footer"><details><summary>统计说明</summary><p>充值总账为手动填写的累计金额。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 余额按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次，卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{failures.length}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
+  <footer class="overview-footer"><details><summary>统计说明</summary><p>充值总账为手动填写的累计金额。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 卡内余额和卡内付款按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片或付款不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次，卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{failures.length}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
  </section>
 </template>
 

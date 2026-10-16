@@ -49,7 +49,7 @@ func TestWebSessionTokenNewOrderAndImmutableReplay(t *testing.T) {
 				if err := json.Unmarshal([]byte(raw), &session); err != nil {
 					t.Fatal(err)
 				}
-				snap := NewSnapshot(Settings{Provider: provider, URL: server.URL, Country: "PH", PlanCode: "pro5"}, "fixture-key", CardSecret{}, session)
+				snap := NewSnapshot(Settings{TermsAccepted: true, Provider: provider, URL: server.URL, Country: "PH", PlanCode: "pro5"}, "fixture-key", CardSecret{}, session)
 				if _, _, err := New().Create(context.Background(), snap, "original-order-key"); err != nil {
 					t.Fatal(err)
 				}

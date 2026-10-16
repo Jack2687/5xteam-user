@@ -52,6 +52,7 @@ func pressureAt(c Config, s Snapshot, now time.Time) bool {
 
 func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, newSlots int, lead float64, now time.Time) (d Decision) {
 	d = Decision{At: now, Version: c.Version, Snapshot: s, Config: c, Limits: limits, Confirmations: confirmations, LeadMinutes: lead, TriggerMinutes: float64(c.TriggerMinutes), TargetMinutes: float64(c.TargetMinutes), Warnings: []string{}}
+	d.Trace = &DecisionTrace{Version: 1, NewAccountCapacity: newSlots, StopStage: "data"}
 	// Keep forecasts, demand and collection errors visible while suppressing
 	// every trigger, including startup, replacement and emergency demand.
 	defer func() {
@@ -61,7 +62,9 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 			}
 			d.NoRestockActive = true
 			d.Suggested, d.Reason = 0, reason
+			d.Trace.StopStage = "daily_pause"
 		}
+		d.Trace.EvaluationReason = d.Reason
 	}()
 	if c.Early {
 		d.TriggerMinutes = math.Max(d.TriggerMinutes, lead+float64(c.MarginMinutes))
@@ -87,6 +90,7 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 			}
 		}
 	}
+	d.Trace.TimelyInflight, d.Trace.GroupInflight = timely, groupInflight
 	block := func(reason string) Decision { d.Suggested = 0; d.Reason = reason; return d }
 	if !s.Valid || s.At.IsZero() || now.Sub(s.At) > time.Duration(c.FreshSeconds)*time.Second || s.At.After(now.Add(5*time.Second)) {
 		return block(first(s.Error, "监控快照缺失或过期，暂停新增"))
@@ -112,6 +116,7 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		return block("推送设置的单账号并发无效")
 	}
 	d.DemandKnown = true
+	d.Trace.StopStage = "rules"
 	d.ForceMerge = ForceMergeSummary(c, s, tasks, now)
 	if d.ForceMerge.Triggered {
 		d.ForceMergeNeed = len(d.ForceMerge.Sources)
@@ -127,8 +132,10 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		}
 	}
 	if c.ConcurrencyEnabled && confirmations >= c.Confirmations && pressureAt(c, s, now) {
+		d.Trace.ConcurrencyTriggered = true
 		d.ConcurrencyNeed = max(0, int(math.Ceil((float64(d.Used+d.Waiting)*100/float64(c.TargetPercent)-float64(futureCapacity+timely*newSlots))/float64(newSlots))))
 	}
+	d.Trace.FutureCapacity = futureCapacity
 	timeWithinHorizon := lead < float64(c.ForecastMinutes) && d.TargetMinutes <= float64(c.ForecastMinutes)
 	if c.TimeEnabled && !timeWithinHorizon {
 		d.Warnings = append(d.Warnings, "预计就绪或补后目标超出预测上限，暂停时间侧新增；并发和最低备用仍独立生效")
@@ -142,11 +149,12 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		}
 	}
 	if c.TimeEnabled && timeWithinHorizon && d.SupplyMinutes != nil && *d.SupplyMinutes <= d.TriggerMinutes {
+		d.Trace.TimeTriggered = true
 		if *d.SupplyMinutes < lead {
 			d.Warnings = append(d.Warnings, "新号就绪前可能出现额度缺口")
 		}
 		var warning string
-		d.TimeNeed, warning = moneyTimeNeed(c, s, d.Money, tasks, d.TargetMinutes, lead, now)
+		d.TimeNeed, warning, d.Trace.MoneySizing = moneyTimeNeed(c, s, d.Money, tasks, d.TargetMinutes, lead, now)
 		if warning != "" {
 			d.Warnings = append(d.Warnings, warning)
 		}
@@ -159,6 +167,7 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		d.EmptyGroupNeed = max(0, c.EmptyGroupCount-groupInflight)
 	}
 	need := max(d.TimeNeed, d.ConcurrencyNeed, d.ReserveNeed, d.EmptyGroupNeed, d.ForceMergeNeed)
+	d.Trace.NetNeed = need
 	if need == 0 {
 		if len(s.Accounts) == 0 && c.EmptyGroupCount > 0 && groupInflight > 0 {
 			return block("空分组启动数量已由同组在途覆盖，等待原任务入组；结果未知仍保留占用")
@@ -166,33 +175,47 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		return block("没有已确认的净缺口；继续采样并跟踪在途")
 	}
 	if limits.Failures >= c.FailureLimit {
+		d.Trace.StopStage = "breaker"
 		return block("连续失败已达熔断阈值，处理原因后在配置页重置熔断")
 	}
 	cooldown := c.CooldownSeconds
 	if d.Waiting >= c.EmergencyQueue {
 		cooldown = c.EmergencyCooldownSeconds
 	}
+	d.Trace.CooldownSeconds = &cooldown
 	if limits.LastBatch != nil && now.Sub(*limits.LastBatch) < time.Duration(cooldown)*time.Second {
+		d.Trace.StopStage = "cooldown"
+		d.Trace.CooldownRemainingSeconds = int(math.Ceil((time.Duration(cooldown)*time.Second - now.Sub(*limits.LastBatch)).Seconds()))
 		return block("正常／紧急冷却尚未结束")
 	}
+	d.Trace.StopStage = "limits"
+	d.Trace.Caps = []DecisionCap{{"batch", c.MaxBatch}, {"inflight", c.MaxInflight - d.Inflight}, {"pool", c.PoolLimit - len(s.Accounts) - d.Inflight}, {"hour", c.HourLimit - limits.HourCount}, {"day", c.DayLimit - limits.DayCount}}
 	hard := min(c.MaxBatch, c.MaxInflight-d.Inflight, c.PoolLimit-len(s.Accounts)-d.Inflight, c.HourLimit-limits.HourCount, c.DayLimit-limits.DayCount)
 	if c.HourBudget > 0 {
-		hard = min(hard, int(max(int64(0), c.HourBudget-limits.HourCost)/max(int64(1), c.UnitCost)))
+		remaining := int(max(int64(0), c.HourBudget-limits.HourCost) / max(int64(1), c.UnitCost))
+		hard = min(hard, remaining)
+		d.Trace.Caps = append(d.Trace.Caps, DecisionCap{"hour_budget", remaining})
 	}
 	if c.DayBudget > 0 {
-		hard = min(hard, int(max(int64(0), c.DayBudget-limits.DayCost)/max(int64(1), c.UnitCost)))
+		remaining := int(max(int64(0), c.DayBudget-limits.DayCost) / max(int64(1), c.UnitCost))
+		hard = min(hard, remaining)
+		d.Trace.Caps = append(d.Trace.Caps, DecisionCap{"day_budget", remaining})
 	}
+	d.Trace.HardLimit = &hard
 	strictMinimum := !c.AllowSmall && !d.EmptyGroupOnly()
+	d.Trace.StrictMinimum = strictMinimum
 	if strictMinimum && hard < c.MinBatch {
 		return block("在途、池容量或预算余量不足最小批量")
 	}
 	if strictMinimum {
 		need = max(need, c.MinBatch)
 	}
+	d.Trace.AfterMinimum = &need
 	d.Suggested = max(0, min(need, hard))
 	if d.Suggested == 0 {
 		return block("达到在途、账号池、小时／日数量或预算上限")
 	}
+	d.Trace.StopStage = "complete"
 	d.Reason = "时间、并发、备用、空分组与强制合并接替净缺口取最大值，各规则已扣除适用在途"
 	if d.EmptyGroupOnly() {
 		d.Reason = "监控分组为 0 个账号，按空分组启动数量补货；已扣除同组全部在途"

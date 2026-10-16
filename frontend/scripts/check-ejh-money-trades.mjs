@@ -40,7 +40,7 @@ assert.equal(accountAmounts({charge,returns:[timedReturn('reversal','2026-10-16 
 const code=readFileSync(new URL('../src/components/EJHCardTrades.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const calls=[],unmounts=[]
 let fail=false,release,hold=false
-const context=vm.createContext({ref,reactive,AbortController,defineEmits:()=>()=>{},defineExpose(){},onBeforeUnmount:fn=>unmounts.push(fn),async api(url,options){calls.push({url,options});if(hold)await new Promise(resolve=>{release=resolve});if(fail)throw Error('fixture failure');return {items:[{tradeNo:'saved'}],page:options.body.page,has_more:true,queried_at:'2026-10-15T00:00:00Z'}}})
+const context=vm.createContext({ref,reactive,AbortController,defineEmits:()=>()=>{},defineProps:()=>({feePercent:6}),defineExpose(){},onBeforeUnmount:fn=>unmounts.push(fn),async api(url,options){calls.push({url,options});if(hold)await new Promise(resolve=>{release=resolve});if(fail)throw Error('fixture failure');return {items:[{tradeNo:'saved'}],page:options.body.page,has_more:true,queried_at:'2026-10-15T00:00:00Z'}}})
 vm.runInContext(code+';globalThis.f={open,query,dates,rows,page,applied,requestedPage,error,busy};',context)
 const f=context.f
 await f.open({id:'card/one'})
@@ -122,6 +122,19 @@ console.log('Passed: in-flight states, separate transaction/settlement currencie
 // two amount fields are zero placeholders until settlement.
 const heldRows=['a','b','c'].map(id=>inFlightCase(id,'waiting',{card_amount:'5794.64',card_currency:'PHP',trade_amount:'0',bill_amount:'0'}))
 const held=summarizeInFlightPayments(heldRows)
+const openingUSD={id:'opening',card_id:'c',method:'open',status:'completed',result:{cardAmount:'13000',cardCurrency:'PHP',billAmount:'208.65',billCurrency:'USD'}}
+const heldUSD=summarizeInFlightPayments(heldRows,[],[openingUSD])
+assert.deepEqual(heldUSD.paymentUSD,{amount:'279.01',known:3,estimated:3,missing:0,total:3},'unsettled zero billAmount must not turn real card holds into zero USD')
+assert.equal(heldUSD.pendingSettlement,3,'estimated USD does not change settlement state')
+assert.deepEqual(summarizeInFlightPayments([...heldRows,heldRows[0],{...heldRows[0],id:'duplicate-case'}],[],[openingUSD]).paymentUSD,heldUSD.paymentUSD)
+assert.equal(summarizeInFlightPayments(heldRows).paymentUSD.amount,null)
+assert.equal(summarizeInFlightPayments(heldRows).paymentUSD.missing,3)
+const otherOpening={...openingUSD,id:'other-open',card_id:'other',result:{...openingUSD.result,billAmount:'260'}}
+assert.equal(summarizeInFlightPayments([heldRows[0],{...heldRows[0],id:'other-case',ejh_card_id:'other'}],[],[openingUSD,otherOpening]).paymentUSD.amount,'208.90')
+assert.equal(summarizeInFlightPayments([{id:'unknown',state:'waiting'},heldRows[0]],[],[openingUSD]).paymentUSD.missing,1)
+assert.equal(summarizeInFlightPayments([inFlightCase('bad','waiting',{card_amount:'-1',card_currency:'USD'})]).paymentUSD.amount,null)
+assert.equal(summarizeInFlightPayments([inFlightCase('zero-usd','waiting',{card_amount:'0',card_currency:'USD'})]).paymentUSD.amount,'0.00')
+assert.equal(summarizeInFlightPayments(heldRows.map(row=>({...row,state:'returned'})),[],[openingUSD]).paymentUSD.total,0)
 assert.equal(held.count,3)
 assert.deepEqual(held.payment,[{amount:'17383.92',currency:'PHP'}])
 assert.deepEqual(held.settlement,[])

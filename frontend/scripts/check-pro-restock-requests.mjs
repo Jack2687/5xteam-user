@@ -13,6 +13,7 @@ function fixture() {
   let mounted, unmounted, timerID = 0
   const context = vm.createContext({
     ref, reactive, computed, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
+    document: {activeElement: {focus() {}}},
     onMounted(fn) { mounted = fn }, onUnmounted(fn) { unmounted = fn },
     setInterval(fn) { const id = ++timerID; timers.set(id, fn); return id },
     clearInterval(id) { timers.delete(id) },
@@ -23,7 +24,7 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
 }
 
@@ -206,3 +207,48 @@ for(const value of [0,-1,61,1.5,'',NaN]){
  assert.match(f.error.value,/其他页面/);assert.equal(f.savingWindow.value,false);f.unmounted()
 }
 console.log('Passed: editable money window, bounds, draft isolation, polling and save-failure behavior')
+
+// Detail requests belong to a single opening, including reopening the same ID.
+for (const finish of ['success', 'failure']) {
+ const f=fixture();let opened=0
+ f.dialog.value={open:false,showModal(){this.open=true;opened++},close(){this.open=false}}
+ const item={id:'same-id',snapshot:{id:'s'},reason:'stored reason'}
+ const first=f.showDetail(item);await tick();await tick()
+ const old=f.requests[0]
+ assert.equal(f.detailLoading.value,true)
+ f.closeDetail()
+ assert.equal(old.options.signal.aborted,true)
+ const second=f.showDetail(item);await tick();await tick()
+ f.requests[1].resolve([{id:'current',status:'ready'}]);await second
+ if(finish==='success')old.resolve([{id:'old'}]);else old.reject(new Error('old error'))
+ await first
+ assert.equal(f.detail.value.related_tasks[0].id,'current')
+ assert.equal(f.detailError.value,'')
+ assert.equal(f.detailLoading.value,false)
+ assert.equal(opened,2)
+ assert.equal(item.related_tasks,undefined,'original record mutated')
+ f.unmounted()
+}
+{
+ const f=fixture();const item={id:'retry',snapshot:{id:'s'},reason:'saved evidence'}
+ const opening=f.showDetail(item);await tick();await tick()
+ f.requests[0].reject(new Error('network unavailable'));await opening
+ assert.equal(f.error.value,'','detail failure leaked behind dialog')
+ assert.match(f.detailError.value,/network unavailable/)
+ assert.equal(f.detail.value.reason,'saved evidence')
+ const retry=f.loadDetailTasks();await tick();f.requests[1].resolve([]);await retry
+ assert.equal(f.detailError.value,'');assert.equal(f.detail.value.related_tasks.length,0)
+ const pending=f.loadDetailTasks();await tick();f.unmounted()
+ assert.equal(f.requests[2].options.signal.aborted,true)
+ f.requests[2].resolve([{id:'after-unmount'}]);await pending
+ assert.equal(f.detail.value.related_tasks.length,0)
+}
+{
+ const f=fixture();let opened=false
+ f.dialog.value={showModal(){opened=true},close(){}}
+ const opening=f.showDetail({id:'close-before-tick',snapshot:{id:'s'}})
+ f.closeDetail();await opening
+ assert.equal(opened,false);assert.equal(f.requests.length,0)
+ f.unmounted()
+}
+console.log('Passed: detail cancellation, reopening, loading, retry and unmount isolation')

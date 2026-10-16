@@ -180,6 +180,12 @@ func (s *Server) tickProSchedule(force bool) {
 	}
 	pay, key, err := s.store.GPTPaySettings()
 	if err == nil {
+		if purchaseErr := gptpay.ValidatePurchase(pay); purchaseErr != nil {
+			finish("failed", purchaseErr.Error())
+			return
+		}
+	}
+	if err == nil {
 		err = s.validateProAutoPush(model.MailAccountProfile{}, cfg, password)
 	}
 	if err != nil || key == "" || cfg.TargetAdminID == "" {

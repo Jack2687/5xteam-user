@@ -30,6 +30,7 @@ func Provider(v string) string {
 }
 
 type Settings struct {
+	TermsAccepted         bool   `json:"terms_accepted"`
 	Provider              string `json:"provider"`
 	Country               string `json:"country"`
 	CardAccountLimit      int    `json:"card_account_limit"`
@@ -107,6 +108,8 @@ type CreateInput struct {
 // Snapshot is encrypted at rest and never returned by list/detail APIs. Keeping
 // it makes an uncertain submission replayable with exactly the original input.
 type Snapshot struct {
+	// Nil preserves the exact payload of orders created before terms support.
+	TermsAccepted   *bool       `json:"terms_accepted,omitempty"`
 	WebSessionToken string      `json:"web_session_token,omitempty"`
 	Provider        string      `json:"provider,omitempty"`
 	Country         string      `json:"country,omitempty"`
@@ -116,22 +119,31 @@ type Snapshot struct {
 }
 
 type RemoteOrder struct {
-	Country            string `json:"country,omitempty"`
-	CreditQuantity     int    `json:"creditQuantity,omitempty"`
-	ID                 string `json:"id"`
-	OrderNo            string `json:"orderNo"`
-	Status             string `json:"status"`
-	SettlementStatus   string `json:"settlementStatus"`
-	CancellationStatus string `json:"cancellationStatus"`
-	PlanCode           string `json:"planCode"`
-	ReservedCredits    int64  `json:"reservedCredits"`
-	ChargedCredits     int64  `json:"chargedCredits"`
-	ReleasedCredits    int64  `json:"releasedCredits"`
-	TargetEmail        string `json:"targetEmail"`
-	CardLast4          string `json:"cardLast4"`
-	FailureReason      string `json:"failureReason"`
-	CreatedAt          string `json:"createdAt"`
-	UpdatedAt          string `json:"updatedAt"`
+	Retryable           *bool  `json:"retryable,omitempty"`
+	RetryHint           string `json:"retryHint,omitempty"`
+	FailureCategory     string `json:"failureCategory,omitempty"`
+	ErrorCode           string `json:"errorCode,omitempty"`
+	PaymentAmount       string `json:"paymentAmount,omitempty"`
+	PaymentAmountMinor  *int64 `json:"paymentAmountMinor,omitempty"`
+	PaymentCurrency     string `json:"paymentCurrency,omitempty"`
+	PaymentCountry      string `json:"paymentCountry,omitempty"`
+	PaymentAmountSource string `json:"paymentAmountSource,omitempty"`
+	Country             string `json:"country,omitempty"`
+	CreditQuantity      int    `json:"creditQuantity,omitempty"`
+	ID                  string `json:"id"`
+	OrderNo             string `json:"orderNo"`
+	Status              string `json:"status"`
+	SettlementStatus    string `json:"settlementStatus"`
+	CancellationStatus  string `json:"cancellationStatus"`
+	PlanCode            string `json:"planCode"`
+	ReservedCredits     int64  `json:"reservedCredits"`
+	ChargedCredits      int64  `json:"chargedCredits"`
+	ReleasedCredits     int64  `json:"releasedCredits"`
+	TargetEmail         string `json:"targetEmail"`
+	CardLast4           string `json:"cardLast4"`
+	FailureReason       string `json:"failureReason"`
+	CreatedAt           string `json:"createdAt"`
+	UpdatedAt           string `json:"updatedAt"`
 }
 
 type OccupancyResolution struct {
@@ -166,7 +178,30 @@ type Order struct {
 func (o Order) Active() bool { return o.Status != "success" && o.Status != "failed" }
 
 func (o Order) NeedsStatusPoll() bool {
+	if o.Status == "manual_review" {
+		return false
+	}
 	return o.Remote.ID != "" && (o.Active() || o.Remote.CancellationStatus == "waiting" || o.Remote.CancellationStatus == "pending")
+}
+
+func (o Order) RetryBlocked() bool {
+	// A validation rejection before task creation can be corrected (for example,
+	// top up credits or renew the Session). It must not permanently lock an account.
+	if o.Remote.ID == "" {
+		switch o.Remote.ErrorCode {
+		case "API_KEY_INVALID", "RESOURCE_FORBIDDEN", "INSUFFICIENT_CREDITS", "REQUEST_REJECTED", "SESSION_INVALID", "CHANNEL_UNAVAILABLE", "CORS_ORIGIN_NOT_ALLOWED":
+			return false
+		}
+	}
+	return Provider(o.Provider) == CMSNav && o.Status == "failed" &&
+		((o.Remote.Retryable != nil && !*o.Remote.Retryable) || o.Remote.FailureCategory == "payment_verification" || o.Remote.ErrorCode == "PAYMENT_VERIFICATION_REQUIRED")
+}
+
+func ValidatePurchase(v Settings) error {
+	if Provider(v.Provider) == CMSNav && !v.TermsAccepted {
+		return fmt.Errorf("请先在 Pro 全自动配置的开通设置中确认并保存 CMSNav 商户条款")
+	}
+	return nil
 }
 
 type AccountPlan struct {
@@ -316,6 +351,8 @@ func ParseCard(line string, now time.Time) (CardSecret, error) {
 }
 
 type APIError struct {
+	Retryable        *bool
+	RetryHint        string
 	ErrorCode        string
 	HTTPStatus, Code int
 	RequestID        string

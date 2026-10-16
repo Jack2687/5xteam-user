@@ -1,0 +1,31 @@
+<script setup>
+import {computed} from 'vue'
+import {decisionReport} from '../restockDecision'
+import ProForecastDetails from './ProForecastDetails.vue'
+const props=defineProps({decision:{type:Object,required:true},loading:Boolean,error:String,statuses:Object,stages:Object})
+defineEmits(['retry'])
+const report=computed(()=>decisionReport(props.decision))
+const activeRules=computed(()=>report.value.rules.filter(rule=>rule.active))
+const otherRules=computed(()=>report.value.rules.filter(rule=>!rule.active))
+const fmt=t=>t&&!String(t).startsWith('0001')?new Date(t).toLocaleString('zh-CN',{hour12:false}):'未记录'
+</script>
+<template>
+ <div class="decision-audit">
+  <div class="result"><strong>{{report.evaluation?report.outcome:'配置 / 操作记录'}}</strong><p v-if="report.evaluation">{{report.trigger}}</p><p v-if="!decision.started||!report.evaluationReason||report.evaluationReason!==decision.reason">{{decision.reason||'未记录执行结果'}}</p><p v-if="report.evaluationReason&&report.evaluationReason!==decision.reason" class="hint">规则评估：{{report.evaluationReason}}</p></div>
+  <div class="meta"><span>{{fmt(decision.at)}} · 配置 v{{decision.version}}</span><span>监控组 #{{decision.snapshot?.group_id||decision.config?.group_id||'未记录'}}</span></div>
+  <p class="record-id">记录编号 {{decision.id||'本轮尚未留存'}}</p>
+  <template v-if="report.evaluation">
+   <p class="hint">以下依据来自本轮保存的配置与快照，不随当前配置变化。快照时间：{{fmt(decision.snapshot?.at)}}。</p>
+   <p v-if="report.legacy" class="warning">这是一条旧记录，展示已保存的规则结果与监控值；未保存的在途扣减、单号容量和限额中间值无法追溯。</p>
+   <section><h3>为什么触发</h3><div class="rules"><article v-for="rule in activeRules" :key="rule.key" class="active"><div class="rule-head"><b>{{rule.name}}</b><span>净缺口 {{rule.need}}</span></div><p>{{rule.evidence}}</p><details v-if="rule.extra" class="calculation"><summary>计算明细与在途扣减</summary><p class="hint">{{rule.extra}}</p></details></article></div><details v-if="otherRules.length" class="other-rules"><summary>查看其他规则（{{otherRules.length}}）</summary><div class="rules"><article v-for="rule in otherRules" :key="rule.key"><div class="rule-head"><b>{{rule.name}}</b><span>{{rule.status}} · 净缺口 {{rule.need}}</span></div><p>{{rule.evidence}}</p><p v-if="rule.extra" class="hint">{{rule.extra}}</p></article></div></details></section>
+   <section><h3>为什么是这个数量</h3><ol><li v-for="step in report.steps" :key="step">{{step}}</li></ol><div v-if="report.caps.length" class="caps"><span v-for="cap in report.caps" :key="cap.name" :class="{binding:cap.binding}">{{cap.name}} <b>{{cap.remaining}} 个</b></span></div><p v-if="report.caps.length" class="hint">突出显示本轮最紧的数量限制；预算余量已折算为可预留账号数。</p></section>
+   <section><h3>当时的执行限制</h3><dl><div v-for="item in report.protections" :key="item.name"><dt>{{item.name}}</dt><dd>{{item.text}}</dd></div></dl><p v-for="warning in decision.warnings||[]" :key="warning" class="warning">{{warning}}</p></section>
+   <section aria-label="关联任务"><h3>关联执行任务 · 当前进度</h3><p class="hint">任务进度为本次打开详情时读取；上方触发依据保持为历史记录。</p><p v-if="loading" role="status">正在读取关联任务…</p><p v-else-if="error" role="alert" class="warning">关联任务读取失败：{{error}} <button @click="$emit('retry')">重新读取</button></p><template v-else><p v-if="!decision.related_tasks?.length" class="hint">{{decision.started>0?'本轮记录已预留任务，但未查到关联明细，可能已被清理。':'本轮没有新增关联任务。'}}</p><article v-for="task in decision.related_tasks||[]" :key="task.id" class="task"><div class="rule-head"><b>{{task.email||task.id}}</b><span>{{statuses?.[task.status]||task.status}}</span></div><p>{{stages?.[task.stage]||task.stage||'尚无执行阶段'}}<template v-if="task.message"> · {{task.message}}</template></p><p class="hint">订单 {{task.order_id||'尚未生成'}} · 更新 {{fmt(task.updated_at)}}<template v-if="task.eta"> · 预计就绪 {{fmt(task.eta)}}</template></p></article></template></section>
+   <details><summary>查看当时的额度与消耗明细</summary><ProForecastDetails :decision="decision" historical/></details>
+  </template>
+  <p v-else class="hint">这是配置保存或人工操作事件，没有执行补货评估。</p>
+ </div>
+</template>
+<style scoped>
+.decision-audit{font-size:13px;line-height:1.75;color:var(--ink)}.result{border-left:3px solid var(--teal);padding:12px 16px;background:color-mix(in srgb,var(--teal) 7%,transparent);border-radius:5px}.result strong{font-size:18px}.result p{margin:6px 0 0}.meta{display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:14px}.meta,.hint,.record-id{color:var(--muted);font-size:12px}.record-id{overflow-wrap:anywhere;margin:3px 0 12px}section{margin-top:24px}h3{font-size:14px;margin:0 0 10px}.trigger-summary{color:var(--teal);font-weight:600}.rules{display:grid;gap:10px}.rules article,.task{border:1px solid var(--border);border-radius:8px;padding:12px 14px;min-width:0}.rules article.active{border-color:var(--teal);background:color-mix(in srgb,var(--teal) 4%,transparent)}.rule-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}.rule-head b{overflow-wrap:anywhere}.rule-head span{font-size:11px;color:var(--muted)}.active .rule-head span,.need b{color:var(--teal)}p{margin:6px 0;overflow-wrap:anywhere}.need{font-size:12px;text-align:right}ol{padding-left:22px;margin:0}li{margin:7px 0}.caps{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.caps span{padding:5px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px}.caps .binding{border-color:var(--teal);color:var(--teal)}dl{margin:0}dl>div{display:grid;grid-template-columns:90px 1fr;gap:14px;padding:8px 0;border-bottom:1px solid var(--border)}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}.warning{padding:10px 12px;border:1px solid #d1aa60;border-radius:6px;color:var(--ink);background:color-mix(in srgb,#e9bd69 12%,transparent);font-size:12px}.task{margin-top:10px}button{font:inherit;cursor:pointer;padding:4px 10px;color:var(--teal);border:1px solid var(--border);border-radius:5px;background:transparent}details{margin:24px 0 10px}summary{cursor:pointer;margin-bottom:12px}.calculation,.other-rules{margin:10px 0 0}.calculation summary{font-size:12px;color:var(--muted);margin-bottom:0}.calculation[open] summary{margin-bottom:6px}@media(max-width:600px){.result strong{font-size:16px}.rule-head{gap:4px}.rule-head span{width:100%}dl>div{grid-template-columns:74px 1fr;gap:8px}}
+</style>

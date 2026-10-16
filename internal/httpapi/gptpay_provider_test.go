@@ -40,6 +40,7 @@ func TestGPTPayCMSNavManualReplayUsesOriginalProvider(t *testing.T) {
 	})
 	cfg, _, _ := st.GPTPaySettings()
 	cfg.Provider, cfg.PlanCode, cfg.Country = gptpay.CMSNav, "pro50", "US"
+	cfg.TermsAccepted = true
 	if _, err := st.SaveGPTPaySettings(cfg, "cmsnav-key"); err != nil {
 		t.Fatal(err)
 	}

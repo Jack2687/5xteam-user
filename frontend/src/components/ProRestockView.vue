@@ -3,6 +3,7 @@ import {ref,reactive,computed,onMounted,onUnmounted,nextTick} from 'vue'
 import {api} from '../api'
 import {createLatestRequest} from '../latestRequest'
 import ProForecastDetails from './ProForecastDetails.vue'
+import ProRestockDecisionDetails from './ProRestockDecisionDetails.vue'
 import ProForceMergeStatus from './ProForceMergeStatus.vue'
 import ProFallbackPanel from './ProFallbackPanel.vue'
 import {forecastDetails,concurrencyDetails} from '../restockForecast'
@@ -13,6 +14,8 @@ let clockTimer
 let timer,disposed=false,returnFocus,stateRevision=0
 const stateRequest=createLatestRequest(),recordsRequest=createLatestRequest()
 const collectionError=ref('')
+const detailLoading=ref(false),detailError=ref('')
+let detailRequest,detailRevision=0
 const d=computed(()=>state.value?.decision||{}),snap=computed(()=>state.value?.snapshot||{}),inherited=computed(()=>state.value?.inherited||{}),tasks=computed(()=>state.value?.tasks||[])
 const active=computed(()=>tasks.value.filter(t=>!['ready','failed','cancelled'].includes(t.status))),filteredGroups=computed(()=>groups.value.filter(g=>g.name.toLowerCase().includes(search.value.toLowerCase())))
 const stale=computed(()=>!snap.value.at||clock.value+clockOffset.value-new Date(snap.value.at).getTime()>1000*(state.value?.config?.fresh_seconds||20))
@@ -98,11 +101,32 @@ async function pause(){await action(async()=>{const c=await api('/api/pro-restoc
 async function loadGroups(){await action(async()=>{groups.value=await api('/api/pro-restock/groups');notice.value='已读取 Pro 推送连接的 Sub2 分组。'})}
 async function resetBreaker(){await action(async()=>{const data=await api('/api/pro-restock/reset-breaker',{method:'POST'});if(disposed)return;acceptState(data);notice.value='熔断已重置，原订单和在途保留。'})}
 async function changeTab(value){tab.value=value;if(value==='records')await action(loadRecords)}
-async function showDetail(item){returnFocus=document.activeElement;detail.value={...item,related_tasks:tasks.value.filter(t=>t.decision_id===item.id)};await nextTick();dialog.value?.showModal();if(item.snapshot&&item.id){try{const related=await api('/api/pro-restock/records/'+encodeURIComponent(item.id)+'/tasks');if(detail.value?.id===item.id)detail.value.related_tasks=related}catch(e){error.value=e.message}}}
-function closeDetail(){dialog.value?.close();detail.value=null;returnFocus?.focus()}
+async function showDetail(item){
+ if(disposed)return
+ detailRequest?.dispose()
+ const revision=++detailRevision
+ detailRequest=createLatestRequest(loading=>{detailLoading.value=loading})
+ detailError.value=''
+ returnFocus=document.activeElement
+ detail.value={...item,related_tasks:[]}
+ await nextTick()
+ if(disposed||revision!==detailRevision)return
+ if(!dialog.value?.open)dialog.value?.showModal()
+ dialog.value?.querySelector?.('.detail-body')?.scrollTo({top:0})
+ await loadDetailTasks()
+}
+async function loadDetailTasks(){
+ const item=detail.value,revision=detailRevision,request=detailRequest
+ if(disposed||!item?.snapshot||!item.id||!request)return
+ detailError.value=''
+ try{await request.run(signal=>api('/api/pro-restock/records/'+encodeURIComponent(item.id)+'/tasks',{signal}),data=>{
+  if(!disposed&&revision===detailRevision)detail.value.related_tasks=data
+ })}catch(e){if(!disposed&&revision===detailRevision)detailError.value=e.message}
+}
+function closeDetail(){detailRevision++;detailRequest?.dispose();dialog.value?.close();detail.value=null;detailError.value='';returnFocus?.focus()}
 const chart=computed(()=>{const points=[...records.value].reverse().slice(-30);const top=Math.max(1,...points.map(r=>Math.max(r.capacity,r.used+r.waiting)));function path(key){let value='',connected=false;points.forEach((r,i)=>{if(!r.snapshot?.valid||!r.snapshot?.load_valid){connected=false;return}const n=key==='capacity'?r.capacity:r.used+r.waiting;value+=(connected?' L':' M')+(20+i*560/Math.max(1,points.length-1))+','+(155-n*125/top);connected=true});return value}return {empty:!points.some(r=>r.snapshot?.valid&&r.snapshot?.load_valid),demand:path('demand'),capacity:path('capacity')}})
 onMounted(async()=>{clockTimer=setInterval(()=>{clock.value=Date.now()},1000);await refresh(true);if(!disposed)timer=setInterval(()=>refresh(false,true),5000)})
-onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterval(clockTimer);stateRequest.dispose();recordsRequest.dispose()})
+onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterval(clockTimer);stateRequest.dispose();recordsRequest.dispose();detailRevision++;detailRequest?.dispose()})
 </script>
 <template>
 <div class="restock">
@@ -133,9 +157,9 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
  <article v-for="section in sections" :key="section.title" class="panel"><h2>{{section.title}}</h2><p class="muted">{{section.text}}</p><ProForceMergeStatus v-if="section.forceMerge" :decision="d" :config="state.config" :unavailable="monitorUnavailable" :now="clock+clockOffset"/><div class="fields"><label v-for="field in section.fields" :key="field[0]" :class="{check:field[2]==='bool'}"><input v-if="field[2]==='bool'" v-model="form[field[0]]" type="checkbox">{{field[1]}}<input v-if="field[2]!=='bool'" v-model.number="form[field[0]]" type="number" :min="field[2]" :max="field[3]" step="1" required></label></div></article>
  <article class="panel"><h2>每日禁补时段</h2><p class="muted">每天按北京时间（Asia/Shanghai）生效，支持跨午夜。包含开始时间，不包含结束时间。默认关闭。</p><label class="check"><input v-model="form.no_restock_enabled" type="checkbox">启用每日禁补时段</label><div class="fields"><label>禁补开始时间<input v-model="form.no_restock_start" type="time" step="60" :disabled="!form.no_restock_enabled" :required="form.no_restock_enabled"></label><label>禁补结束时间<input v-model="form.no_restock_end" type="time" step="60" :disabled="!form.no_restock_enabled" :required="form.no_restock_enabled"></label></div><p v-if="form.no_restock_enabled" class="notice">每天 {{form.no_restock_start||'待设置'}} 至 {{form.no_restock_start>form.no_restock_end?'次日 ':''}}{{form.no_restock_end||'待设置'}} 暂停新增补货。</p><p class="muted">禁补期间所有补货规则与“立即评估”均不启动新流程；撤销未启动的预留，已启动的登录、开通、推送和后续流程继续执行。结束后按最新监控数据重新判断，不积攒补货数量。仅影响 Pro 自动补货，原定时任务继续按原配置运行。</p></article>
  </div><details class="panel advanced"><summary>高级配置 · 成本、数据与到货保护</summary><div class="two-grid"><article v-for="section in advanced" :key="section.title"><h3>{{section.title}}</h3><p class="muted">{{section.text}}</p><div class="fields"><label v-for="field in section.fields" :key="field[0]">{{field[1]}}<input v-model.number="form[field[0]]" type="number" :min="field[2]" :max="field[3]" step="1" required></label></div></article></div><button type="button" :disabled="busy" @click="resetBreaker">处理故障后重置熔断</button></details><div class="savebar"><span>{{dirty?'有未保存修改':'参数由后台持久化保存'}}</span><button class="primary" :disabled="busy" type="submit">{{busy?'检查并保存…':'保存配置'}}</button></div></form></section>
- <section v-if="tab==='records'"><article class="panel"><div class="panel-head"><h2>补货决策与执行记录</h2><span class="badge">持久化记录 · 第 {{page}} 页</span></div><p class="muted">点击“查看”打开本轮详情，包含配置版本、快照、缺口与限制。</p><div class="tablewrap"><table><thead><tr><th>时间 / 配置</th><th>事件</th><th>结果</th><th>在途</th><th>原因</th><th>明细</th></tr></thead><tbody><tr v-for="r in records" :key="r.id"><td>{{fmt(r.at)}}<small>v{{r.version}}</small></td><td>补货决策</td><td>{{r.started?'已预留 '+r.started+' 个':'建议 '+r.suggested+' 个'}}</td><td>{{r.inflight}}</td><td>{{r.reason}}</td><td><button @click="showDetail(r)">查看</button></td></tr><tr v-if="!records.length"><td colspan="6" class="empty">暂无记录，启用观察或立即评估后显示</td></tr></tbody></table></div><div class="pagination"><button :disabled="page<=1||busy" @click="page--;action(loadRecords)">上一页</button><button :disabled="records.length<30||busy" @click="page++;action(loadRecords)">下一页</button></div></article></section>
+ <section v-if="tab==='records'"><article class="panel"><div class="panel-head"><h2>补货决策与执行记录</h2><span class="badge">持久化记录 · 第 {{page}} 页</span></div><p class="muted">点击“查看”打开本轮详情，查看当时为什么触发、为什么补这个数量，以及关联任务的执行进度。记录按配置保留 {{state.config.retention_days||7}} 天。</p><div class="tablewrap"><table><thead><tr><th>时间 / 配置</th><th>事件</th><th>结果</th><th>在途</th><th>原因</th><th>明细</th></tr></thead><tbody><tr v-for="r in records" :key="r.id"><td>{{fmt(r.at)}}<small>v{{r.version}}</small></td><td>{{r.snapshot?.id||r.trace?'补货决策':'配置 / 操作'}}</td><td>{{r.started?'已预留 '+r.started+' 个':r.snapshot?.id||r.trace?'建议 '+(r.suggested||0)+' 个':'未执行'}}</td><td>{{r.inflight??'—'}}</td><td>{{r.reason}}</td><td><button @click="showDetail(r)">查看</button></td></tr><tr v-if="!records.length"><td colspan="6" class="empty">暂无记录，启用观察或立即评估后显示</td></tr></tbody></table></div><div class="pagination"><button :disabled="page<=1||busy" @click="page--;action(loadRecords)">上一页</button><button :disabled="records.length<30||busy" @click="page++;action(loadRecords)">下一页</button></div></article></section>
  </template>
- <dialog ref="dialog" class="detail-modal" aria-labelledby="restock-detail-title" @cancel.prevent="closeDetail" @click="$event.target===dialog&&closeDetail()"><div v-if="detail"><header><div><p class="eyebrow">PRO / {{detail.email?'TASK':'DECISION'}}</p><h2 id="restock-detail-title">{{detail.email?'账号执行详情':'补货决策详情'}}</h2></div><button aria-label="关闭详情" @click="closeDetail">✕</button></header><div class="detail-body"><p><b>{{detail.reason||detail.message}}</b></p><div class="line"><span>时间 / 配置</span><b>{{fmt(detail.at||detail.created_at)}} · v{{detail.version}}</b></div><template v-if="detail.snapshot"><ProForecastDetails :decision="detail" historical/><div class="line"><span>时间 / 并发 / 备用 / 空组 / 接替净缺口</span><b>{{detail.time_need}} / {{detail.concurrency_need}} / {{detail.reserve_need||0}} / {{detail.empty_group_need||0}} / {{detail.force_merge_need||0}}</b></div><div class="line"><span>建议 / 实际预留</span><b>{{detail.suggested}} / {{detail.started}}</b></div><div class="line"><span>预计就绪 / 实际提前量</span><b>{{mins(detail.lead_minutes)}} / {{mins(detail.trigger_minutes)}}</b></div><p v-for="v in detail.warnings||[]" :key="v" class="notice warn">{{v}}</p><h3>关联任务</h3><p v-for="t in detail.related_tasks||[]" :key="t.id">{{t.email}} · {{statuses[t.status]}} · {{t.order_id||'尚无订单'}}</p></template><template v-else><div class="line"><span>账号 / 状态</span><b>{{detail.email}} · {{statuses[detail.status]}}</b></div><div class="line"><span>原订单 / 卡片</span><b>{{detail.order_id||'—'}} / {{detail.card_id||'—'}}</b></div><div class="line"><span>Sub2 ID</span><b>{{detail.account_id||'—'}}</b></div><div v-for="(at,key) in detail.stages" :key="key" class="line"><span>{{stages[key]||key}}</span><b>{{fmt(at)}}</b></div></template><details><summary>完整脱敏快照与配置</summary><pre>{{JSON.stringify(detail,null,2)}}</pre></details></div><footer><button class="primary" @click="closeDetail">关闭详情</button></footer></div></dialog>
+ <dialog ref="dialog" class="detail-modal" aria-labelledby="restock-detail-title" @cancel.prevent="closeDetail" @click="$event.target===dialog&&closeDetail()"><div v-if="detail"><header><div><p class="eyebrow">PRO / {{detail.email?'TASK':'DECISION'}}</p><h2 id="restock-detail-title">{{detail.email?'账号执行详情':'补货决策详情'}}</h2></div><button aria-label="关闭详情" @click="closeDetail">✕</button></header><div class="detail-body"><ProRestockDecisionDetails v-if="detail.snapshot" :decision="detail" :loading="detailLoading" :error="detailError" :statuses="statuses" :stages="stages" @retry="loadDetailTasks"/><template v-else><p><b>{{detail.message}}</b></p><div class="line"><span>时间 / 配置</span><b>{{fmt(detail.created_at)}} · v{{detail.version}}</b></div><div class="line"><span>账号 / 状态</span><b>{{detail.email}} · {{statuses[detail.status]}}</b></div><div class="line"><span>原订单 / 卡片</span><b>{{detail.order_id||'—'}} / {{detail.card_id||'—'}}</b></div><div class="line"><span>Sub2 ID</span><b>{{detail.account_id||'—'}}</b></div><div v-for="(at,key) in detail.stages" :key="key" class="line"><span>{{stages[key]||key}}</span><b>{{fmt(at)}}</b></div></template><details><summary>完整脱敏快照与配置</summary><pre>{{JSON.stringify(detail,null,2)}}</pre></details></div><footer><button class="primary" @click="closeDetail">关闭详情</button></footer></div></dialog>
 </div>
 </template>
 <style scoped>

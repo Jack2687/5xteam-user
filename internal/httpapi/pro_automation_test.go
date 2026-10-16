@@ -150,6 +150,7 @@ func TestProAutoContinuousPaymentToCompletion(t *testing.T) {
 				cfg, _, _ := st.GPTPaySettings()
 				provider, plan = gptpay.CMSNav, "pro50"
 				cfg.Provider, cfg.PlanCode, cfg.Country = provider, plan, "PH"
+				cfg.TermsAccepted = true
 				if _, err := st.SaveGPTPaySettings(cfg, "cmsnav-fixture-key"); err != nil {
 					t.Fatal(err)
 				}

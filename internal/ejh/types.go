@@ -2,6 +2,7 @@ package ejh
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"net/url"
 	"regexp"
@@ -19,6 +20,7 @@ type Settings struct {
 	SyncEnabled         bool       `json:"sync_enabled"`
 	SyncIntervalSeconds int        `json:"sync_interval_seconds"`
 	AlertHours          int        `json:"alert_hours"`
+	ReversalFeePercent  float64    `json:"reversal_fee_percent"`
 	Templates           []Template `json:"templates"`
 }
 type Template struct {
@@ -104,7 +106,7 @@ func (t Trade) Kind() string {
 	return "other"
 }
 func DefaultSettings() Settings {
-	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SingleActiveAccount: true, SyncIntervalSeconds: 300, AlertHours: 24, Templates: []Template{}}
+	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SingleActiveAccount: true, SyncIntervalSeconds: 300, AlertHours: 24, ReversalFeePercent: 6, Templates: []Template{}}
 }
 
 var decimal = regexp.MustCompile(`^\d{1,12}(\.\d{1,6})?$`)
@@ -149,6 +151,9 @@ func Normalize(v Settings) (Settings, error) {
 	}
 	if v.AlertHours < 1 || v.AlertHours > 8760 {
 		return v, fmt.Errorf("提醒时长须为 1～8760 小时")
+	}
+	if math.IsNaN(v.ReversalFeePercent) || math.IsInf(v.ReversalFeePercent, 0) || v.ReversalFeePercent < 0 || v.ReversalFeePercent > 100 || math.Round(v.ReversalFeePercent*100)/100 != v.ReversalFeePercent {
+		return v, fmt.Errorf("授权撤销费比例须为 0～100，最多两位小数")
 	}
 	v.AppKey = strings.TrimSpace(v.AppKey)
 	if len(v.AppKey) > 200 {

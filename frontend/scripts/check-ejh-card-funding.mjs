@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { summarizeCardBalances } from '../src/ejh.js'
-import { cardOpeningAmounts, cardFundedAmounts, cardClosureAmounts, cardFundingSummary, summarizeCardBalancesUSD } from '../src/ejh-card-funding.js'
+import { cardOpeningAmounts, cardFundedAmounts, cardClosureAmounts, cardFundingSummary, summarizeCardBalancesUSD, summarizeCardAmountsUSD } from '../src/ejh-card-funding.js'
 
 const card = { id: 'c', remote: { orderNo: 'original', cardAmount: '90000', billAmount: '9999', cardCurrency: 'PHP', billCurrency: 'USD' } }
 const open = { id: 'open', card_id: 'c', method: 'open', status: 'completed', created_at: '2026-10-01', request: { cardAmount: '13000', cardCurrency: 'PHP', billCurrency: 'USD' }, result: { cardAmount: '13000.00', cardCurrency: 'PHP', billAmount: '208.65', billCurrency: 'USD', actualConvertedAmount: '209.15' } }
@@ -110,3 +110,16 @@ for(const status of ['1','3','4','5','6','7','8']){
  assert.equal(summarizeCardBalancesUSD([row]).amount,'1.00')
 }
 console.log('Passed: completed closures excluded from balances/counts/errors, pending closures retained, issuer status fallback and status transitions')
+
+const debit = { card_id: 'c', amount: '1000', currency: 'PHP' }
+assert.equal(summarizeCardAmountsUSD([debit], [card], [open, increase]).amount, '16.05')
+assert.equal(summarizeCardAmountsUSD([debit], [{ ...card, remote: { ...card.remote, status: '2' } }], [open]).amount, '16.05', 'closed card transaction history still converts')
+assert.equal(summarizeCardAmountsUSD([{ ...debit, card_id: '', order_no: 'original' }], [], [{ ...open, card_id: '', order_no: 'wrong' }]).amount, null, 'blank IDs cannot match another opening')
+assert.equal(summarizeCardAmountsUSD([{ ...debit, card_id: '', order_no: 'original' }], [], [{ ...open, card_id: '', order_no: 'original' }]).amount, '16.05')
+assert.equal(summarizeCardAmountsUSD([{ ...debit, card_id: 'alias' }], [{ id: 'alias', remote: { orderNo: 'original' } }], [{ ...open, order_no: 'original' }]).amount, '16.05')
+for (const result of [{ cardAmount: '0' }, { billAmount: '0' }, { billCurrency: 'EUR' }, { cardCurrency: 'JPY' }]) {
+ assert.equal(summarizeCardAmountsUSD([debit], [card], [{ ...open, result: { ...open.result, ...result } }]).amount, null)
+}
+assert.equal(summarizeCardAmountsUSD([debit], [card], [{ ...open, status: 'failed' }, increase]).amount, null)
+assert.deepEqual(summarizeCardAmountsUSD([debit, { amount: '0.1', currency: 'USD' }, { amount: '0.2', currency: 'USD' }], [], [open]), { amount: '16.35', known: 3, estimated: 1, missing: 0, total: 3 })
+console.log('Passed: transaction USD estimates, closed-card history, order fallback, alias mapping, blank-ID isolation and invalid opening evidence')

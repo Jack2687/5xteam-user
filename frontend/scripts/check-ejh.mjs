@@ -125,7 +125,7 @@ console.log('Passed: searchable currencies, code/name/region matching, legacy an
 const currencyMethods=parsed.statements.filter(s=>ts.isFunctionDeclaration(s)&&['save','action','show','chooseTemplate','cardStatus'].includes(s.name?.text)).map(s=>s.getText(parsed)).join('\n')
 const settings={templates:[{id:'currency-template',name:'币种测试',valid_days:30,cardType:'fixture',cardAmount:'20',cardCurrency:'CNH',billCurrency:'EUR'}]}
 const calls=[]
-const currencyContext=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),cardStates,cardState,settings,openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
+const currencyContext=vm.createContext({isClosedCard,ejhRefreshGate:createEJHRefreshGate({storage:()=>null}),setInterval,clearInterval,progress:{value:null},selectedCards:{value:[]},openUncertain:{value:false},page:{value:1},disposed:false,runEJHBatch,cancelReason:()=>String(),cardStates,cardState,settings,data:{value:{}},openForm:{template:'currency-template',input:null},busy:{value:false},message:{},api:async(path,options)=>{const body=JSON.parse(JSON.stringify(options.body));calls.push({path,body});return body}})
 vm.runInContext(currencyMethods+'\nthis.run={save,chooseTemplate,cardStatus}',currencyContext)
 await currencyContext.run.save()
 assert.equal(calls[0].path,'/api/ejh/settings')

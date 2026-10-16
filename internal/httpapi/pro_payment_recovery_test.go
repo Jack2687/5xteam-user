@@ -27,9 +27,7 @@ func TestProRetryOriginalPayment(t *testing.T) {
 		{"review becomes paid", "manual_review", "original-remote", "success", true, 0},
 		{"still reviewing", "manual_review", "original-remote", "manual_review", false, 0},
 		{"still processing", "processing", "original-remote", "processing", false, 0},
-		{"final failure", "failed", "original-remote", "failed", false, 0},
 		{"ambiguous replay", "submission_unknown", "", "success", true, 1},
-		{"failed replay", "submission_unknown", "", "failed", false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var creates, logins, pushes, merges atomic.Int32
@@ -122,7 +120,7 @@ func TestProPaidRecoveryRejectsWrongIdentityAndOrder(t *testing.T) {
 }
 
 func TestProRetryPaymentStopAndConcurrency(t *testing.T) {
-	for _, mode := range []string{"stop", "duplicate", "shutdown"} {
+	for _, mode := range []string{"stop", "duplicate", "shutdown", "stop_failed", "duplicate_failed"} {
 		t.Run(mode, func(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
 			var once sync.Once
@@ -135,7 +133,11 @@ func TestProRetryPaymentStopAndConcurrency(t *testing.T) {
 				}
 				close(entered)
 				<-release
-				fmt.Fprint(w, `{"code":0,"data":{"orders":[{"id":"remote","status":"success"}]}}`)
+				result := "success"
+				if strings.HasSuffix(mode, "_failed") {
+					result = "failed"
+				}
+				fmt.Fprintf(w, `{"code":0,"data":{"orders":[{"id":"remote","status":%q}]}}`, result)
 			})
 			configureProAutoFixture(t, s)
 			cfg, key, _ := st.GPTPaySettings()
@@ -173,7 +175,7 @@ func TestProRetryPaymentStopAndConcurrency(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("no status query")
 			}
-			if mode == "stop" {
+			if strings.HasPrefix(mode, "stop") {
 				if rec := payCall(t, s.stopProAutomation, "email", email, nil); rec.Code != 200 {
 					t.Fatal(rec.Body.String())
 				}
@@ -193,10 +195,10 @@ func TestProRetryPaymentStopAndConcurrency(t *testing.T) {
 			if requests.Load() != 1 {
 				t.Fatal("duplicate query/payment")
 			}
-			if mode == "stop" && (rec.Code != 409 || logins.Load() != 0 || !p.ProAuto.StopRequested) {
+			if strings.HasPrefix(mode, "stop") && (rec.Code != 409 || logins.Load() != 0 || !p.ProAuto.StopRequested) {
 				t.Fatal("stop lost to recovery")
 			}
-			if mode == "duplicate" && (rec.Code != 202 || logins.Load() != 1) {
+			if strings.HasPrefix(mode, "duplicate") && (rec.Code != 202 || logins.Load() != 1) {
 				t.Fatal("recovery not serialized")
 			}
 		})

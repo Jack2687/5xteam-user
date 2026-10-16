@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict'
+import { summarizeReversalFees } from '../src/ejh-reversal-fees.js'
+import { cardAmounts } from '../src/ejh-account-amounts.js'
+
+const reversal = (id, amount = '5780.48', currency = 'PHP', extra = {}) => ({ id, card_id: 'card', confirmed: true, trade: { tradeNo: id, tradeType: '2', tradeStatus: '1', cardAmount: amount, cardCurrency: currency, authCode: 'shared', ...extra } })
+const row = reversal('one')
+const fee = (records, rate = 6, confirmedOnly = false) => summarizeReversalFees(records, rate, confirmedOnly)
+assert.deepEqual(fee([row]), { rows: [{ currency: 'PHP', amount: '346.83' }], count: 1, missing: 0, pending: 0, percent: '6', usd: { amount: null, known: 0, estimated: 0, missing: 1, total: 1 } })
+assert.equal(fee([row], 6.5).rows[0].amount, '375.73')
+assert.equal(fee([row], 0).rows[0].amount, '0.00')
+assert.equal(fee([row], 100).rows[0].amount, '5780.48')
+assert.equal(fee([row], 0.01).rows[0].amount, '0.58')
+assert.equal(fee([reversal('zero', '0')]).rows[0].amount, '0.00')
+assert.deepEqual(fee([row, row, { ...row, id: 'duplicate-id' }]), fee([row]))
+assert.equal(fee([row, reversal('partial', '5780.87')]).rows[0].amount, '693.68', 'different reversals with the same authorization code are separate fees')
+assert.equal(fee([reversal('a', '0.05'), reversal('b', '0.05')], 10).rows[0].amount, '0.02', 'sum individually rounded fee cents')
+assert.deepEqual(fee([row, reversal('usd', '100', 'USD')]).rows, [{ currency: 'PHP', amount: '346.83' }, { currency: 'USD', amount: '6.00' }])
+const newer = { ...reversal('one', '100'), synced_at: '2026-10-16T01:00:00Z' }
+for (const rows of [[row, newer], [newer, row]]) assert.equal(fee(rows).rows[0].amount, '6.00')
+assert.equal(fee([row, { ...row, card_id: 'another-card' }]).count, 2, 'different cards do not share a transaction identity')
+for (const tradeType of ['1', '3', '4', '5', '16', '17', '19']) assert.deepEqual(fee([reversal('other', '100', 'PHP', { tradeType })]).rows, [])
+assert.equal(fee([reversal('posted', '100', 'PHP', { tradeStatus: '2' })]).rows[0].amount, '6.00')
+assert.equal(fee([reversal('unknown', '100', 'PHP', { tradeStatus: 'unknown' })]).pending, 1)
+assert.equal(fee([{ ...row, confirmed: false }], 6, true).pending, 1)
+assert.deepEqual(fee([{ ...row, confirmed: false }], 6, true).rows, [])
+assert.equal(fee([{ ...row, confirmed_amount: '1', confirmed_currency: 'USD' }], 6, true).rows[0].amount, '346.83', 'fee uses issuer reversal cardAmount, not manually attributed amount')
+for (const amount of ['', '-1', 'NaN', '0.0000001', '9999999999999']) assert.equal(fee([reversal('bad', amount)]).missing, 1)
+for (const currency of ['', 'USDT', 'php']) assert.equal(fee([reversal('bad', '10', currency)]).missing, 1)
+for (const rate of [null, '', -1, 101, 6.001, Infinity, NaN]) {
+ assert.equal(fee([row], rate).missing, 1)
+ assert.deepEqual(fee([row], rate).rows, [])
+}
+assert.equal(fee([reversal('max', '999999999999.999999')], 100).rows[0].amount, '1000000000000.00')
+assert.deepEqual(fee([]).rows, [])
+assert.equal(cardAmounts({ id: 'card' }, [row]).fee, '0.50 USDT', 'keep existing fixed opening fee')
+console.log('Passed: reversal-only fees, exact decimals, per-trade rounding, configured percent, deduplication, partial reversals, currencies, pending/missing evidence and unchanged opening fee')
+
+const opening = { id: 'opening', card_id: 'card', method: 'open', status: 'completed', result: { cardAmount: '13000', cardCurrency: 'PHP', billAmount: '208.65', billCurrency: 'USD' } }
+const otherOpening = { ...opening, id: 'other-opening', card_id: 'other-card', result: { ...opening.result, billAmount: '260' } }
+const converted = records => summarizeReversalFees(records, 6, true, [], [opening, otherOpening])
+assert.deepEqual(converted([row]).usd, { amount: '5.57', known: 1, estimated: 1, missing: 0, total: 1 })
+assert.equal(converted([row, row]).usd.amount, '5.57', 'fee USD shares transaction deduplication')
+assert.equal(converted([row, { ...row, card_id: 'other-card' }]).usd.amount, '12.50', 'convert at each card rate before summing, even in the same currency')
+assert.equal(converted([row, reversal('usd', '100', 'USD')]).usd.amount, '11.57')
+assert.equal(converted([row, { ...row, card_id: 'unknown' }]).usd.missing, 1)
+assert.equal(converted([{ ...row, confirmed: false }]).usd.amount, null)
+assert.equal(summarizeReversalFees([row], 0, true).usd.amount, '0.00', 'known zero fees need no exchange rate')
+assert.equal(converted([reversal('refund', '5780.48', 'PHP', { tradeType: '5' })]).usd.total, 0)
+assert.equal(converted([row, reversal('partial', '5780.87')]).usd.amount, '11.13')
+assert.equal(converted([reversal('tiny-a', '0.05'), reversal('tiny-b', '0.05')]).usd.amount, '0.00')
+console.log('Passed: reversal fee USD conversion, per-card rates, rounded original fees, mixed currencies, missing rates, partial returns, confirmed attribution and zero percent')

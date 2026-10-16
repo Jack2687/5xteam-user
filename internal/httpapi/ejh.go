@@ -84,6 +84,7 @@ func (s *Server) saveEJHSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.SingleActiveAccount = current.SingleActiveAccount
+	in.ReversalFeePercent = current.ReversalFeePercent
 	if decodeJSON(w, r, &in, 256<<10) != nil {
 		return
 	}
@@ -264,7 +265,12 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "audit": audit, "server_time": time.Now()}, "")
+	settings, _, err := s.store.EJHSettings()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "reversal_fee_percent": settings.ReversalFeePercent, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {
 	if len(n) > 4 {

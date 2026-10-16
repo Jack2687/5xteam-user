@@ -64,6 +64,8 @@ func (c *Client) cmsnavCall(ctx context.Context, base, key, method, path, idem s
 		Data      json.RawMessage `json:"data"`
 		ErrorCode string          `json:"errorCode"`
 		Error     string          `json:"error"`
+		Retryable *bool           `json:"retryable"`
+		RetryHint string          `json:"retryHint"`
 	}
 	err = json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&env)
 	if err != nil || res.StatusCode < 200 || res.StatusCode >= 300 || env.ErrorCode != "" || env.Error != "" || env.Code == nil || *env.Code != 0 {
@@ -73,7 +75,7 @@ func (c *Client) cmsnavCall(ctx context.Context, base, key, method, path, idem s
 		}
 		// Only an explicit documented rejection can release a payment reservation.
 		definite := map[string]bool{"API_KEY_INVALID": true, "RESOURCE_FORBIDDEN": true, "INSUFFICIENT_CREDITS": true, "REQUEST_REJECTED": true, "SESSION_INVALID": true, "CHANNEL_UNAVAILABLE": true, "CORS_ORIGIN_NOT_ALLOWED": true, "PAYMENT_VERIFICATION_REQUIRED": true}[code]
-		return &APIError{HTTPStatus: res.StatusCode, ErrorCode: code, Uncertain: idem != "" && (err != nil || res.StatusCode >= 500 || !definite)}
+		return &APIError{HTTPStatus: res.StatusCode, ErrorCode: code, Retryable: env.Retryable, RetryHint: env.RetryHint, Uncertain: idem != "" && (err != nil || res.StatusCode >= 500 || !definite)}
 	}
 	if err = json.Unmarshal(env.Data, output); err != nil {
 		return &APIError{HTTPStatus: res.StatusCode, ErrorCode: "INVALID_RESPONSE", Uncertain: idem != ""}
@@ -88,23 +90,40 @@ type cmsnavOrder struct {
 	Status       string `json:"status"`
 	Order        struct {
 		RemoteOrder
+		cmsnavAmount
 		LocalOrderID string `json:"localOrderId"`
 		Error        string `json:"error"`
-		RetryHint    string `json:"retryHint"`
 		CreditStatus string `json:"creditStatus"`
 		CreditCost   int64  `json:"creditCost"`
 	} `json:"order"`
 	Progress struct {
-		Status          string `json:"status"`
-		RechargeStatus  string `json:"rechargeStatus"`
-		RenewalStatus   string `json:"renewalStatus"`
-		RetryHint       string `json:"retryHint"`
-		FailureCategory string `json:"failureCategory"`
+		RemoteOrder
+		cmsnavAmount
+		RechargeStatus string `json:"rechargeStatus"`
+		RenewalStatus  string `json:"renewalStatus"`
 	} `json:"progress"`
 }
 
 func (v cmsnavOrder) remote(id string) RemoteOrder {
 	r := v.Order.RemoteOrder
+	applyCMSNavAmount(&r, v.Order.cmsnavAmount)
+	if r.PaymentCurrency == "" || (r.PaymentAmount == "" && r.PaymentAmountMinor == nil) {
+		progress := v.Progress.RemoteOrder
+		applyCMSNavAmount(&progress, v.Progress.cmsnavAmount)
+		if progress.PaymentCurrency != "" && (progress.PaymentAmount != "" || progress.PaymentAmountMinor != nil) {
+			r.PaymentAmount, r.PaymentAmountMinor, r.PaymentCurrency = progress.PaymentAmount, progress.PaymentAmountMinor, progress.PaymentCurrency
+			r.PaymentCountry, r.PaymentAmountSource = progress.PaymentCountry, progress.PaymentAmountSource
+		}
+	}
+	if v.Progress.Retryable != nil {
+		r.Retryable = v.Progress.Retryable
+	}
+	if v.Progress.RetryHint != "" {
+		r.RetryHint = v.Progress.RetryHint
+	}
+	if v.Progress.FailureCategory != "" {
+		r.FailureCategory = v.Progress.FailureCategory
+	}
 	for _, candidate := range []string{v.TaskID, v.OrderID, v.LocalOrderID, v.Order.LocalOrderID, r.ID, id} {
 		if candidate != "" {
 			r.ID = candidate
@@ -122,6 +141,14 @@ func (v cmsnavOrder) remote(id string) RemoteOrder {
 	}
 	if v.Progress.RechargeStatus == "success" {
 		r.Status = "success"
+	}
+	if r.Status != "success" {
+		for _, state := range []string{"manual_review", "submission_unknown"} {
+			if v.Order.Status == state || v.Progress.Status == state || v.Status == state {
+				r.Status = state
+				break
+			}
+		}
 	}
 	if r.CancellationStatus == "" {
 		r.CancellationStatus = v.Progress.RenewalStatus
@@ -144,7 +171,7 @@ func (v cmsnavOrder) remote(id string) RemoteOrder {
 	case "released", "refunded":
 		r.ReleasedCredits = v.Order.CreditCost
 	}
-	if r.FailureReason == "" && r.Status == "failed" {
+	if r.FailureReason == "" && (r.Status == "failed" || r.Status == "manual_review" || r.Status == "submission_unknown") {
 		r.FailureReason = v.Order.Error
 		if r.FailureReason == "" {
 			r.FailureReason = v.Order.RetryHint
@@ -160,6 +187,9 @@ func (v cmsnavOrder) remote(id string) RemoteOrder {
 }
 
 func (c *Client) createCMSNav(ctx context.Context, s Snapshot, id string) (RemoteOrder, string, error) {
+	if s.TermsAccepted != nil && !*s.TermsAccepted {
+		return RemoteOrder{}, "", fmt.Errorf("CMSNav 商户条款尚未确认，未提交付款")
+	}
 	s.Input.Session.SessionToken = s.WebSessionToken
 	product := map[string]string{"pro5": "pro5x", "pro20": "pro20x", "pro50": "pro50x"}[s.Input.PlanCode]
 	if product == "" {
@@ -169,9 +199,10 @@ func (c *Client) createCMSNav(ctx context.Context, s Snapshot, id string) (Remot
 		ProductCode   string     `json:"productCode"`
 		Country       string     `json:"country"`
 		CancelRenewal bool       `json:"cancelRenewal"`
+		TermsAccepted *bool      `json:"termsAccepted,omitempty"`
 		Session       Session    `json:"session"`
 		Card          CardSecret `json:"card"`
-	}{product, s.Country, true, s.Input.Session, s.Input.CardSecret}
+	}{product, s.Country, true, s.TermsAccepted, s.Input.Session, s.Input.CardSecret}
 	var response cmsnavOrder
 	err := c.cmsnavCall(ctx, s.URL, s.APIKey, "POST", "/customer/recharges", id, body, &response)
 	r := response.remote("")
@@ -179,7 +210,22 @@ func (c *Client) createCMSNav(ctx context.Context, s Snapshot, id string) (Remot
 		err = &APIError{ErrorCode: "INVALID_RESPONSE", Uncertain: true}
 	}
 	r.FailureReason = Redact(r.FailureReason, s)
+	r.RetryHint = Redact(r.RetryHint, s)
 	return r, "", err
+}
+
+type cmsnavAmount struct {
+	UpstreamAmountMinor  *int64 `json:"upstreamAmountMinor"`
+	UpstreamCurrency     string `json:"upstreamCurrency"`
+	UpstreamCountry      string `json:"upstreamCountry"`
+	UpstreamAmountSource string `json:"upstreamAmountSource"`
+}
+
+func applyCMSNavAmount(r *RemoteOrder, a cmsnavAmount) {
+	if r.PaymentAmount == "" && r.PaymentAmountMinor == nil && a.UpstreamAmountMinor != nil && a.UpstreamCurrency != "" {
+		r.PaymentAmountMinor, r.PaymentCurrency = a.UpstreamAmountMinor, a.UpstreamCurrency
+		r.PaymentCountry, r.PaymentAmountSource = a.UpstreamCountry, a.UpstreamAmountSource
+	}
 }
 
 func (c *Client) StatusForProvider(ctx context.Context, provider, base, key string, ids []string) ([]RemoteOrder, error) {

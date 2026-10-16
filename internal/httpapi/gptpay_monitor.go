@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -120,6 +121,7 @@ func (s *Server) syncGPTPayOrderStatus(ctx context.Context, o gptpay.Order, snap
 				break
 			}
 			remote.FailureReason = gptpay.Redact(remote.FailureReason, snapshot)
+			remote.RetryHint = gptpay.Redact(remote.RetryHint, snapshot)
 			o.Remote, o.Status, o.Error = remote, remote.Status, remote.FailureReason
 			break
 		}
@@ -151,7 +153,7 @@ func (s *Server) syncGPTPayOrderStatus(ctx context.Context, o gptpay.Order, snap
 		return before, fmt.Errorf("保存订单状态失败：%w", saveErr)
 	}
 	if err == nil {
-		if before.Remote != o.Remote || before.Status != o.Status || before.StatusCheckError != "" {
+		if !reflect.DeepEqual(before.Remote, o.Remote) || before.Status != o.Status || before.StatusCheckError != "" {
 			s.auditGPTPayOrder(o)
 		} else {
 			s.updateProPaymentStage(o)

@@ -24,7 +24,16 @@ export function catalogProPlans(catalog, provider = 'cmsnav') {
   })
 }
 export const payStatusName = status => ({ submitting: '正在提交', created: '已创建', processing: '开通中', success: '成功', failed: '失败', submission_unknown: '提交待确认', manual_review: '待人工核查', not_found: '未找到', not_applicable: '不适用', reserved: '已冻结', settled: '已结算', waiting: '等待取消续费', pending: '取消续费中' })[status] || status || '—'
-export const needsPayPoll = order => !!order?.remote?.id && (!['success', 'failed'].includes(order.status) || ['waiting', 'pending'].includes(order.remote.cancellationStatus))
+export const needsPayPoll = order => order?.status !== 'manual_review' && !!order?.remote?.id && (!['success', 'failed'].includes(order.status) || ['waiting', 'pending'].includes(order.remote.cancellationStatus))
+export const paymentRetryBlocked = order => order?.provider === 'cmsnav' && order.status === 'failed' && !(!order.remote?.id && ['API_KEY_INVALID','RESOURCE_FORBIDDEN','INSUFFICIENT_CREDITS','REQUEST_REJECTED','SESSION_INVALID','CHANNEL_UNAVAILABLE','CORS_ORIGIN_NOT_ALLOWED'].includes(order.remote?.errorCode)) && (order.remote?.retryable === false || order.remote?.failureCategory === 'payment_verification' || order.remote?.errorCode === 'PAYMENT_VERIFICATION_REQUIRED')
+export function supplierPaymentLabel(remote) {
+  const currency = remote?.paymentCurrency
+  if (!/^[A-Z]{3}$/.test(currency || '')) return '待返回'
+  if (/^\d+(\.\d+)?$/.test(remote.paymentAmount || '')) return `${remote.paymentAmount} ${currency}`
+  if (!Number.isSafeInteger(remote.paymentAmountMinor) || remote.paymentAmountMinor < 0) return '待返回'
+  const digits = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits
+  return `${(remote.paymentAmountMinor / 10 ** digits).toFixed(digits)} ${currency}`
+}
 export const payRequestID = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
 export function parseCardText(raw) {
   const parts = raw.trim().split('----').map(s => s.trim())

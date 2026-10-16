@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { api } from '../api'
 import { CreditCard, CalendarClock, SlidersHorizontal, Workflow, Settings2, ChevronRight, Save, ShieldCheck } from 'lucide-vue-next'
 import { formatTime } from '../utils'
-import { parseCardText, payStatusName, proPlanName, payProviderName, catalogProPlans, tokenseekCatalog, paymentCountries, paymentCountryLabel } from '../gptpay'
+import { parseCardText, payStatusName, proPlanName, supplierPaymentLabel, payProviderName, catalogProPlans, tokenseekCatalog, paymentCountries, paymentCountryLabel } from '../gptpay'
 import MessageBar from './MessageBar.vue'
 import PaymentCardStatus from './PaymentCardStatus.vue'
 import CardOccupancy from './CardOccupancy.vue'
@@ -16,7 +16,7 @@ import CardAccountPreview from './CardAccountPreview.vue'
 
 const props = defineProps({ mode: String, defaultPageSize: { type: Number, default: 10 }, adminAccounts: { type: Array, default: () => [] } })
 const emit = defineEmits(['saved'])
-const settings = reactive({ provider: 'tokenseek', country: 'PH', credit_quantity: 0, url: 'https://gptpay.tokenseek.app/api/v1', plan_code: 'pro5', key_present: false, api_key: '', session_timeout_minutes: 30,card_account_limit:3 })
+const settings = reactive({ terms_accepted: false, provider: 'tokenseek', country: 'PH', credit_quantity: 0, url: 'https://gptpay.tokenseek.app/api/v1', plan_code: 'pro5', key_present: false, api_key: '', session_timeout_minutes: 30,card_account_limit:3 })
 const providerDrafts = new Map()
 const savedURLs = new Map(), catalogEpoch = ref(0)
 const queryProvider = ref('tokenseek')
@@ -67,7 +67,7 @@ async function changeProvider(event) {
     let draft = providerDrafts.get(provider)
     if (!draft) { draft = await api('/api/gptpay/settings?provider=' + provider); savedURLs.set(provider, draft.url) }
     if (disposed) return
-    Object.assign(settings, { ...draft, credit_quantity: draft.credit_quantity || 0, provider, api_key: draft.api_key || '', card_account_limit: settings.card_account_limit, session_timeout_minutes: settings.session_timeout_minutes })
+    Object.assign(settings, { ...draft, terms_accepted: !!draft.terms_accepted, credit_quantity: draft.credit_quantity || 0, provider, api_key: draft.api_key || '', card_account_limit: settings.card_account_limit, session_timeout_minutes: settings.session_timeout_minutes })
   })
   event.target.value = settings.provider
 }
@@ -202,7 +202,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <label class="field wide"><span>GPTPay API Key</span><input v-model="settings.api_key" type="password" autocomplete="new-password" :placeholder="settings.key_present ? '已保存，留空不修改' : '填写供应商 API Key'" /></label>
 
             </div>
-            <div class="config-divider"><h4>套餐与支付地区</h4><p>供应商报价是服务费，不是银行卡扣款金额。</p></div>
+            <label v-if="settings.provider === 'cmsnav'" class="cmsnav-terms"><input v-model="settings.terms_accepted" type="checkbox" :disabled="busy" /><span>我已阅读并接受 <a href="https://openai.com/policies/terms-of-use/" target="_blank" rel="noopener noreferrer">OpenAI 使用条款</a>，用于 CMSNav 手动及自动开通。</span></label><p v-if="settings.provider === 'cmsnav' && !settings.terms_accepted" class="muted">确认并保存后才能创建新的 CMSNav 付款订单。</p><div class="config-divider"><h4>套餐与支付地区</h4><p>供应商报价是服务费，不是银行卡扣款金额。</p></div>
             <div class="settings-fields">        <label class="field"><span>开通套餐</span><select v-model="settings.plan_code" aria-label="开通套餐" :disabled="countryPickerDisabled"><optgroup v-for="group in planGroups" :key="group.label" :label="group.label"><option v-for="plan in group.plans" :key="plan.code" :value="plan.code" :disabled="!plan.available">{{ plan.label }}</option></optgroup></select><small>报价为供应商 Credits 服务费，不是银行卡扣款金额。</small><small v-if="settings.plan_code.endsWith('_up')">仅支持已有 Plus 的账号；供应商最终校验升级资格。</small><small v-if="settings.plan_code === 'codex_point'">账号须已有有效订阅，Free 不可购买；服务费按每单收取。</small></label>
         <label v-if="settings.plan_code === 'codex_point'" class="field"><span>Codex 点数数量</span><input v-model.number="settings.credit_quantity" type="number" min="250" max="250000" step="250" required /><small>250～250000，必须为 250 的倍数；表示本次购买数量。</small></label>
         <div class="field country-picker">
@@ -306,17 +306,18 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <form class="filter-row" @submit.prevent="page = 1; action(load)"><input v-model="emailFilter" placeholder="按完整账号邮箱筛选" /><button class="btn ghost" :disabled="busy">查询</button></form>
         <div class="table-shell"><table class="orders-table"><thead><tr><th>账号 / 订单 ID</th><th>套餐 / 银行卡</th><th>订单状态</th><th>结算 / 取消续费</th><th>扣除 / 释放 Credits</th><th>更新时间</th><th>操作</th></tr></thead><tbody>
           <tr v-if="!rows.length"><td colspan="7" class="empty-cell">暂无开通订单</td></tr>
-          <tr v-for="order in rows" :key="order.id"><td>{{ order.email }}<small class="order-id">{{ order.remote?.orderNo || order.id }}</small><small class="order-id">{{ order.remote?.id || '等待供应商订单 ID' }}</small></td><td>{{ proPlanName(order.plan_code) }}<small class="order-id">{{ payProviderName(order.provider) }} · {{ paymentCountryLabel(order.country || order.remote?.country) }}</small><small v-if="order.plan_code === 'codex_point'" class="order-id">购买点数：{{ order.credit_quantity || order.remote?.creditQuantity }}</small><small class="order-id">{{ order.card_name }} · {{ order.card_last4 }}</small></td><td>{{ payStatusName(order.status) }}<small v-if="order.error" class="danger-text order-error">{{ order.error }}</small><small v-if="order.status_check_error" class="danger-text order-error">同步失败，后台重查：{{ order.status_check_error }}</small></td><td>{{ payStatusName(order.remote?.settlementStatus) }}<small class="order-id">取消续费：{{ payStatusName(order.remote?.cancellationStatus) }}</small></td><td>{{ order.remote?.chargedCredits || 0 }} / {{ order.remote?.releasedCredits || 0 }}</td><td>{{ formatTime(order.updated_at) }}</td><td><button v-if="order.remote?.id" class="btn ghost compact" :disabled="busy" @click="refreshOrder(order)">查询状态</button><button v-else-if="!['success', 'failed'].includes(order.status)" class="btn ghost compact" :disabled="busy" @click="refreshOrder(order, true)">重试原订单</button></td></tr>
+          <tr v-for="order in rows" :key="order.id"><td>{{ order.email }}<small class="order-id">{{ order.remote?.orderNo || order.id }}</small><small class="order-id">{{ order.remote?.id || '等待供应商订单 ID' }}</small></td><td>{{ proPlanName(order.plan_code) }}<small class="order-id">{{ payProviderName(order.provider) }} · {{ paymentCountryLabel(order.country || order.remote?.country) }}</small><small v-if="order.plan_code === 'codex_point'" class="order-id">购买点数：{{ order.credit_quantity || order.remote?.creditQuantity }}</small><small class="order-id">{{ order.card_name }} · {{ order.card_last4 }}</small><small v-if="order.provider === 'cmsnav'" class="order-id">供应商应付：{{ supplierPaymentLabel(order.remote) }}</small></td><td>{{ payStatusName(order.status) }}<small v-if="order.error" class="danger-text order-error">{{ order.error }}</small><small v-if="order.status_check_error" class="danger-text order-error">同步失败{{ order.status === 'manual_review' ? '，请人工查询' : '，后台重查' }}：{{ order.status_check_error }}</small></td><td>{{ payStatusName(order.remote?.settlementStatus) }}<small class="order-id">取消续费：{{ payStatusName(order.remote?.cancellationStatus) }}</small></td><td>{{ order.remote?.chargedCredits || 0 }} / {{ order.remote?.releasedCredits || 0 }}</td><td>{{ formatTime(order.updated_at) }}</td><td><button v-if="order.remote?.id" class="btn ghost compact" :disabled="busy" @click="refreshOrder(order)">查询状态</button><button v-else-if="!['success', 'failed', 'manual_review'].includes(order.status)" class="btn ghost compact" :disabled="busy" @click="refreshOrder(order, true)">重试原订单</button></td></tr>
         </tbody></table></div>
         <Pagination :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
       </section>
-      <form class="panel" @submit.prevent="queryOrders"><h2>按供应商订单 ID 查询</h2><label class="field"><span>订单 ID（每行一个，最多 50 个）</span><textarea v-model="queryIDs" rows="3" placeholder="填写供应商返回的 id，不是订单号 orderNo" required /></label><div class="panel-actions"><button class="btn primary" :disabled="busy">查询订单状态</button></div><div v-if="queryRows.length" class="table-shell"><table><thead><tr><th>订单 ID</th><th>套餐 / 国家</th><th>状态</th><th>结算 / 取消续费</th><th>原因</th></tr></thead><tbody><tr v-for="order in queryRows" :key="order.id"><td>{{ order.id }}</td><td>{{ proPlanName(order.planCode) }} · {{ paymentCountryLabel(order.country) }}<small v-if="order.planCode === 'codex_point'" class="order-id">购买点数：{{ order.creditQuantity || '未返回' }}</small></td><td>{{ payStatusName(order.status) }}</td><td>{{ payStatusName(order.settlementStatus) }} / {{ payStatusName(order.cancellationStatus) }}</td><td>{{ order.failureReason || '—' }}</td></tr></tbody></table></div></form>
+      <form class="panel" @submit.prevent="queryOrders"><h2>按供应商订单 ID 查询</h2><label class="field"><span>订单 ID（每行一个，最多 50 个）</span><textarea v-model="queryIDs" rows="3" placeholder="填写供应商返回的 id，不是订单号 orderNo" required /></label><div class="panel-actions"><button class="btn primary" :disabled="busy">查询订单状态</button></div><div v-if="queryRows.length" class="table-shell"><table><thead><tr><th>订单 ID</th><th>套餐 / 国家</th><th>状态</th><th>结算 / 取消续费</th><th>原因</th></tr></thead><tbody><tr v-for="order in queryRows" :key="order.id"><td>{{ order.id }}</td><td>{{ proPlanName(order.planCode) }} · {{ paymentCountryLabel(order.country) }}<small v-if="order.planCode === 'codex_point'" class="order-id">购买点数：{{ order.creditQuantity || '未返回' }}</small></td><td>{{ payStatusName(order.status) }}<small v-if="queryProvider === 'cmsnav'" class="order-id">应付：{{ supplierPaymentLabel(order) }}</small></td><td>{{ payStatusName(order.settlementStatus) }} / {{ payStatusName(order.cancellationStatus) }}</td><td>{{ order.failureReason || order.retryHint || '—' }}</td></tr></tbody></table></div></form>
     </template>
     <details v-if="mode === 'settings'" class="config-runtime"><summary><CalendarClock :size="17"/><span>查看定时运行概况</span><ChevronRight :size="15"/></summary><ProSchedulePanel compact/></details>
   </div>
 </template>
 
 <style scoped>
+.cmsnav-terms{display:flex;align-items:flex-start;gap:8px;margin:16px 0;font-size:13px;line-height:1.6}.cmsnav-terms input{width:16px;height:16px;margin-top:3px;flex-shrink:0}.cmsnav-terms a{color:var(--green-strong);text-decoration:underline}
 .gptpay-panel .field { margin-bottom: 14px; }
 .gptpay-panel .settings-fields { margin-top: 16px; }
 .catalog-status { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--muted); }

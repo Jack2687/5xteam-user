@@ -66,5 +66,10 @@ func NewSnapshot(cfg Settings, key string, card CardSecret, session Session) Sna
 		input.Country = cfg.Country
 		input.CreditQuantity = cfg.CreditQuantity
 	}
-	return Snapshot{Provider: cfg.Provider, Country: cfg.Country, URL: cfg.URL, APIKey: key, Input: input, WebSessionToken: sessionToken}
+	snapshot := Snapshot{Provider: cfg.Provider, Country: cfg.Country, URL: cfg.URL, APIKey: key, Input: input, WebSessionToken: sessionToken}
+	if Provider(cfg.Provider) == CMSNav {
+		accepted := cfg.TermsAccepted
+		snapshot.TermsAccepted = &accepted
+	}
+	return snapshot
 }

@@ -21,20 +21,23 @@ const saved = new Map(), storage={getItem:key=>saved.get(key)??null,setItem:(key
 const gate=createEJHRefreshGate({now:()=>time,storage:()=>storage})
 function fixture({failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[]}={}) {
  const calls=[],mounts=[],unmounts=[],confirmations=[]
- let release
+ let release,savedPercent=6,failSave=false
  const blocked=new Promise(resolve=>{release=resolve})
  const context=vm.createContext({...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
  async api(url,options={}){
   calls.push({url,options})
-  if(url==='/api/ejh/settings')return {enabled:true}
-  if(url==='/api/ejh/dashboard')return {cards:[],cases:savedCases,trades:[],operations:[],audit:[],sync:{}}
+  if(url==='/api/ejh/settings'){
+   if(options.method==='PUT'){if(failSave)throw Error('save failed');savedPercent=options.body.reversal_fee_percent}
+   return {enabled:true,reversal_fee_percent:savedPercent}
+  }
+  if(url==='/api/ejh/dashboard')return {cards:[],cases:savedCases,trades:[],operations:[],audit:[],sync:{},reversal_fee_percent:savedPercent}
   if(options.method==='DELETE')return deleteResult
   if(url==='/api/ejh/sync'){if(holdSync)await blocked;if(failSync)throw Error('sync failed')}
   return {}
  }})
  context.watch=watch
- vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates,caseCategory,caseCounts,setCaseCategory,deleteUnopenedCase,page,pageSize,visible};',context)
- return {...context.exposed,calls,confirmations,release,unmount:()=>unmounts.forEach(fn=>fn())}
+ vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates,caseCategory,caseCounts,setCaseCategory,deleteUnopenedCase,page,pageSize,visible,settings,save,load};',context)
+ return {...context.exposed,calls,confirmations,release,setFailSave:value=>{failSave=value},unmount:()=>unmounts.forEach(fn=>fn())}
 }
 let f=fixture();await f.initialize()
 assert.equal(f.calls.filter(r=>r.url==='/api/ejh/sync').length,1)
@@ -122,3 +125,22 @@ assert.equal(f.calls.length,0);assert.equal(f.data.value.cases.length,12);f.unmo
 f=fixture();f.data.value.cases=unopenedRows;f.busy.value=true;await f.deleteUnopenedCase();f.busy.value=false;await f.deleteUnopenedCase(normalRow)
 assert.equal(f.calls.length,0);assert.equal(f.confirmations.length,0);f.unmount()
 console.log('Passed: delete all across search/pages, single deletion, last-page clamping, confirmation cancellation and busy/state guards')
+
+{
+ const f=fixture();await f.initialize()
+ assert.equal(f.data.value.reversal_fee_percent,6)
+ f.settings.reversal_fee_percent=8
+ assert.equal(f.data.value.reversal_fee_percent,6,'unsaved draft must not recalculate fee displays')
+ await f.load()
+ assert.equal(f.settings.reversal_fee_percent,8,'polling must retain the settings draft')
+ assert.equal(f.data.value.reversal_fee_percent,6)
+ f.setFailSave(true);await f.save()
+ assert.equal(f.data.value.reversal_fee_percent,6,'failed save must not change displayed fees')
+ assert.equal(f.settings.reversal_fee_percent,8)
+ f.setFailSave(false);await f.save()
+ assert.equal(f.data.value.reversal_fee_percent,8)
+ f.settings.reversal_fee_percent=0;await f.save();await f.load()
+ assert.equal(f.data.value.reversal_fee_percent,0,'explicit zero survives saving and refresh')
+ f.unmount()
+}
+console.log('Passed: saved reversal fee rate, draft isolation, refresh retention, save failure and zero rate')

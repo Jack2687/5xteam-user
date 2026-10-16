@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import vm from 'node:vm'
+import { computed, ref } from 'vue'
+const source=readFileSync(new URL('../src/components/ProAutoDialog.vue',import.meta.url),'utf8')
+const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
+function fixture(){
+ const calls=[], timers=new Map()
+ let fail=false,resolve,hold=false
+ const ctx=vm.createContext({computed,ref,defineEmits:()=>()=>{},defineExpose(){},onBeforeUnmount(){},clearTimeout:id=>timers.delete(id),setTimeout:fn=>{timers.set(1,fn);return 1},window:{confirm:()=>true},async api(path,options){
+  calls.push({path,options})
+  if(options?.method==='POST'){
+   if(hold)await new Promise(r=>resolve=r)
+   if(fail)throw Error('订单待确认')
+   return {pro_auto:{id:'new-flow',status:'running',stage:'login',steps:{login:'pending'}}}
+  }
+  return {id:'old-flow',order_id:'original',payment_status:'failed',status:'failed'}
+ }})
+ vm.runInContext(code+';globalThis.f={retryStep,start,canStart,retryCurrent,restartable,resumable,state,settings,cardID,email,busy,error};',ctx)
+ return {...ctx.f,calls,fail:()=>{fail=true},hold:()=>{hold=true},release:()=>resolve()}
+}
+for(const state of [{id:'old',status:'failed',steps:{login:'failed'}},{id:'old',status:'failed',order_id:'order',payment_status:'failed'},{id:'old',status:'stopped',order_id:'order',payment_status:'failed'}]){
+ const f=fixture();f.state.value=state
+ assert.equal(f.retryCurrent.value,true);assert.equal(f.restartable.value,true);assert.equal(f.canStart.value,false)
+ f.settings.value={provider:'cmsnav',plan_code:'pro50',country:'PH',credit_quantity:0};f.cardID.value='selected-card';f.email.value='retry@example.com'
+ f.hold();const first=f.retryStep();assert.equal(f.busy.value,true);await f.retryStep();assert.equal(f.calls.length,1)
+ f.release();await first
+ assert.deepEqual(JSON.parse(JSON.stringify(f.calls[0].options.body)),{retry_current:true,provider:'cmsnav',card_id:'selected-card',plan_code:'pro50',country:'PH',credit_quantity:0})
+ assert.equal(f.state.value.stage,'login');assert.equal(f.state.value.status,'running');assert.equal(f.retryCurrent.value,false)
+}
+for(const payment_status of ['success','manual_review','processing','submission_unknown']){
+ const f=fixture();f.state.value={id:'old',status:'failed',order_id:'original',payment_status}
+ assert.equal(f.retryCurrent.value,true);assert.equal(f.restartable.value,false)
+}
+for(const status of ['running','waiting_quota','completed']){
+ const f=fixture();f.state.value={id:'old',status,order_id:'original'};assert.equal(f.retryCurrent.value,false)
+}
+const resumed=fixture();resumed.state.value={id:'old',status:'failed',steps:{oauth:'completed'}}
+assert.equal(resumed.resumable.value,true);assert.equal(resumed.retryCurrent.value,false);assert.equal(resumed.canStart.value,false)
+const fresh=fixture();assert.equal(fresh.canStart.value,true);assert.equal(fresh.retryCurrent.value,false)
+const failed=fixture();failed.fail();await failed.retryStep();assert.match(failed.error.value,/待确认/);assert.equal(failed.state.value.payment_status,'failed');assert.equal(failed.busy.value,false)
+console.log('Passed: failed/pre-order retries from login, current settings/card payload, success recovery, ambiguous status, duplicate clicks, resume-only and failure refresh')

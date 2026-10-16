@@ -1,4 +1,6 @@
-// Six decimal places, integer arithmetic, and no conversion between currencies.
+import { summarizeCardAmountsUSD } from './ejh-card-funding.js'
+
+// Original currency totals use six decimal places and integer arithmetic.
 const scale=1000000n
 function units(value){
  const s=String(value??'')
@@ -72,8 +74,8 @@ export function accountAmounts(row){
 
 // Use the one payment attributed to each case, not all raw authorization and
 // clearing rows. Keep card, transaction and settlement currencies independent.
-export function summarizeInFlightPayments(cases=[]){
- const orders=new Map(),payments=new Map(),payment=new Map(),transaction=new Map(),settlement=new Map()
+export function summarizeInFlightPayments(cases=[],cards=[],operations=[]){
+ const orders=new Map(),payments=new Map(),payment=new Map(),transaction=new Map(),settlement=new Map(),conversions=[]
  for(const row of cases)if(['opened','waiting'].includes(row.state))orders.set(row.id||row,row)
  let missingPayment=0,missingTransaction=0,missingSettlement=0,pendingSettlement=0,authorizations=0
  for(const row of orders.values()){
@@ -83,14 +85,16 @@ export function summarizeInFlightPayments(cases=[]){
   const card=row.ejh_card_id||row.card_id||''
   const key=charge.trade_no?`${card}:trade:${charge.trade_no}`:charge.id?`id:${charge.id}`:row.id||row
   const previous=payments.get(key)
-  if(!previous||(Date.parse(charge.synced_at)||0)>(Date.parse(previous.synced_at)||0))payments.set(key,charge)
+  if(!previous||(Date.parse(charge.synced_at)||0)>(Date.parse(previous.charge.synced_at)||0))payments.set(key,{charge,card_id:card})
  }
  const add=(totals,value,currency)=>{
   const n=units(value)
   if(n===null||!currencyOK(currency))return false
   totals.set(currency,(totals.get(currency)||0n)+n);return true
  }
- for(const charge of payments.values()){
+ const unrecognized=missingPayment
+ for(const {charge,card_id} of payments.values()){
+  conversions.push({card_id,amount:units(charge.card_amount)===null?null:charge.card_amount,currency:charge.card_currency})
   if(charge.type==='1')authorizations++
   if(!add(payment,charge.card_amount,charge.card_currency))missingPayment++
   if(!add(transaction,charge.trade_amount,charge.trade_currency))missingTransaction++
@@ -102,5 +106,8 @@ export function summarizeInFlightPayments(cases=[]){
   }else if(!add(settlement,charge.bill_amount,charge.bill_currency))missingSettlement++
  }
  const rows=totals=>[...totals].sort(([a],[b])=>a.localeCompare(b)).map(([currency,n])=>({amount:format(n),currency}))
- return {count:orders.size,payment:rows(payment),transaction:rows(transaction),settlement:rows(settlement),missingPayment,missingTransaction,missingSettlement,pendingSettlement,authorizations}
+ const paymentUSD=summarizeCardAmountsUSD(conversions,cards,operations)
+ // Cases without a recognized charge still represent unknown in-flight money.
+ paymentUSD.missing+=unrecognized;paymentUSD.total+=unrecognized
+ return {count:orders.size,payment:rows(payment),transaction:rows(transaction),settlement:rows(settlement),missingPayment,missingTransaction,missingSettlement,pendingSettlement,authorizations,paymentUSD}
 }
