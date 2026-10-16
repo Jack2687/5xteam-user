@@ -1,3 +1,5 @@
+import { isClosedCard } from './card-status.js'
+
 const scale = 1000000n
 function units(value) {
   const text = String(value ?? '')
@@ -136,8 +138,9 @@ export function cardFundingSummary(card, operations = [], trades = []) {
 // Estimate the saved card balance in USD at its original opening settlement
 // ratio. This is not a live FX quote or the supplier's refundable USD amount.
 export function summarizeCardBalancesUSD(cards = [], operations = []) {
+  const included = cards.filter(card => !isClosedCard(card))
   let total = 0n, known = 0, estimated = 0
-  for (const card of cards) {
+  for (const card of included) {
     const text = String(card.balance ?? ''), negative = text.startsWith('-')
     const amount = units(negative ? text.slice(1) : text), currency = card.remote?.cardCurrency
     if (!card.balance_at || amount === null || !currencyOK(currency)) continue
@@ -155,5 +158,5 @@ export function summarizeCardBalancesUSD(cards = [], operations = []) {
   // Keep six decimal places while summing, then round the displayed total once.
   const absolute = total < 0n ? -total : total, cents = (absolute + 5000n) / 10000n
   const amount = `${total < 0n && cents !== 0n ? '-' : ''}${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`
-  return { amount: known ? amount : null, known, estimated, missing: cards.length - known, total: cards.length }
+  return { amount: known ? amount : null, known, estimated, missing: included.length - known, total: included.length }
 }

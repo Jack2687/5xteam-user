@@ -1,3 +1,5 @@
+import { isClosedCard } from './card-status.js'
+
 export const returnStates = { unopened: '未开通', opened: '已开通', waiting: '已申请待回款', returned: '已回款' }
 export const tradeKinds = { '1': '授权', '2': '授权撤销', '3': '授权失败', '4': '清算', '5': '退款', '16': '清算退款', '17': '销卡退回', '19': '销卡后清算' }
 export const operationStates = { submitting: '已提交待确认', unknown: '结果未知，需核实', import_pending: '已开卡待导入', completed: '已完成', resolved: '人工核实完成', failed: '未执行/失败' }
@@ -77,9 +79,10 @@ export function ejhCardEntry(account) {
 // Balances are supplier snapshots, not live estimates. Never use binary floats
 // or mix currencies, and never treat missing balances as zero.
 export function summarizeCardBalances(cards) {
+  const included = (cards || []).filter(card => !isClosedCard(card))
   const groups = new Map()
   let known = 0, missing = 0, failed = 0
-  for (const card of cards || []) {
+  for (const card of included) {
     if (card.balance_error) failed++
     const currency = card.remote?.cardCurrency || ''
     const value = String(card.balance ?? '')
@@ -95,5 +98,5 @@ export function summarizeCardBalances(cards) {
     const fraction = String(units % 1000000n).padStart(6, '0').replace(/0+$/, '').padEnd(2, '0')
     return { currency, count: group.count, amount: (group.units < 0n ? '-' : '') + String(units / 1000000n) + '.' + fraction }
   })
-  return { totals, known, missing, failed, total: (cards || []).length }
+  return { totals, known, missing, failed, total: included.length }
 }

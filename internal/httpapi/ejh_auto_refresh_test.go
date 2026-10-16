@@ -85,6 +85,10 @@ func TestEJHClosedReadsAndRefreshSkipIssuer(t *testing.T) {
 	if err = s.store.EJHSaveTrade(closed.ID, trade); err != nil {
 		t.Fatal(err)
 	}
+	refund := ejh.Trade{OrderNo: "closed", TradeNo: "closure", Type: "17", Status: "2", TradeAmount: "10", TradeCurrency: "PHP", BillAmount: "0.16", BillCurrency: "USD", TradeTime: trade.TradeTime}
+	if err = s.store.EJHSaveTrade(closed.ID, refund); err != nil {
+		t.Fatal(err)
+	}
 	requests := []string{}
 	s.ejh.client.HTTP = ejhFixtureTransport(t, func(method string, data map[string]any) any {
 		requests = append(requests, method+":"+fmt.Sprint(data["orderNo"]))

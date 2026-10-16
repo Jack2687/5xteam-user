@@ -44,7 +44,11 @@ func (s *Server) queryEJHCardTrades(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		items := []ejh.Trade{}
+		queriedAt := card.SyncedAt
 		for _, t := range records {
+			if t.CardID == card.ID && t.SyncedAt.After(queriedAt) {
+				queriedAt = t.SyncedAt
+			}
 			at := ejh.TradeAt(t.Trade)
 			if t.CardID == card.ID && !at.Before(start) && !at.After(end) {
 				v := t.Trade
@@ -68,7 +72,7 @@ func (s *Server) queryEJHCardTrades(w http.ResponseWriter, r *http.Request) {
 			limit = len(items)
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		writeAPI(w, 200, map[string]any{"items": items[offset:limit], "page": in.Page, "has_more": limit < len(items), "queried_at": card.SyncedAt, "cached": true}, "")
+		writeAPI(w, 200, map[string]any{"items": items[offset:limit], "page": in.Page, "has_more": limit < len(items), "queried_at": queriedAt, "cached": true}, "")
 		return
 	}
 	cfg, key, err := s.ejhConfig()

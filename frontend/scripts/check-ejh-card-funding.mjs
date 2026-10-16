@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { summarizeCardBalances } from '../src/ejh.js'
 import { cardOpeningAmounts, cardFundedAmounts, cardClosureAmounts, cardFundingSummary, summarizeCardBalancesUSD } from '../src/ejh-card-funding.js'
 
 const card = { id: 'c', remote: { orderNo: 'original', cardAmount: '90000', billAmount: '9999', cardCurrency: 'PHP', billCurrency: 'USD' } }
@@ -86,3 +87,26 @@ for (const row of [balance('missing','10','PHP'),balance('c','bad','PHP'),balanc
 assert.equal(summarizeCardBalancesUSD([phpBalance], [{...open,result:{...open.result,billCurrency:'EUR'}}]).amount,null)
 assert.equal(summarizeCardBalancesUSD([]).amount,null)
 console.log('Passed: historical USD balance estimates, exact decimal aggregation, signed rounding, missing conversion evidence and saved balances')
+
+// Closed cards can retain a nonzero historical snapshot. Exclude it from both
+// currencies and counts, but keep closure-in-progress until status becomes 2.
+const activeBalance=balance('active','10','USD',{remote:{status:'1',cardCurrency:'USD'}})
+const closingBalance={...phpBalance,remote:{...phpBalance.remote,status:'8'}}
+const closedBalance=balance('closed','999','EUR',{remote:{status:2,cardCurrency:'EUR'},balance_error:'historical failure'})
+const scopedCards=[activeBalance,closingBalance,closedBalance,{...closedBalance,id:'closed-missing',balance_at:null},balance('local-closed','888','USD',{local:{source:'ejh',issuer_status:'2'}})]
+assert.deepEqual(summarizeCardBalances(scopedCards),{totals:[{currency:'PHP',count:1,amount:'10000.00'},{currency:'USD',count:1,amount:'10.00'}],known:2,missing:0,failed:0,total:2})
+assert.deepEqual(summarizeCardBalancesUSD(scopedCards,[open]),{amount:'170.50',known:2,estimated:1,missing:0,total:2})
+closingBalance.remote.status='2'
+assert.deepEqual(summarizeCardBalances(scopedCards).totals,[{currency:'USD',count:1,amount:'10.00'}])
+assert.deepEqual(summarizeCardBalancesUSD(scopedCards,[open]),{amount:'10.00',known:1,estimated:0,missing:0,total:1})
+assert.deepEqual(summarizeCardBalances([closedBalance]),{totals:[],known:0,missing:0,failed:0,total:0})
+assert.deepEqual(summarizeCardBalancesUSD([closedBalance]),{amount:null,known:0,estimated:0,missing:0,total:0})
+const missingClosing=balance('pending','10','USD',{remote:{status:'8',cardCurrency:'USD'},balance_at:null,balance_error:'timeout'})
+assert.deepEqual(summarizeCardBalances([missingClosing]),{totals:[],known:0,missing:1,failed:1,total:1})
+assert.deepEqual(summarizeCardBalancesUSD([missingClosing]),{amount:null,known:0,estimated:0,missing:1,total:1})
+for(const status of ['1','3','4','5','6','7','8']){
+ const row=balance(status,'1','USD',{remote:{status,cardCurrency:'USD'},local:{enabled:false}})
+ assert.equal(summarizeCardBalances([row]).known,1,'unclosed card funds remain included regardless of availability')
+ assert.equal(summarizeCardBalancesUSD([row]).amount,'1.00')
+}
+console.log('Passed: completed closures excluded from balances/counts/errors, pending closures retained, issuer status fallback and status transitions')

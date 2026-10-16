@@ -133,9 +133,14 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 	if e != nil {
 		return e
 	}
+	trades, e := store.EJHRecords[ejh.TradeRecord](s.store, "trade")
+	if e != nil {
+		return e
+	}
+	settledClosures := ejhSettledClosures(trades)
 	var failures []error
 	for _, card := range cards {
-		if card.Remote.Status == "2" || card.Remote.OrderNo == "" {
+		if card.Remote.OrderNo == "" || card.Remote.Status == "2" && settledClosures[card.ID] {
 			continue
 		}
 		if e = ctx.Err(); e != nil {
@@ -156,6 +161,29 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 	}
 	return errors.Join(failures...)
 }
+
+// Cancellation can finish before the issuer publishes its refund. Closed cards
+// keep their saved details/balance, but need trade polling until every known
+// closure refund is posted with both amounts. Derive this from persisted trades
+// so pre-fix cards and interrupted runs also recover without a migration.
+func ejhSettledClosures(records []ejh.TradeRecord) map[string]bool {
+	settled := map[string]bool{}
+	for _, record := range records {
+		t := record.Trade
+		if t.Type != "17" {
+			continue
+		}
+		if complete, seen := settled[record.CardID]; seen && !complete {
+			continue
+		}
+		_, transactionErr := ejh.Money(t.TradeAmount)
+		_, settlementErr := ejh.Money(t.BillAmount)
+		settled[record.CardID] = t.Status == "2" && transactionErr == nil && settlementErr == nil &&
+			ejh.ValidCurrency(t.TradeCurrency) && ejh.ValidCurrency(t.BillCurrency)
+	}
+	return settled
+}
+
 func (s *Server) collectEJHCardTrades(ctx context.Context, client *ejh.Client, cfg ejh.Settings, key string, card ejh.CardRecord, start, end time.Time) error {
 	collected := []ejh.Trade{}
 	zone := time.FixedZone("CST", 8*3600)
