@@ -137,7 +137,7 @@ export function cardFundingSummary(card, operations = [], trades = []) {
 
 // Convert each amount using its own card's original opening settlement ratio.
 // Historical estimates are independent of current balance, availability or closure.
-export function summarizeCardAmountsUSD(entries = [], cards = [], operations = []) {
+export function summarizeCardAmountsUSD(entries = [], cards = [], operations = [], precise = false) {
   const byID = new Map(cards.filter(card => card.id).map(card => [card.id, card]))
   const byOrder = new Map(cards.filter(card => card.remote?.orderNo).map(card => [card.remote.orderNo, card]))
   const rates = new Map()
@@ -164,7 +164,7 @@ export function summarizeCardAmountsUSD(entries = [], cards = [], operations = [
   // Keep six decimal places while summing, then round the displayed total once.
   const absolute = total < 0n ? -total : total, cents = (absolute + 5000n) / 10000n
   const amount = `${total < 0n && cents !== 0n ? '-' : ''}${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`
-  return { amount: known ? amount : null, known, estimated, missing: entries.length - known, total: entries.length }
+  return { amount: known ? (precise ? format(total) : amount) : null, known, estimated, missing: entries.length - known, total: entries.length }
 }
 
 // This is not a live FX quote or the supplier's refundable USD amount.

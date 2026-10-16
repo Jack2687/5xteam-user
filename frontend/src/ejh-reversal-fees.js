@@ -17,7 +17,7 @@ function rateUnits(value) {
 }
 const formatCents = cents => `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`
 
-export function summarizeReversalFees(records = [], percent = 6, confirmedOnly = false, cards = [], operations = []) {
+export function summarizeReversalFees(records = [], percent = 6, confirmedOnly = false, cards = [], operations = [], preciseUSD = false) {
   const rate = rateUnits(percent), unique = new Map(), totals = new Map(), conversions = []
   let count = 0, missing = 0, pending = 0
   for (const record of records) {
@@ -40,5 +40,5 @@ export function summarizeReversalFees(records = [], percent = 6, confirmedOnly =
     count++
   }
   const rows = [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([currency, cents]) => ({ currency, amount: formatCents(cents) }))
-  return { rows, count, missing, pending, percent: rate === null ? null : String(Number(rate) / 100), usd: summarizeCardAmountsUSD(conversions, cards, operations) }
+  return { rows, count, missing, pending, percent: rate === null ? null : String(Number(rate) / 100), usd: summarizeCardAmountsUSD(conversions, cards, operations, preciseUSD) }
 }

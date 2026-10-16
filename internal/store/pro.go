@@ -241,6 +241,9 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 	if _, err = tx.Exec("UPDATE mail_accounts SET profile=?,updated_at=? WHERE email=?", string(encoded), formatTime(p.UpdatedAt), email); err != nil {
 		return p, err
 	}
+	if err = s.recordEJHConsumptionTx(tx, p, p.UpdatedAt); err != nil {
+		return p, err
+	}
 	if !wasRemoved && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") {
 		if err = releaseProCardOrdersTx(tx, email, formatTime(p.UpdatedAt)); err != nil {
 			return p, err

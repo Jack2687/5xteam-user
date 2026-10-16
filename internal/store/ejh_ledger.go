@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
 	"strings"
 	"time"
@@ -42,5 +43,33 @@ func (s *Store) SaveEJHRechargeLedger(amount string) (EJHRechargeLedger, error) 
 	}
 	now := time.Now()
 	out = EJHRechargeLedger{Amount: amount, UpdatedAt: &now}
-	return out, s.EJHPut("recharge_ledger", "manual-usd", out)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return out, err
+	}
+	defer tx.Rollback()
+	var previous EJHRechargeLedger
+	if err = s.ejhGetTx(tx, "recharge_ledger", "manual-usd", &previous); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return out, err
+	}
+	if previous.Amount == amount {
+		return previous, nil
+	}
+	if err = s.ejhPutTx(tx, "recharge_ledger", "manual-usd", out); err != nil {
+		return out, err
+	}
+	before, after := new(big.Rat), new(big.Rat)
+	if previous.Amount != "" {
+		before.SetString(previous.Amount)
+	}
+	if amount != "" {
+		after.SetString(amount)
+	}
+	event := EJHRechargeEvent{ID: EJHID("recharge", now.String()), At: now, Before: previous.Amount, After: amount, Delta: new(big.Rat).Sub(after, before).FloatString(2), Baseline: previous.Amount == ""}
+	if err = s.ejhPutTx(tx, "finance_recharge", event.ID, event); err != nil {
+		return out, err
+	}
+	return out, tx.Commit()
 }

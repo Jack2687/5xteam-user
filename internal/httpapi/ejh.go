@@ -56,6 +56,7 @@ func (s *Server) ejhRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/ejh/test", s.testEJH)
 	m.HandleFunc("POST /api/ejh/balance", s.testEJH)
 	m.HandleFunc("GET /api/ejh/dashboard", s.ejhDashboard)
+	m.HandleFunc("GET /api/ejh/finance", s.ejhFinance)
 	m.HandleFunc("POST /api/ejh/sync", s.syncEJH)
 	m.HandleFunc("POST /api/ejh/open", s.openEJH)
 	m.HandleFunc("POST /api/ejh/cards/{id}/action", s.ejhCardAction)
@@ -270,7 +271,12 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "reversal_fee_percent": settings.ReversalFeePercent, "audit": audit, "server_time": time.Now()}, "")
+	usage, err := store.EJHRecords[store.EJHConsumption](s.store, "finance_usage")
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "reversal_fee_percent": settings.ReversalFeePercent, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {
 	if len(n) > 4 {

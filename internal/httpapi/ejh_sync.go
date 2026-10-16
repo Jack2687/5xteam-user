@@ -240,8 +240,24 @@ func (s *Server) startEJH(parent context.Context) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	s.ejh.cancel = cancel
-	s.ejh.wg.Add(2)
+	s.ejh.wg.Add(3)
 	s.ejh.lifecycle.Unlock()
+	go func() {
+		defer s.ejh.wg.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			s.captureEJHFinance()
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	go func() {
 		defer s.ejh.wg.Done()
 		ticker := time.NewTicker(5 * time.Second)

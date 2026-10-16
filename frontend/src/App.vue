@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   ArrowLeftRight, Bot, ChevronDown, Crown, History, Inbox, LogIn, Menu, Moon, Network, Settings,
-  Smartphone, Sun, UserRoundCog, UsersRound, Waypoints, X, LogOut, KeyRound,
+  Smartphone, Sun, UserRoundCog, UsersRound, Waypoints, X, LogOut, KeyRound, ChartNoAxesCombined,
 } from 'lucide-vue-next'
 import { api } from './api'
 import AdminAccountsView from './components/AdminAccountsView.vue'
@@ -14,6 +14,7 @@ import OpenAIAccountsView from './components/OpenAIAccountsView.vue'
 import ProManagementView from './components/ProManagementView.vue'
 import ProRestockView from './components/ProRestockView.vue'
 import EJHManagementView from './components/EJHManagementView.vue'
+import EJHFinanceView from './components/EJHFinanceView.vue'
 import ProxiesView from './components/ProxiesView.vue'
 import SettingsView from './components/SettingsView.vue'
 import StatusPill from './components/StatusPill.vue'
@@ -24,6 +25,7 @@ const nav = [
   { id: 'pro', label: 'Pro 管理', icon: Crown, group: '账号' },
   { id: 'pro-restock', label: 'Pro 自动补货', icon: Waypoints, group: '账号' },
   { id: 'ejh', label: 'EJH 卡台', icon: Crown, group: '卡片与回款' },
+  { id: 'ejh-finance', label: '成本统计', icon: ChartNoAxesCombined, group: '卡片与回款' },
   { id: 'space-merge', label: '空间合并', icon: ArrowLeftRight, group: '空间合并' },
   { id: 'mail', label: '邮件管理', icon: Inbox, group: '账号流水线' },
   { id: 'free', label: 'Team 轮转', icon: Waypoints, group: '账号流水线' },
@@ -160,6 +162,7 @@ onMounted(checkAuth)
       <ProRestockView v-if="settings && current === 'pro-restock'" />
       <ProManagementView v-if="settings && current === 'pro'" :accounts="proAccounts" :admin-accounts="adminAccounts" :default-page-size="settings.default_page_size || 10" @reload="syncProAccounts" @open-ejh-card="openEJHCard" />
       <EJHManagementView v-if="settings && current === 'ejh'" :entry="ejhEntry" @entry-applied="ejhEntry=null" />
+      <EJHFinanceView v-if="settings && current === 'ejh-finance'" />
       <template v-if="spaceMergeVisited">
         <WorkflowView v-show="current === 'full'" mode="full" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />
         <WorkflowView v-show="current === 'enter'" mode="enter" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />
