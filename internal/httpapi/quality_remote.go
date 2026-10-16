@@ -27,7 +27,10 @@ func remoteQualityFresh(v sub2.RemoteQualityVerdict, since, now time.Time, maxAg
 	if v.Status != "normal" && v.Status != "variant" && v.Status != "suspect" && v.Status != "degraded" {
 		return false
 	}
-	return v.Error == "" && v.EvidenceAt != nil && !v.EvidenceAt.Before(since) && !v.EvidenceAt.After(now.Add(5*time.Second)) && now.Sub(*v.EvidenceAt) <= maxAge && v.StreakStartedAt != nil && !v.StreakStartedAt.Before(since)
+	// Sub2 can start a streak before the push response reaches Space. Allow the
+	// same bounded clock tolerance used for remote timestamps at this boundary,
+	// but still require fresh evidence after the current push/cycle began.
+	return v.Error == "" && v.EvidenceAt != nil && !v.EvidenceAt.Before(since) && !v.EvidenceAt.After(now.Add(5*time.Second)) && now.Sub(*v.EvidenceAt) <= maxAge && v.StreakStartedAt != nil && !v.StreakStartedAt.Before(since.Add(-5*time.Second))
 }
 func remoteQualityDecision(q model.QualitySettings, p model.FreeAccountProfile, snapshot sub2.RemoteQualitySnapshot, v sub2.RemoteQualityResult) (bad, recovered bool) {
 	since := p.CreatedAt
