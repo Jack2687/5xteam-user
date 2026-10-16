@@ -30,15 +30,21 @@ func ObserveWindows(current, previous []Window, samePlan bool, maxAge time.Durat
 	return current
 }
 func Pressure(c Config, s Snapshot) bool {
+	return pressureAt(c, s, s.At)
+}
+func availableAccount(a Account, now time.Time) bool {
+	return a.Ready && !a.Shared && (a.ExpiresAt == nil || a.ExpiresAt.After(now))
+}
+func pressureAt(c Config, s Snapshot, now time.Time) bool {
 	if !s.Valid || !s.LoadValid {
 		return false
 	}
 	capacity, used, queue := 0, 0, 0
 	for _, a := range s.Accounts {
-		if a.Ready {
+		if availableAccount(a, now) {
 			capacity += a.Capacity
+			used += a.Used
 		}
-		used += a.Used
 		queue += a.Waiting
 	}
 	return queue > 0 || (capacity > 0 && float64(used)*100 >= float64(capacity*c.TriggerPercent))
@@ -62,11 +68,11 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		d.TargetMinutes = math.Max(d.TargetMinutes, d.TriggerMinutes+1)
 	}
 	for _, a := range s.Accounts {
-		if a.Ready {
+		if availableAccount(a, now) {
 			d.Usable++
 			d.Capacity += a.Capacity
+			d.Used += a.Used
 		}
-		d.Used += a.Used
 		d.Waiting += a.Waiting
 	}
 	timely, groupInflight := 0, 0
@@ -113,22 +119,6 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	if d.ForceMerge.Unknown > 0 {
 		d.Warnings = append(d.Warnings, "部分 EJH 账号时限或首次推送记录不明，已排除，不按 0 分钟触发")
 	}
-	for _, a := range s.Accounts {
-		if a.ExpiresAt == nil || !a.Ready || len(a.Windows) == 0 {
-			continue
-		}
-		left := 100.0
-		trusted := true
-		for _, w := range a.Windows {
-			if !validWindow(w.Used, w.Rate) || w.Samples < 2 || now.Sub(w.At) > time.Duration(c.QuotaSeconds*2)*time.Second || w.ResetAt <= a.ExpiresAt.Unix() {
-				trusted = false
-			}
-			left = math.Min(left, math.Max(0, 100-w.Used-w.Rate*math.Max(0, a.ExpiresAt.Sub(w.At).Minutes())))
-		}
-		if trusted {
-			d.IdleEquivalent += left / 100
-		}
-	}
 	arrival := now.Add(time.Duration(lead * float64(time.Minute)))
 	futureCapacity := 0
 	for _, a := range s.Accounts {
@@ -136,49 +126,32 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 			futureCapacity += a.Capacity
 		}
 	}
-	if c.ConcurrencyEnabled && confirmations >= c.Confirmations && Pressure(c, s) {
+	if c.ConcurrencyEnabled && confirmations >= c.Confirmations && pressureAt(c, s, now) {
 		d.ConcurrencyNeed = max(0, int(math.Ceil((float64(d.Used+d.Waiting)*100/float64(c.TargetPercent)-float64(futureCapacity+timely*newSlots))/float64(newSlots))))
 	}
 	timeWithinHorizon := lead < float64(c.ForecastMinutes) && d.TargetMinutes <= float64(c.ForecastMinutes)
 	if c.TimeEnabled && !timeWithinHorizon {
 		d.Warnings = append(d.Warnings, "预计就绪或补后目标超出预测上限，暂停时间侧新增；并发和最低备用仍独立生效")
 	}
-	base, coverage, ok, capped := forecast(c, s, nil, 0, newSlots, lead, now, 0)
-	d.Coverage = coverage
-	if ok {
-		d.SupplyMinutes = &base
-		d.SupplyCapped = capped
-	}
-	if c.TimeEnabled && timeWithinHorizon {
-		base, _, ok, _ := forecast(c, s, tasks, 0, newSlots, lead, now, 0)
-		if ok {
-			if base < lead {
-				d.Warnings = append(d.Warnings, "到货前可能出现供给缺口；新号不能消除已经发生的等待")
-			}
-			if base <= d.TriggerMinutes {
-				// Existing arrivals can already cover the future even when the
-				// unavoidable gap before arrival remains. Zero is a valid net need.
-				lo, hi := 0, c.MaxInflight
-				for lo < hi {
-					mid := (lo + hi) / 2
-					until, _, _, _ := forecast(c, s, tasks, mid, newSlots, lead, now, lead)
-					if until >= d.TargetMinutes {
-						hi = mid
-					} else {
-						lo = mid + 1
-					}
-				}
-				until, _, _, _ := forecast(c, s, tasks, lo, newSlots, lead, now, lead)
-				if until >= d.TargetMinutes {
-					d.TimeNeed = lo
-				} else {
-					d.Warnings = append(d.Warnings, "受就绪时间、使用时限或在途上限影响，时间目标暂不可达；暂停时间侧新增，避免持续补满")
-				}
-			}
-		} else {
-			d.Warnings = append(d.Warnings, "额度样本不足、套餐口径不同或窗口过期，预计支撑时间暂不可估")
+	d.Money = ForecastMoney(s, now)
+	d.Coverage = d.Money.Coverage
+	if d.Money.State == "ready" {
+		minutes := *d.Money.RemainingUSD / *d.Money.RateUSD
+		if moneyNumber(minutes) {
+			d.SupplyMinutes = &minutes
 		}
 	}
+	if c.TimeEnabled && timeWithinHorizon && d.SupplyMinutes != nil && *d.SupplyMinutes <= d.TriggerMinutes {
+		if *d.SupplyMinutes < lead {
+			d.Warnings = append(d.Warnings, "新号就绪前可能出现额度缺口")
+		}
+		var warning string
+		d.TimeNeed, warning = moneyTimeNeed(c, s, d.Money, tasks, d.TargetMinutes, lead, now)
+		if warning != "" {
+			d.Warnings = append(d.Warnings, warning)
+		}
+	}
+
 	d.ReserveNeed = max(0, c.Reserve-d.Usable-timely)
 	// An empty group has no consumption samples or pressure to confirm. All
 	// matching active intents count for deduplication, even without an ETA.
@@ -249,153 +222,6 @@ func usableAt(a Account, t, now time.Time, maxAge time.Duration) bool {
 	return true
 }
 
-// Forecast uses percentage-point rates only within one verified plan and the
-// same set of quota windows. It integrates available accounts, resets, expiry
-// and arrivals on a 15-second timeline; money and tokens never enter this model.
-// A gap before new arrivals is reported separately, not compensated by buying
-// an unbounded number of accounts that will arrive too late.
-func forecast(c Config, s Snapshot, tasks []Task, extra, slots int, lead float64, now time.Time, checkFrom float64) (float64, float64, bool, bool) {
-	type supply struct {
-		a         Account
-		arrive    float64
-		remaining map[int64]float64
-		reset     map[int64]int64
-	}
-	pool := []supply{}
-	rates := map[int64]float64{}
-	plan := ""
-	eligible, covered := 0, 0
-	var template []Window
-	for _, a := range s.Accounts {
-		if !a.Ready {
-			continue
-		}
-		eligible++
-		good := a.Plan != "" && len(a.Windows) > 0
-		seenWindows := map[int64]bool{}
-		for _, w := range a.Windows {
-			if seenWindows[w.Seconds] || !validWindow(w.Used, w.Rate) || w.At.After(now.Add(5*time.Second)) || w.Samples < 2 || w.Seconds <= 0 || w.ResetAt <= now.Unix() || now.Sub(w.At) > time.Duration(c.QuotaSeconds*2)*time.Second {
-				good = false
-			}
-			seenWindows[w.Seconds] = true
-		}
-		if !good {
-			continue
-		}
-
-		covered++
-		if plan != "" && plan != a.Plan {
-			return 0, 0, false, false
-		}
-		plan = a.Plan
-		if template == nil {
-			template = a.Windows
-		} else {
-			if len(template) != len(a.Windows) {
-				return 0, 0, false, false
-			}
-			for _, w := range template {
-				found := false
-				for _, v := range a.Windows {
-					if v.Seconds == w.Seconds {
-						found = true
-					}
-				}
-				if !found {
-					return 0, 0, false, false
-				}
-			}
-		}
-		p := supply{a: a, remaining: map[int64]float64{}, reset: map[int64]int64{}}
-		for _, w := range a.Windows {
-			p.remaining[w.Seconds] = math.Max(0, 100-w.Used-w.Rate*math.Max(0, now.Sub(w.At).Minutes()))
-			p.reset[w.Seconds] = w.ResetAt
-			rates[w.Seconds] += w.Rate
-		}
-		pool = append(pool, p)
-	}
-	coverage := float64(covered) * 100 / float64(max(1, eligible))
-	if coverage < float64(c.QuotaCoverage) || len(pool) == 0 {
-		return 0, coverage, false, false
-	}
-	positive := false
-	for _, v := range rates {
-		if v > 0 {
-			positive = true
-		}
-	}
-	if !positive {
-		return 0, coverage, false, false
-	}
-	add := func(at float64) {
-		p := supply{a: Account{Ready: true, Capacity: slots}, arrive: at, remaining: map[int64]float64{}, reset: map[int64]int64{}}
-		for _, w := range template {
-			p.remaining[w.Seconds] = 100
-			p.reset[w.Seconds] = now.Add(time.Duration(at*float64(time.Minute))).Unix() + w.Seconds
-		}
-		pool = append(pool, p)
-	}
-	allowNew := s.NewPlan != ""
-	for _, a := range s.Accounts {
-		if a.Ready && first(a.PurchasePlan, a.Plan) != s.NewPlan {
-			allowNew = false
-		}
-	}
-	if extra > 0 && !allowNew {
-		return 0, coverage, false, false
-	}
-	for _, t := range tasks {
-		if allowNew && t.Predictable() && t.GroupID == s.GroupID && t.Binding == s.Binding && t.Plan == s.NewPlan {
-			add(math.Max(0, t.ETA.Sub(now).Minutes()))
-		}
-	}
-	for range extra {
-		add(lead)
-	}
-	for minute := 0.; minute <= float64(c.ForecastMinutes); minute += .25 {
-		at := now.Add(time.Duration(minute * float64(time.Minute)))
-		available := []int{}
-		capacity := 0
-		for i := range pool {
-			p := &pool[i]
-			if minute < p.arrive || (p.a.ExpiresAt != nil && !p.a.ExpiresAt.After(at)) {
-				continue
-			}
-			ok := true
-			for sec, remain := range p.remaining {
-				if at.Unix() >= p.reset[sec] {
-					p.remaining[sec] = 100
-					p.reset[sec] += sec
-					remain = 100
-				}
-				if remain <= 0 {
-					ok = false
-				}
-			}
-			if ok {
-				available = append(available, i)
-				capacity += p.a.Capacity
-			}
-		}
-		demand := 0
-		for _, a := range s.Accounts {
-			demand += a.Used + a.Waiting
-		}
-		gap := capacity == 0 || capacity < demand
-		if gap && minute >= checkFrom {
-			return minute, coverage, true, false
-		}
-		if capacity == 0 {
-			continue
-		}
-		for _, i := range available {
-			for sec, rate := range rates {
-				pool[i].remaining[sec] -= rate * .25 * float64(pool[i].a.Capacity) / float64(capacity)
-			}
-		}
-	}
-	return float64(c.ForecastMinutes), coverage, true, true
-}
 func validWindow(used, rate float64) bool {
 	return !math.IsNaN(used) && !math.IsInf(used, 0) && !math.IsNaN(rate) && !math.IsInf(rate, 0) && used >= 0 && used <= 100 && rate >= 0
 }

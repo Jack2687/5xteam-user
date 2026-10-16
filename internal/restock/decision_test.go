@@ -11,6 +11,7 @@ func fixture() (Config, Snapshot, time.Time) {
 	c.Enabled = true
 	c.Mode = "auto"
 	s := Snapshot{ID: "s", At: n, Valid: true, LoadValid: true, GroupID: 1, Binding: "pool", NewPlan: "pro20", Accounts: []Account{{ID: 1, Plan: "pro20", Ready: true, Capacity: 20, Used: 19, Windows: []Window{{Seconds: 18000, ResetAt: n.Add(time.Hour).Unix(), Used: 90, Rate: 2, Samples: 3, At: n}}}}}
+	s.Accounts[0].Money = testMoney(n, 90, 90, 2)
 	return c, s, n
 }
 func TestDecisionRules(t *testing.T) {
@@ -46,7 +47,7 @@ func TestStaleQuotaDoesNotInflateConcurrencyNeed(t *testing.T) {
 		s.Accounts[0].Windows[0].At = now.Add(-age)
 		s.Accounts[0].Windows[0].Used = 100
 		d := Evaluate(c, s, nil, Limits{}, 2, 20, 2, now)
-		if d.ConcurrencyNeed != 1 || d.SupplyMinutes != nil {
+		if d.ConcurrencyNeed != 1 || d.SupplyMinutes == nil || *d.SupplyMinutes != 5 {
 			t.Fatalf("quota age %v used for prediction: %+v", age, d)
 		}
 	}
@@ -84,6 +85,7 @@ func TestDataAndEmptyPool(t *testing.T) {
 	}
 	s.LoadValid = true
 	s.Accounts[0].Windows = nil
+	s.Accounts[0].Money = nil
 	d := Evaluate(c, s, nil, Limits{}, 2, 20, 2, n)
 	if d.SupplyMinutes != nil || d.Suggested != 1 {
 		t.Fatal("concurrency independent of quota")

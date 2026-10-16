@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,23 +16,28 @@ import (
 
 type proRestockContextKey struct{}
 type proRestockRuntime struct {
-	tasks        []restock.Task
-	tick         sync.Mutex
-	mu           sync.Mutex
-	next         time.Time
-	quotaNext    time.Time
-	quotaBusy    bool
-	quota        map[int64][]restock.Window
-	quotaPlans   map[int64]string
-	quotaBinding string
-	lastSnapshot restock.Snapshot
-	decision     restock.Decision
-	confirmation int
-	lastVersion  int
-	lastSample   time.Time
-	lastRecord   time.Time
-	lastReason   string
-	monitor      func(context.Context, restock.Config, model.ProSettings, string) (restock.Snapshot, error)
+	money           map[int64]*restock.AccountMoney
+	moneyNext       time.Time
+	moneyBusy       bool
+	moneyScope      string
+	moneyGeneration uint64
+	tasks           []restock.Task
+	tick            sync.Mutex
+	mu              sync.Mutex
+	next            time.Time
+	quotaNext       time.Time
+	quotaBusy       bool
+	quota           map[int64][]restock.Window
+	quotaPlans      map[int64]string
+	quotaBinding    string
+	lastSnapshot    restock.Snapshot
+	decision        restock.Decision
+	confirmation    int
+	lastVersion     int
+	lastSample      time.Time
+	lastRecord      time.Time
+	lastReason      string
+	monitor         func(context.Context, restock.Config, model.ProSettings, string) (restock.Snapshot, error)
 }
 
 func restockBinding(p model.ProSettings) string {
@@ -180,8 +186,21 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 		s.proRestock.quotaBinding = snap.Binding
 		s.proRestock.quotaNext = time.Time{}
 	}
+	members := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		members = append(members, fmt.Sprintf("%d:%s:%t", a.ID, a.Credentials.Plan, a.Ready(now, p.Sub2.Models)))
+	}
+	sort.Strings(members)
+	moneyScope := fmt.Sprintf("%s:%d:%v", snap.Binding, c.GroupID, members)
+	if moneyScope != s.proRestock.moneyScope {
+		s.proRestock.moneyScope = moneyScope
+		s.proRestock.money = map[int64]*restock.AccountMoney{}
+		s.proRestock.moneyNext = time.Time{}
+		s.proRestock.moneyGeneration++
+	}
 	for _, a := range accounts {
 		v := restock.Account{Fault: a.Status == "error" || (a.OverloadUntil != nil && a.OverloadUntil.After(now)) || (a.TempUntil != nil && a.TempUntil.After(now)), ID: a.ID, Name: a.Name, Plan: a.Credentials.Plan, Ready: a.Ready(now, p.Sub2.Models), Shared: len(a.GroupIDs) > 1, Capacity: a.Concurrency, Windows: append([]restock.Window{}, s.proRestock.quota[a.ID]...)}
+		v.Money = s.proRestock.money[a.ID]
 		if a.ExpiresAt != nil {
 			t := time.Unix(*a.ExpiresAt, 0)
 			v.ExpiresAt = &t
@@ -225,6 +244,9 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 		snap.Error = "Sub2 快照时间过期或服务器时钟不一致"
 	}
 	s.refreshRestockQuota(c, p, password, snap)
+	if snap.Valid && snap.LoadValid {
+		s.refreshRestockMoney(p, password, snap)
+	}
 	return snap, nil
 }
 func (s *Server) refreshRestockQuota(c restock.Config, p model.ProSettings, password string, snap restock.Snapshot) {

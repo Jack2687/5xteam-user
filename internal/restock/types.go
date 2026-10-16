@@ -126,22 +126,23 @@ func (w Window) Fresh(now time.Time, maxAge time.Duration) bool {
 }
 
 type Account struct {
-	PurchasePlan       string     `json:"purchase_plan,omitempty"`
-	EJH                bool       `json:"ejh"`
-	ForceMergeKey      string     `json:"force_merge_key,omitempty"`
-	PushTimeoutEnabled *bool      `json:"push_timeout_enabled,omitempty"`
-	ForceMergeDeadline *time.Time `json:"force_merge_deadline,omitempty"`
-	Fault              bool       `json:"fault"`
-	ID                 int64      `json:"id"`
-	Name               string     `json:"name"`
-	Plan               string     `json:"plan"`
-	Ready              bool       `json:"ready"`
-	Shared             bool       `json:"shared"`
-	Capacity           int        `json:"capacity"`
-	Used               int        `json:"used"`
-	Waiting            int        `json:"waiting"`
-	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
-	Windows            []Window   `json:"windows"`
+	Money              *AccountMoney `json:"money,omitempty"`
+	PurchasePlan       string        `json:"purchase_plan,omitempty"`
+	EJH                bool          `json:"ejh"`
+	ForceMergeKey      string        `json:"force_merge_key,omitempty"`
+	PushTimeoutEnabled *bool         `json:"push_timeout_enabled,omitempty"`
+	ForceMergeDeadline *time.Time    `json:"force_merge_deadline,omitempty"`
+	Fault              bool          `json:"fault"`
+	ID                 int64         `json:"id"`
+	Name               string        `json:"name"`
+	Plan               string        `json:"plan"`
+	Ready              bool          `json:"ready"`
+	Shared             bool          `json:"shared"`
+	Capacity           int           `json:"capacity"`
+	Used               int           `json:"used"`
+	Waiting            int           `json:"waiting"`
+	ExpiresAt          *time.Time    `json:"expires_at,omitempty"`
+	Windows            []Window      `json:"windows"`
 }
 type Snapshot struct {
 	NewPlan         string    `json:"new_plan"`
@@ -197,6 +198,7 @@ type Limits struct {
 	LastBatch *time.Time `json:"last_batch,omitempty"`
 }
 type Decision struct {
+	Money           MoneyForecast   `json:"money"`
 	NoRestockActive bool            `json:"no_restock_active"`
 	ForceMerge      ForceMergeStats `json:"force_merge"`
 	ForceMergeNeed  int             `json:"force_merge_need"`

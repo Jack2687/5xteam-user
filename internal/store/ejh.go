@@ -550,7 +550,9 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 	if e != nil {
 		return nil, e
 	}
-	rows, e := q.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other'),charge.sealed,o.profile FROM ejh_cases c
+	rows, e := q.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other'),charge.sealed,o.profile,
+        CASE WHEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_identity'),'')<>''
+        THEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_snapshot'),0) END FROM ejh_cases c
         LEFT JOIN ejh_records charge ON charge.kind='trade' AND charge.id=json_extract(c.profile,'$.original_trade_id')
         LEFT JOIN gptpay_orders o ON o.id=c.id
 		LEFT JOIN mail_accounts m ON m.email=c.email
@@ -569,12 +571,17 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		var exists sql.NullString
 		var ejhCardID, cardType string
 		var chargeRaw, orderRaw sql.NullString
-		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType, &chargeRaw, &orderRaw); e != nil {
+		var consumption sql.NullFloat64
+		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType, &chargeRaw, &orderRaw, &consumption); e != nil {
 			return nil, e
 		}
 		var v ejh.Case
 		if e = json.Unmarshal([]byte(raw), &v); e != nil {
 			return nil, e
+		}
+		v.ConsumptionTotal = nil
+		if consumption.Valid {
+			v.ConsumptionTotal = &consumption.Float64
 		}
 		v.EJHCardID = ejhCardID
 		v.CardType = cardType

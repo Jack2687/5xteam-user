@@ -16,6 +16,7 @@ func TestProRestockMonitorQuality(t *testing.T) {
 	s, _, _ := gptPayFixture(t, func(http.ResponseWriter, *http.Request) {})
 	s.proAutoCancel()
 	s.proRestock.quotaNext = time.Now().Add(time.Hour)
+	s.proRestock.moneyBusy = true // This test isolates account/load collection.
 	mode := "zero"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var data any

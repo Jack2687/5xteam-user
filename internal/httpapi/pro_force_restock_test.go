@@ -73,6 +73,7 @@ func TestForceRestockCollectorUsesSavedPolicyAndUpstreamExpiry(t *testing.T) {
 	c.ForceMergeEnabled = true
 	s.proRestock.quotaBinding = restockBinding(p)
 	s.proRestock.quotaNext = time.Now().Add(time.Hour)
+	s.proRestock.moneyBusy = true // Money collection has separate integration coverage.
 	collect := func() restock.Account {
 		t.Helper()
 		s.proRestock.quotaBinding = restockBinding(p)

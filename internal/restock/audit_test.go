@@ -7,6 +7,7 @@ func TestForecastHorizonDoesNotSuppressOtherRules(t *testing.T) {
 		c, s, now := fixture()
 		c.TimeEnabled = timeEnabled
 		s.Accounts[0].Windows = nil
+		s.Accounts[0].Money = nil
 		c.ForecastMinutes = c.TargetMinutes
 		d := Evaluate(c, s, nil, Limits{}, c.Confirmations, 20, 20, now)
 		if d.ConcurrencyNeed != 1 || d.Suggested != 1 || d.TimeNeed != 0 {

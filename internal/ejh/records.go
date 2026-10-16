@@ -55,6 +55,9 @@ func ValidCaseState(state string) bool {
 }
 
 type Case struct {
+	// Read from the account's current user-cost snapshot; nil means unqueried.
+	ConsumptionTotal *float64 `json:"consumption_total,omitempty"`
+
 	AutomaticState  string             `json:"automatic_state"`
 	StateOverride   *CaseStateOverride `json:"state_override,omitempty"`
 	Charge          *ActivationCharge  `json:"charge,omitempty"`

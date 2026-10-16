@@ -277,6 +277,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 		return e
 	}
 	if !force && now.Before(s.proRestock.next) {
+		s.sampleRestockMoneyBetweenChecks(c, now)
 		return nil
 	}
 	// Retry after the configured interval, even when a failed request was slow.

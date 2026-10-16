@@ -5,22 +5,20 @@ import (
 	"time"
 )
 
-func TestForecastDisplayCappedVersusGap(t *testing.T) {
+func TestForecastDisplayUsesDollarRatioWithoutHorizonOrLifetimeCap(t *testing.T) {
 	c, s, n := fixture()
-	s.Accounts[0].Windows[0].Used = 10
-	s.Accounts[0].Windows[0].Rate = .1
-	s.Accounts[0].Windows[0].ResetAt = n.Add(5 * time.Hour).Unix()
+	s.Accounts[0].Money = testMoney(n, 10, 10, .1)
 	d := Evaluate(c, s, nil, Limits{}, 2, 20, 2, n)
-	if d.SupplyMinutes == nil || *d.SupplyMinutes != 60 || !d.SupplyCapped {
-		t.Fatalf("horizon not labelled: %+v", d)
+	if d.SupplyMinutes == nil || *d.SupplyMinutes != 900 || d.SupplyCapped {
+		t.Fatalf("dollar forecast capped: %+v", d)
 	}
 	expiry := n.Add(60 * time.Minute)
 	s.Accounts[0].ExpiresAt = &expiry
 	d = Evaluate(c, s, nil, Limits{}, 2, 20, 2, n)
-	if d.SupplyMinutes == nil || *d.SupplyMinutes != 60 || d.SupplyCapped {
-		t.Fatalf("gap at horizon mislabelled: %+v", d)
+	if d.SupplyMinutes == nil || *d.SupplyMinutes != 900 || d.SupplyCapped {
+		t.Fatalf("expiry changed dollar budget: %+v", d)
 	}
-	s.Accounts[0].Windows[0].Samples = 0
+	s.Accounts[0].Money.RateUSD = nil
 	d = Evaluate(c, s, nil, Limits{}, 2, 20, 2, n)
 	if d.SupplyMinutes != nil || d.SupplyCapped {
 		t.Fatal("missing samples reported as supply")
