@@ -323,12 +323,16 @@ func (s *Store) AppendSeatRecoveryLog(id, stage, message string) error {
 }
 
 func (s *Store) SeatRecoveryLogs(id string, before int64) ([]model.SeatRecoveryLog, error) {
+	return s.SeatRecoveryLogsPage(id, before, 200)
+}
+
+func (s *Store) SeatRecoveryLogsPage(id string, before int64, limit int) ([]model.SeatRecoveryLog, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if before <= 0 {
 		before = 1 << 62
 	}
-	rows, err := s.db.Query("SELECT id,payload FROM seat_recovery_logs WHERE task_id=? AND id<? ORDER BY id DESC LIMIT 200", id, before)
+	rows, err := s.db.Query("SELECT id,payload FROM seat_recovery_logs WHERE task_id=? AND id<? ORDER BY id DESC LIMIT ?", id, before, min(500, max(1, limit)))
 	if err != nil {
 		return nil, err
 	}

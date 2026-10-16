@@ -511,7 +511,7 @@ func TestAccountLifecyclePagesStayBoundedAndExportRemainsComplete(t *testing.T) 
 	if err := json.Unmarshal(defaultRec.Body.Bytes(), &payload); err != nil || len(payload.Data.Events) != 50 {
 		t.Fatalf("default page is not bounded: count=%d err=%v", len(payload.Data.Events), err)
 	}
-	for _, query := range []string{"limit=101", "limit=-1", "limit=abc", "cursor=invalid"} {
+	for _, query := range []string{"limit=501", "limit=-1", "limit=abc", "cursor=invalid"} {
 		badReq := httptest.NewRequest(http.MethodGet, "/api/free-accounts/"+account.ID+"/events?"+query, nil)
 		badReq.SetPathValue("id", account.ID)
 		badRec := httptest.NewRecorder()

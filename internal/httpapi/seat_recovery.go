@@ -256,11 +256,8 @@ func (s *Server) createSeatRecoveryTask(p model.SeatRecoveryTask) error {
 }
 
 func (s *Server) listSeatRecovery(w http.ResponseWriter, r *http.Request) {
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	items, total, err := s.store.SeatRecoveryTasks(r.URL.Query().Get("active") == "true", 50, (page-1)*50)
+	page := s.parsePagination(r)
+	items, total, err := s.store.SeatRecoveryTasks(r.URL.Query().Get("active") == "true", page.Limit, page.Offset)
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
@@ -271,7 +268,7 @@ func (s *Server) listSeatRecovery(w http.ResponseWriter, r *http.Request) {
 		running[id] = v
 	}
 	s.recovery.mu.Unlock()
-	writeAPI(w, 200, map[string]any{"items": items, "total": total, "page": page, "page_size": 50, "running": running, "server_now": time.Now()}, "")
+	writeAPI(w, 200, paginatedData(items, total, page, map[string]any{"running": running, "server_now": time.Now()}), "")
 }
 
 func (s *Server) controlSeatRecovery(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +288,7 @@ func (s *Server) controlSeatRecovery(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) seatRecoveryLogs(w http.ResponseWriter, r *http.Request) {
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-	items, err := s.store.SeatRecoveryLogs(r.PathValue("id"), before)
+	items, err := s.store.SeatRecoveryLogsPage(r.PathValue("id"), before, s.parsePagination(r).Limit)
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return

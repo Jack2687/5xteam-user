@@ -1,4 +1,4 @@
-import { summarizeReversalFees } from './ejh-reversal-fees.js'
+import { summarizeReversalFees, reversalProfit } from './ejh-reversal-fees.js'
 import { summarizeCardBalancesUSD } from './ejh-card-funding.js'
 import { summarizeInFlightPayments } from './ejh-account-amounts.js'
 
@@ -77,7 +77,7 @@ export function financeOverview(data={}) {
   if(cardUSD.missing)reasons.push(`${cardUSD.missing} 张卡余额或折算依据缺失`)
   if(inFlight.paymentUSD.missing)reasons.push(`${inFlight.paymentUSD.missing} 笔在途付款待核实`)
   const loss=reasons.length?null:net-account-(cents(cardUSD.amount)||0n)-(cents(inFlight.paymentUSD.amount)||0n)
-  return {reversal,openingCount:opening.length,openingFee:money(BigInt(opening.length)*50n),consumption,
+  return {reversal,profit:reversalProfit(reversal,consumption.total,consumption.missing),openingCount:opening.length,openingFee:money(BigInt(opening.length)*50n),consumption,
     gross:money(gross),depositFee:money(deposit),net:money(net),loss:money(loss),lossReasons:[...new Set(reasons)],
     estimated:!!(cardUSD.estimated||inFlight.paymentUSD.estimated),stale:cards.filter(c=>c.remote?.status!=='2'&&c.balance_error).length,
     accountUSD:money(account),cardUSD,inFlight}

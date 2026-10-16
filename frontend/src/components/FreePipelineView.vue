@@ -554,7 +554,7 @@ async function loadLifecyclePage(initial = false) {
   lifecycleView.loading = initial
   lifecycleView.loadingMore = !initial
   try {
-    const params = new URLSearchParams({ limit: '50' })
+    const params = new URLSearchParams({ limit: String(props.defaultPageSize || 10) })
     if (!initial && lifecycleView.cursor) params.set('cursor', lifecycleView.cursor)
     const route = qualityHistoryOnly.value ? 'quality/history' : `events?${params}`
     const result = await api(`/api/free-accounts/${encodeURIComponent(account.id)}/${route}`, { signal: controller.signal })

@@ -19,11 +19,11 @@ const tick = () => new Promise(resolve=>setImmediate(resolve))
 let time=100000
 const saved = new Map(), storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
 const gate=createEJHRefreshGate({now:()=>time,storage:()=>storage})
-function fixture({failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[]}={}) {
+function fixture({defaultPageSize=10,failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[]}={}) {
  const calls=[],mounts=[],unmounts=[],confirmations=[]
  let release,savedPercent=6,failSave=false
  const blocked=new Promise(resolve=>{release=resolve})
- const context=vm.createContext({...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
+ const context=vm.createContext({...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
  async api(url,options={}){
   calls.push({url,options})
   if(url==='/api/ejh/settings'){
@@ -40,6 +40,7 @@ function fixture({failSync=false,holdSync=false,confirmDelete=true,deleteResult=
  return {...context.exposed,calls,confirmations,release,setFailSave:value=>{failSave=value},unmount:()=>unmounts.forEach(fn=>fn())}
 }
 let f=fixture();await f.initialize()
+assert.equal(fixture({defaultPageSize:50}).pageSize.value,50,'EJH lists must use the global page size')
 assert.equal(f.calls.filter(r=>r.url==='/api/ejh/sync').length,1)
 f.unmount()
 let second=fixture();await second.initialize()

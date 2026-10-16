@@ -116,11 +116,11 @@ func monitorNextDeadline(now time.Time, oldest string, unchecked int, interval t
 
 func (s *Server) listFreeAccountEvents(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
-	limit := 50
+	limit := s.defaultPageSize()
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeAPI(w, http.StatusBadRequest, nil, "日志条数必须在 1 到 100 之间")
+		if err != nil || parsed < 1 || parsed > 500 {
+			writeAPI(w, http.StatusBadRequest, nil, "日志条数必须在 1 到 500 之间")
 			return
 		}
 		limit = parsed

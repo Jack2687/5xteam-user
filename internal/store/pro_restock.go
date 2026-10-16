@@ -339,7 +339,7 @@ func (s *Store) SaveProRestockDecision(d restock.Decision) error {
 func (s *Store) ProRestockDecisions(limit, offset int) ([]restock.Decision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, e := s.db.Query(`SELECT payload FROM pro_restock_decisions ORDER BY created_at DESC LIMIT ? OFFSET ?`, min(100, max(1, limit)), max(0, offset))
+	rows, e := s.db.Query(`SELECT payload FROM pro_restock_decisions ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, min(500, max(1, limit)), max(0, offset))
 	if e != nil {
 		return nil, e
 	}
@@ -358,6 +358,14 @@ func (s *Store) ProRestockDecisions(limit, offset int) ([]restock.Decision, erro
 	}
 	return out, rows.Err()
 }
+func (s *Store) ProRestockDecisionCount() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var total int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pro_restock_decisions`).Scan(&total)
+	return total, err
+}
+
 func (s *Store) PurgeProRestock(days int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

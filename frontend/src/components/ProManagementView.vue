@@ -406,7 +406,7 @@ onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); listRequestID++; win
 
 <template>
   <section class="view-stack">
-    <ProAccountLogDialog ref="accountLogs" />
+    <ProAccountLogDialog :default-page-size="defaultPageSize" ref="accountLogs" />
     <header class="page-heading">
       <div><span class="overline">PRO ACCOUNTS</span><h1>Pro 管理</h1><p>通过 Codex OAuth 管理 Pro 凭证、下游额度与自动空间合并</p></div>
       <div class="heading-actions"><button v-if="activeTab === 'accounts'" class="btn ghost" :disabled="!!busy" @click="transferDialog?.open()"><FileKey2 :size="15" />导入 / 导出</button><span v-if="settings.quota_enabled" class="countdown"><Clock3 :size="14" />{{ countdown }}s 后检测</span><button v-if="activeTab === 'accounts'" class="btn primary" type="button" :disabled="!!busy" @click="beginOAuth()"><CirclePlus :size="15" />添加账号</button></div>
@@ -473,8 +473,8 @@ onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); listRequestID++; win
     <ProGPTPayPanel v-if="['auto', 'cards', 'gptpay'].includes(activeTab)" :key="activeTab" :mode="activeTab === 'auto' ? 'settings' : activeTab === 'gptpay' ? 'orders' : 'cards'" :default-page-size="defaultPageSize" :admin-accounts="adminAccounts" @saved="loadSettings" />
     <ProSchedulePanel v-if="activeTab==='runs'" :default-page-size="defaultPageSize"/>
     <ProTransferDialog ref="transferDialog" :selected="selectedAccounts" :query="query" :merge-state="spaceFilter" @busy="transferBusy" @updated="reload" />
-    <ProAutoDialog ref="autoPro" @updated="reload" />
-    <ProRechargeDialog ref="recharge" @updated="loadPage" @progress="rechargeProgress" />
+    <ProAutoDialog :default-page-size="defaultPageSize" ref="autoPro" @updated="reload" />
+    <ProRechargeDialog :default-page-size="defaultPageSize" ref="recharge" @updated="loadPage" @progress="rechargeProgress" />
     <TemporaryATDialog ref="temporaryAT" @busy="temporaryATBusy" @progress="manualTaskProgress" @finished="temporaryATFinished" />
     <AccountCredentialsDialog ref="credentialViewer" @exported="setMessage($event, 'success')" @saved="loadPage" />
   </section>

@@ -12,12 +12,12 @@ import (
 
 func (s *Server) adminAccountMembers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	offset, limit := 0, 25
+	offset, limit := 0, s.defaultPageSize()
 	for key, dest := range map[string]*int{"offset": &offset, "limit": &limit} {
 		if raw := r.URL.Query().Get(key); raw != "" {
 			value, err := strconv.Atoi(raw)
-			if err != nil || value < 0 || (key == "limit" && (value < 1 || value > 25)) {
-				writeAPI(w, http.StatusBadRequest, nil, "分页参数无效，每页最多 25 条")
+			if err != nil || value < 0 || (key == "limit" && (value < 1 || value > 500)) {
+				writeAPI(w, http.StatusBadRequest, nil, "分页参数无效，每页最多 500 条")
 				return
 			}
 			*dest = value
@@ -45,10 +45,25 @@ func (s *Server) adminAccountMembers(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, http.StatusBadRequest, nil, err.Error())
 		return
 	}
-	page, err := client.ListTeamMembers(ctx, credentials.AccessToken, profile.TeamAccountID, query, offset, limit)
-	if err != nil {
-		writeAPI(w, http.StatusBadGateway, nil, err.Error())
-		return
+	// OpenAI accepts at most 25 members per request. Assemble the requested
+	// display page sequentially without changing that upstream contract.
+	page := workflow.TeamMemberPage{Items: []workflow.TeamMember{}, Total: -1, Offset: offset, Limit: limit}
+	for len(page.Items) < limit {
+		batchSize := min(25, limit-len(page.Items))
+		batch, err := client.ListTeamMembers(ctx, credentials.AccessToken, profile.TeamAccountID, query, offset+len(page.Items), batchSize)
+		if err != nil {
+			writeAPI(w, http.StatusBadGateway, nil, err.Error())
+			return
+		}
+		if len(batch.Items) > batchSize {
+			writeAPI(w, http.StatusBadGateway, nil, "母号成员查询返回的条数超出请求范围")
+			return
+		}
+		page.Items = append(page.Items, batch.Items...)
+		page.Total, page.HasMore = batch.Total, batch.HasMore
+		if !batch.HasMore || len(batch.Items) == 0 {
+			break
+		}
 	}
 	type memberView struct {
 		workflow.TeamMember

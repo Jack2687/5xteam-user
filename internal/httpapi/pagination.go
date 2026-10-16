@@ -23,13 +23,18 @@ func parsePagination(r *http.Request) paginationParams {
 	return paginationParams{Page: page, PageSize: pageSize, Limit: pageSize, Offset: (page - 1) * pageSize}
 }
 
-func (s *Server) parsePagination(r *http.Request) paginationParams {
+func (s *Server) defaultPageSize() int {
 	defaultSize := s.store.Settings().DefaultPageSize
 	switch defaultSize {
 	case 10, 50, 100, 500:
 	default:
 		defaultSize = 10
 	}
+	return defaultSize
+}
+
+func (s *Server) parsePagination(r *http.Request) paginationParams {
+	defaultSize := s.defaultPageSize()
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	pageSize := parsePositiveInt(r.URL.Query().Get("page_size"), defaultSize)
 	switch pageSize {

@@ -28,8 +28,8 @@ func (s *Store) AccountEventsPage(accountID, cursor string, limit int) (AccountE
 	if limit < 1 {
 		limit = 50
 	}
-	if limit > 100 {
-		limit = 100
+	if limit > 500 {
+		limit = 500
 	}
 	query := "SELECT payload, created_at, id FROM auto_rotation_events WHERE account_id=?"
 	args := []any{accountID}

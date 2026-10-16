@@ -12,7 +12,7 @@ function fixture() {
   const requests = [], timers = new Map()
   let mounted, unmounted, timerID = 0
   const context = vm.createContext({
-    ref, reactive, computed, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
+    defineProps:()=>({defaultPageSize:50}), ref, reactive, computed, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
     document: {activeElement: {focus() {}}},
     onMounted(fn) { mounted = fn }, onUnmounted(fn) { unmounted = fn },
     setInterval(fn) { const id = ++timerID; timers.set(id, fn); return id },
@@ -20,7 +20,7 @@ function fixture() {
     api(url, options = {}) {
       let resolve, reject
       const promise = new Promise((ok, fail) => { resolve = ok; reject = fail })
-      requests.push({ url, options, resolve, reject })
+      requests.push({ url, options, resolve: value => resolve(url.includes('/records?') && Array.isArray(value) ? { items:value, total:value.length?100:0 } : value), reject })
       return promise
     },
   })
@@ -78,6 +78,7 @@ for (const action of ['pause', 'evaluate', 'resetBreaker']) {
   const f = fixture()
   const first = f.loadRecords()
   await tick()
+  assert.match(f.requests[0].url, /page_size=50/, 'records must use the global page size')
   f.page.value = 2
   const second = f.loadRecords()
   await tick()

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { summarizeReversalFees } from '../src/ejh-reversal-fees.js'
+import { summarizeReversalFees, reversalProfit } from '../src/ejh-reversal-fees.js'
 import { cardAmounts } from '../src/ejh-account-amounts.js'
 
 const reversal = (id, amount = '5780.48', currency = 'PHP', extra = {}) => ({ id, card_id: 'card', confirmed: true, trade: { tradeNo: id, tradeType: '2', tradeStatus: '1', cardAmount: amount, cardCurrency: currency, authCode: 'shared', ...extra } })
@@ -49,3 +49,18 @@ assert.equal(converted([reversal('refund', '5780.48', 'PHP', { tradeType: '5' })
 assert.equal(converted([row, reversal('partial', '5780.87')]).usd.amount, '11.13')
 assert.equal(converted([reversal('tiny-a', '0.05'), reversal('tiny-b', '0.05')]).usd.amount, '0.00')
 console.log('Passed: reversal fee USD conversion, per-card rates, rounded original fees, mixed currencies, missing rates, partial returns, confirmed attribution and zero percent')
+
+const sampleFee={...converted([row]),usd:{...converted([row]).usd,amount:'5.56'}}
+assert.equal(reversalProfit(sampleFee,100.18).amount,'37.2520')
+assert.equal(reversalProfit(sampleFee,100.18).profit,'62.9280')
+assert.equal(reversalProfit(sampleFee,0).profit,'-37.2520')
+assert.equal(reversalProfit(fee([]),100.18).profit,'100.1800')
+assert.equal(reversalProfit(fee([]),0).amount,'0.0000')
+assert.equal(reversalProfit(sampleFee,null).profit,null)
+assert.equal(reversalProfit(sampleFee,100.18,1).profit,null)
+assert.equal(reversalProfit(fee([row]),100.18).profit,null,'missing FX cannot become zero expense')
+assert.equal(reversalProfit(converted([row,{...row,card_id:'unknown'}]),100.18).profit,null,'partial fees cannot overstate profit')
+assert.equal(reversalProfit(converted([{...row,confirmed:false}]),100.18).profit,null,'pending reversals cannot overstate profit')
+assert.equal(reversalProfit(summarizeReversalFees([row],0,true),100.18).profit,'100.1800')
+assert.equal(reversalProfit({...sampleFee,usd:{...sampleFee.usd,amount:'0.01'}},0.067).profit,'0.0000','exact decimal cancellation')
+console.log('Passed: USD x 6.7, consumption minus reversal cost, four decimals, negative profit, true zero, missing FX/consumption and pending evidence')

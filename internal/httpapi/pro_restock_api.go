@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 )
 
@@ -47,13 +46,22 @@ func (s *Server) registerProRestock(mux *http.ServeMux) {
 		s.getProRestock(w, r)
 	})
 	mux.HandleFunc("GET /api/pro-restock/records", func(w http.ResponseWriter, r *http.Request) {
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		v, e := s.store.ProRestockDecisions(30, max(0, page-1)*30)
+		page := s.parsePagination(r)
+		v, e := s.store.ProRestockDecisions(page.Limit, page.Offset)
 		if e != nil {
 			writeAPI(w, 500, nil, e.Error())
 			return
 		}
-		writeAPI(w, 200, v, "")
+		if !r.URL.Query().Has("page_size") {
+			writeAPI(w, 200, v, "")
+			return
+		}
+		total, e := s.store.ProRestockDecisionCount()
+		if e != nil {
+			writeAPI(w, 500, nil, e.Error())
+			return
+		}
+		writeAPI(w, 200, paginatedData(v, total, page, nil), "")
 	})
 }
 func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {

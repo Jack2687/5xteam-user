@@ -13,8 +13,8 @@ assert.deepEqual(cardConsumption([
   { email: 'two@example.com', consumption_total: 2.1234 },
   { email: 'zero@example.com', consumption_total: 0 },
   { email: 'unknown@example.com' },
-]), { text: '69.2000 R', missing: 1 })
-assert.deepEqual(cardConsumption([]), { text: '0.0000 R', missing: 0 })
-assert.deepEqual(cardConsumption([{ email: 'unknown@example.com' }]), { text: '未查询', missing: 1 })
-assert.deepEqual(cardConsumption([{ email: 'One@example.com' }, account]), { text: '67.0766 R', missing: 0 })
+]), { text: '69.2000 R', total:69.2, missing: 1 })
+assert.deepEqual(cardConsumption([]), { text: '0.0000 R', total:0, missing: 0 })
+assert.deepEqual(cardConsumption([{ email: 'unknown@example.com' }]), { text: '未查询', total:null, missing: 1 })
+assert.deepEqual(cardConsumption([{ email: 'One@example.com' }, account]), { text: '67.0766 R', total:67.0766, missing: 0 })
 console.log('Passed: user consumption, R display, account deduplication, card totals, known zero and missing data')

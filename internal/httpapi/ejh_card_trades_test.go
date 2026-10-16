@@ -54,12 +54,19 @@ func TestEJHCardTradesQuery(t *testing.T) {
 		if err := json.Unmarshal(plain[:len(plain)-int(plain[len(plain)-1])], &body); err != nil {
 			t.Error(err)
 		}
-		if body.Method != "card.trade.info" || body.Data.OrderNo != "selected-order" || body.Data.Start != "2026-10-01 00:00:00" || body.Data.End != "2026-10-15 23:59:59" || body.Data.Page != 2 || body.Data.Size != 100 {
+		if body.Method != "card.trade.info" || body.Data.OrderNo != "selected-order" || body.Data.Start != "2026-10-01 00:00:00" || body.Data.End != "2026-10-15 23:59:59" || (mode != "paged" && body.Data.Page != 2) || body.Data.Size != 100 {
 			t.Errorf("bad card query: %+v", body)
 		}
 		trade := ejh.Trade{OrderNo: card.Remote.OrderNo, TradeNo: mode, Type: "4", Status: "2", Number: "4242424242424242", CardAmount: "100", CardCurrency: "USD"}
 		rows := []ejh.Trade{trade}
 		switch mode {
+		case "paged":
+			rows = []ejh.Trade{}
+			for i := (body.Data.Page - 1) * 100; i < min(body.Data.Page*100, 625); i++ {
+				v := trade
+				v.TradeNo = fmt.Sprintf("paged-%04d", i)
+				rows = append(rows, v)
+			}
 		case "missing":
 			fmt.Fprint(w, `{"code":"000000","data":{}}`)
 			return
@@ -112,7 +119,7 @@ func TestEJHCardTradesQuery(t *testing.T) {
 		s.queryEJHCardTrades(w, r)
 		return w
 	}
-	valid := `{"start":"2026-10-01","end":"2026-10-15","page":2}`
+	valid := `{"start":"2026-10-01","end":"2026-10-15","page":2,"page_size":100}`
 	for _, tc := range []struct {
 		mode string
 		code int
@@ -149,8 +156,54 @@ func TestEJHCardTradesQuery(t *testing.T) {
 			}
 		})
 	}
+	mode = "paged"
+	for _, tc := range []struct {
+		size, page, count, first int
+		more                     bool
+	}{
+		{10, 2, 10, 10, true}, {50, 2, 50, 50, true}, {50, 3, 50, 100, true},
+		{100, 2, 100, 100, true}, {500, 1, 500, 0, true}, {500, 2, 125, 500, false}, {500, 3, 0, 1000, false},
+	} {
+		w := query(fmt.Sprintf(`{"start":"2026-10-01","end":"2026-10-15","page":%d,"page_size":%d}`, tc.page, tc.size), card.ID)
+		var result struct {
+			Data struct {
+				Items    []ejh.Trade
+				PageSize int  `json:"page_size"`
+				More     bool `json:"has_more"`
+			}
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || len(result.Data.Items) != tc.count || result.Data.PageSize != tc.size || result.Data.More != tc.more {
+			t.Fatalf("size=%d page=%d: %s", tc.size, tc.page, w.Body.String())
+		}
+		for i, item := range result.Data.Items {
+			if item.TradeNo != fmt.Sprintf("paged-%04d", tc.first+i) {
+				t.Fatalf("skipped/duplicate trade: %+v", item)
+			}
+		}
+	}
+	settings := s.store.Settings()
+	settings.DefaultPageSize = 50
+	if err := s.store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	wDefault := query(`{"start":"2026-10-01","end":"2026-10-15","page":1}`, card.ID)
+	var defaults struct {
+		Data struct {
+			Items    []ejh.Trade
+			PageSize int `json:"page_size"`
+		}
+	}
+	if err := json.Unmarshal(wDefault.Body.Bytes(), &defaults); err != nil {
+		t.Fatal(err)
+	}
+	if wDefault.Code != 200 || defaults.Data.PageSize != 50 || len(defaults.Data.Items) != 50 {
+		t.Fatal("missing size did not inherit settings", wDefault.Body.String())
+	}
 	before := calls
-	for _, body := range []string{`{"start":"2026-01-01","end":"2026-04-01","page":1}`, `{"start":"2026-10-16","end":"2026-10-15","page":1}`, `{"start":"bad","end":"2026-10-15","page":1}`, `{"start":"2026-10-01","end":"2026-10-15","page":0}`} {
+	for _, body := range []string{`{"start":"2026-10-01","end":"2026-10-15","page":1,"page_size":30}`, `{"start":"2026-01-01","end":"2026-04-01","page":1}`, `{"start":"2026-10-16","end":"2026-10-15","page":1}`, `{"start":"bad","end":"2026-10-15","page":1}`, `{"start":"2026-10-01","end":"2026-10-15","page":0}`} {
 		if w := query(body, card.ID); w.Code != 400 {
 			t.Fatal("invalid range/page accepted", w.Code)
 		}

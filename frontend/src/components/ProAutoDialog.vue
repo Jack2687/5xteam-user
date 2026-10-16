@@ -7,8 +7,9 @@ import { formatTime } from '../utils'
 import Pagination from './Pagination.vue'
 import ProAutoStages from './ProAutoStages.vue'
 import CardOccupancy from './CardOccupancy.vue'
+const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const emit=defineEmits(['updated'])
-const email=ref(''),opened=ref(false),busy=ref(false),error=ref(''),state=ref({}),settings=ref({}),cards=ref([]),cardID=ref(''),page=ref(1),pageSize=ref(10),total=ref(0)
+const email=ref(''),opened=ref(false),busy=ref(false),error=ref(''),state=ref({}),settings=ref({}),cards=ref([]),cardID=ref(''),page=ref(1),pageSize=ref(props.defaultPageSize || 10),total=ref(0)
 const active=computed(()=>['running','waiting_quota'].includes(state.value.status))
 const manualRunning=computed(()=>Object.values(state.value.stage_progress?.steps||{}).includes('running'))
 const resumable=computed(()=>state.value.steps?.oauth==='completed'&&!active.value&&state.value.status!=='completed')
@@ -29,7 +30,7 @@ async function occupancyResolved(){
 let timer,generation=0
 const path=()=>`/api/pro-accounts/${encodeURIComponent(email.value)}/auto-pro`
 async function loadCards(){const data=await api(`/api/gptpay/cards?page=${page.value}&page_size=${pageSize.value}&enabled=true`);cards.value=data.items||[];total.value=data.total||0;cardID.value=settings.value.ejh_auto_open?'':cards.value[0]?.id||''}
-async function open(account){if(busy.value)return;clearTimeout(timer);generation++;blockedCards.value=[];occupancyMessage.value='';email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings'),loadCards()]);settings.value={...config,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open};cardID.value=pro.ejh_auto_open?'':cards.value[0]?.id||'';state.value=current||{}}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
+async function open(account){if(busy.value)return;clearTimeout(timer);generation++;blockedCards.value=[];occupancyMessage.value='';email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;pageSize.value=props.defaultPageSize || 10;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings'),loadCards()]);settings.value={...config,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open};cardID.value=pro.ejh_auto_open?'':cards.value[0]?.id||'';state.value=current||{}}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
 function close(){if(busy.value)return;opened.value=false;generation++;clearTimeout(timer)}
 function schedule(){clearTimeout(timer);if(opened.value&&(active.value||manualRunning.value))timer=setTimeout(refresh,state.value.status==='running'||manualRunning.value?1500:5000)}
 async function refresh(){const gen=generation;try{const value=await api(path());if(gen!==generation)return;state.value=value;emit('updated')}catch(e){if(gen===generation)error.value=e.message}finally{if(gen===generation)schedule()}}

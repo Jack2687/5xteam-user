@@ -71,7 +71,7 @@ func TestAdminMembersLiveQueryUsesDedicatedProxy(t *testing.T) {
 		{"negative offset", mother.ID, "offset=-1", 400},
 		{"bad offset", mother.ID, "offset=foo", 400},
 		{"zero limit", mother.ID, "limit=0", 400},
-		{"unbounded page", mother.ID, "limit=500", 400},
+		{"unbounded page", mother.ID, "limit=501", 400},
 		{"long search", mother.ID, "query=" + strings.Repeat("a", 321), 400},
 		{"missing proxy", missingProxy.ID, "", 400},
 		{"missing mother", "unknown", "", 400},

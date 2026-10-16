@@ -147,11 +147,11 @@ func (s *Server) listProAccountEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit := 50
+	limit := s.defaultPageSize()
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeAPI(w, 400, nil, "日志条数必须在 1 到 100 之间")
+		if err != nil || parsed < 1 || parsed > 500 {
+			writeAPI(w, 400, nil, "日志条数必须在 1 到 500 之间")
 			return
 		}
 		limit = parsed

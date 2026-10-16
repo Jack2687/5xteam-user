@@ -3,9 +3,10 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { RefreshCw, Save, X } from 'lucide-vue-next'
 import { api } from '../api'
 import { formatTime } from '../utils'
+import Pagination from './Pagination.vue'
 import MessageBar from './MessageBar.vue'
 
-const props = defineProps({ accounts: { type: Array, default: () => [] }, initialAdmin: { type: String, default: '' } })
+const props = defineProps({ defaultPageSize:{type:Number,default:10}, accounts: { type: Array, default: () => [] }, initialAdmin: { type: String, default: '' } })
 const settings = reactive({ join_method: 'mother_invite', remove_method: 'mother_kick', dwell_minutes: 5, operation_interval_seconds: 10, next_interval_seconds: 10, concurrency: 2 })
 const adminIDs = ref([props.initialAdmin || props.accounts[0]?.id].filter(Boolean))
 const adminSearch = ref('')
@@ -13,7 +14,7 @@ const visibleAdmins = computed(() => props.accounts.filter(p => `${p.label} ${p.
 const message = reactive({ text: '', type: '' })
 const candidates = ref([]), selected = ref([]), scanned = ref(false)
 const motherProgress = reactive({ done: 0, total: 0, errors: [] })
-const tasks = ref([]), running = ref({}), page = ref(1), total = ref(0), activeOnly = ref(true)
+const tasks = ref([]), running = ref({}), page = ref(1), pageSize = ref(props.defaultPageSize || 10), total = ref(0), activeOnly = ref(true)
 const scanning = ref(false), starting = ref(false), saving = ref(false), loading = ref(false)
 const controlBusy = ref(new Set())
 const taskSelected = ref([])
@@ -28,7 +29,7 @@ let anchorServer = Date.now(), anchorLocal = performance.now(), timer, pollTimer
 const log = reactive({ open: false, taskID: '', email: '', items: [], busy: false, more: false, error: '' })
 const eligible = computed(() => candidates.value.filter(p => p.eligible))
 const allSelected = computed(() => eligible.value.length > 0 && eligible.value.every(p => selected.value.includes(p.key)))
-const pages = computed(() => Math.max(1, Math.ceil(total.value / 50)))
+const pages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const stageNames = { login: '准备 AT', join: '进入请求', confirm: '同意', dwell: '停留', switch: '切换普通', leave: '移出', verify: '核实', cooldown: '间隔', completed: '完成', manual_remove: '手动移出', manual_cooldown: '移出间隔', manual_done: '手动结束' }
 const stages = ['login', 'join', 'confirm', 'dwell', 'switch', 'leave', 'verify', 'cooldown']
 function stageName(p, stage = p.stage) {
@@ -64,14 +65,16 @@ async function loadTasks() {
   if (loading.value || disposed) return
   loading.value = true
   try {
-    const data = await api(`/api/seat-recovery/tasks?page=${page.value}&active=${activeOnly.value}`)
+    const data = await api(`/api/seat-recovery/tasks?page=${page.value}&page_size=${pageSize.value}&active=${activeOnly.value}`)
     if (disposed) return
     tasks.value = data.items || []; total.value = data.total || 0; running.value = data.running || {}
     anchorServer = Date.parse(data.server_now); anchorLocal = performance.now(); clock.value = anchorServer
-    if (page.value > pages.value) page.value = pages.value
+    if (page.value > pages.value) { page.value = pages.value; loading.value = false; return loadTasks() }
   } catch (e) { message.text = e.message; message.type = 'error' }
   finally { loading.value = false }
 }
+function setPage(value) { if (loading.value) return; page.value = value; taskSelected.value = []; loadTasks() }
+function setPageSize(value) { if (loading.value) return; pageSize.value = value; setPage(1) }
 async function save() {
   saving.value = true
   try { Object.assign(settings, await api('/api/seat-recovery/settings', { method: 'PUT', body: settings })); message.text = '配置已保存，仅用于新建的恢复任务'; message.type = 'success' }
@@ -167,8 +170,8 @@ async function loadLogs(more = false) {
   log.busy = true; log.error = ''
   try {
     const before = more ? log.items[log.items.length - 1]?.id : 0
-    const data = await api(`/api/seat-recovery/tasks/${encodeURIComponent(log.taskID)}/logs?before=${before || 0}`)
-    log.items = more ? [...log.items, ...(data.items || [])] : data.items || []; log.more = (data.items || []).length === 200
+    const data = await api(`/api/seat-recovery/tasks/${encodeURIComponent(log.taskID)}/logs?before=${before || 0}&page_size=${props.defaultPageSize || 10}`)
+    log.items = more ? [...log.items, ...(data.items || [])] : data.items || []; log.more = (data.items || []).length === (props.defaultPageSize || 10)
   } catch (e) { log.error = e.message }
   finally { log.busy = false }
 }
@@ -239,7 +242,7 @@ onUnmounted(() => { disposed = true; clearInterval(timer); clearTimeout(pollTime
           </template></div></td></tr>
         <tr v-if="!tasks.length"><td colspan="8" class="empty-cell">暂无恢复任务</td></tr>
       </tbody></table></div>
-      <div class="recovery-pages"><button class="btn ghost" :disabled="page <= 1 || loading" @click="page--; loadTasks()">上一页</button><span>{{ page }} / {{ pages }}</span><button class="btn ghost" :disabled="page >= pages || loading" @click="page++; loadTasks()">下一页</button></div>
+      <Pagination :page="page" :page-size="pageSize" :total="total" :disabled="loading" @update:page="setPage" @update:page-size="setPageSize" />
     </section>
     <Teleport to="body"><div v-if="batch.open" class="recovery-backdrop" @click.self="batch.open = false"><section class="recovery-log panel" role="dialog" aria-modal="true" :aria-busy="batch.busy" aria-label="恢复批量操作进度">
       <div class="panel-title"><h2>{{ actionNames[batch.action] }}进度：{{ batchDone }} / {{ batch.items.length }}</h2><button class="btn ghost" aria-label="关闭操作进度" @click="batch.open = false"><X :size="18" /></button></div>

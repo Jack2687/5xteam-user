@@ -4,8 +4,9 @@ import { RefreshCw, ArrowUpRight, ChevronLeft, ChevronRight, Wallet, ChartNoAxes
 import { api } from '../api'
 import { beijingDay, financeReport, financeTime } from '../ejh-finance'
 import Pagination from './Pagination.vue'
+const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const data=ref(null),history=ref({}),busy=ref(false),error=ref(''),updated=ref('')
-const mode=ref('all'),date=ref(beijingDay()),kind=ref(''),query=ref(''),dayFilter=ref(''),page=ref(1),pageSize=ref(10),detail=ref(null)
+const mode=ref('all'),date=ref(beijingDay()),kind=ref(''),query=ref(''),dayFilter=ref(''),page=ref(1),pageSize=ref(props.defaultPageSize || 10),detail=ref(null)
 let disposed=false,timer
 const labels={opening:'开卡费',reversal:'授权撤销费',recharge:'充值手续费',consumption:'消费 R'}
 const report=computed(()=>financeReport(data.value||{},history.value,mode.value,date.value))

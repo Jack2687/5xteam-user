@@ -12,11 +12,21 @@ import (
 // background updater so browsing a partial page cannot change attribution.
 func (s *Server) queryEJHCardTrades(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Start string `json:"start"`
-		End   string `json:"end"`
-		Page  int    `json:"page"`
+		Start    string `json:"start"`
+		End      string `json:"end"`
+		Page     int    `json:"page"`
+		PageSize int    `json:"page_size"`
 	}
 	if decodeJSON(w, r, &in, 4096) != nil {
+		return
+	}
+	if in.PageSize == 0 {
+		in.PageSize = s.defaultPageSize()
+	}
+	switch in.PageSize {
+	case 10, 50, 100, 500:
+	default:
+		writeAPI(w, 400, nil, "每页条数必须为 10、50、100 或 500")
 		return
 	}
 	zone := time.FixedZone("CST", 8*3600)
@@ -63,16 +73,16 @@ func (s *Server) queryEJHCardTrades(w http.ResponseWriter, r *http.Request) {
 			}
 			return a.After(b)
 		})
-		offset := (in.Page - 1) * 100
+		offset := (in.Page - 1) * in.PageSize
 		if offset > len(items) {
 			offset = len(items)
 		}
-		limit := offset + 100
+		limit := offset + in.PageSize
 		if limit > len(items) {
 			limit = len(items)
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		writeAPI(w, 200, map[string]any{"items": items[offset:limit], "page": in.Page, "has_more": limit < len(items), "queried_at": queriedAt, "cached": true}, "")
+		writeAPI(w, 200, map[string]any{"items": items[offset:limit], "page": in.Page, "page_size": in.PageSize, "has_more": limit < len(items), "queried_at": queriedAt, "cached": true}, "")
 		return
 	}
 	cfg, key, err := s.ejhConfig()
@@ -80,30 +90,47 @@ func (s *Server) queryEJHCardTrades(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	var out struct {
-		Trades []ejh.Trade `json:"tradeInfos"`
-	}
-	err = s.ejhClientLocked().Call(r.Context(), cfg, key, "card.trade.info", map[string]any{"orderNo": card.Remote.OrderNo, "tradeTime": start.Format("2006-01-02 15:04:05"), "endTime": end.Format("2006-01-02 15:04:05"), "page": in.Page, "size": 100}, &out)
-	if err != nil {
-		writeAPI(w, 502, nil, err.Error())
-		return
-	}
-	if out.Trades == nil || len(out.Trades) > 100 {
-		writeAPI(w, 502, nil, "卡台未返回有效交易列表，保留已有记录")
-		return
-	}
+	// EJH pages stay at 100 rows. Slice small display pages and combine
+	// larger display pages sequentially; browsing never saves partial data.
+	offset := (in.Page - 1) * in.PageSize
+	remotePage, skip := offset/100+1, offset%100
+	items := []ejh.Trade{}
+	hasMore := false
 	seen := map[string]bool{}
-	for _, t := range out.Trades {
-		id := store.EJHID("trade", t.OrderNo+"|"+t.TradeNo+"|"+t.Type)
-		if t.OrderNo != card.Remote.OrderNo || t.TradeNo == "" || t.Type == "" || seen[id] {
-			writeAPI(w, 502, nil, "卡台交易归属或流水编号异常，保留已有记录")
+	for len(items) < in.PageSize {
+		var out struct {
+			Trades []ejh.Trade `json:"tradeInfos"`
+		}
+		err = s.ejhClientLocked().Call(r.Context(), cfg, key, "card.trade.info", map[string]any{"orderNo": card.Remote.OrderNo, "tradeTime": start.Format("2006-01-02 15:04:05"), "endTime": end.Format("2006-01-02 15:04:05"), "page": remotePage, "size": 100}, &out)
+		if err != nil {
+			writeAPI(w, 502, nil, err.Error())
 			return
 		}
-		seen[id] = true
+		if out.Trades == nil || len(out.Trades) > 100 {
+			writeAPI(w, 502, nil, "卡台未返回有效交易列表，保留已有记录")
+			return
+		}
+		for _, t := range out.Trades {
+			id := store.EJHID("trade", t.OrderNo+"|"+t.TradeNo+"|"+t.Type)
+			if t.OrderNo != card.Remote.OrderNo || t.TradeNo == "" || t.Type == "" || seen[id] {
+				writeAPI(w, 502, nil, "卡台交易归属或流水编号异常，保留已有记录")
+				return
+			}
+			seen[id] = true
+		}
+		begin := min(skip, len(out.Trades))
+		end := min(len(out.Trades), begin+in.PageSize-len(items))
+		items = append(items, out.Trades[begin:end]...)
+		hasMore = end < len(out.Trades) || len(out.Trades) == 100
+		if !hasMore || len(items) == in.PageSize {
+			break
+		}
+		remotePage++
+		skip = 0
 	}
-	for i := range out.Trades {
-		out.Trades[i].Number = maskEJH(out.Trades[i].Number)
+	for i := range items {
+		items[i].Number = maskEJH(items[i].Number)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeAPI(w, 200, map[string]any{"items": out.Trades, "page": in.Page, "has_more": len(out.Trades) == 100, "queried_at": time.Now()}, "")
+	writeAPI(w, 200, map[string]any{"items": items, "page": in.Page, "page_size": in.PageSize, "has_more": hasMore, "queried_at": time.Now()}, "")
 }

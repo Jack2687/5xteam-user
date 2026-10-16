@@ -42,3 +42,26 @@ export function summarizeReversalFees(records = [], percent = 6, confirmedOnly =
   const rows = [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([currency, cents]) => ({ currency, amount: formatCents(cents) }))
   return { rows, count, missing, pending, percent: rate === null ? null : String(Number(rate) / 100), usd: summarizeCardAmountsUSD(conversions, cards, operations, preciseUSD) }
 }
+
+// Match the displayed USD amount exactly. R uses four decimal places, just
+// like the saved consumption counter; no opening/recharge fees are deducted.
+export function reversalProfit(fee, consumption = null, consumptionMissing = 0) {
+  const incomplete = !!(fee.missing || fee.pending || fee.usd.missing)
+  const usd = fee.usd.amount ?? (!fee.count && !incomplete ? '0.00' : null)
+  let units = null
+  if (/^\d{1,18}\.\d{2}$/.test(String(usd))) {
+    const [whole, fraction] = usd.split('.')
+    units = (BigInt(whole) * 100n + BigInt(fraction)) * 670n
+  }
+  const format = value => {
+    const n = value < 0n ? -value : value
+    return `${value < 0n ? '-' : ''}${n / 10000n}.${String(n % 10000n).padStart(4, '0')}`
+  }
+  let profit = null
+  const known = typeof consumption === 'number' && Number.isFinite(consumption) && consumption >= 0 && consumption < 1e18
+  if (units !== null && !incomplete && !consumptionMissing && known) {
+    const [whole, fraction] = consumption.toFixed(4).split('.')
+    profit = format(BigInt(whole) * 10000n + BigInt(fraction) - units)
+  }
+  return { amount: units === null ? null : format(units), profit, incomplete, estimated: !!fee.usd.estimated }
+}

@@ -159,10 +159,10 @@ onMounted(checkAuth)
 
     <main class="app-main">
       <div v-if="loadingError" class="global-alert"><strong>数据加载失败</strong><span>{{ loadingError }}</span><button type="button" @click="loadingError = ''; load()">重试</button></div>
-      <ProRestockView v-if="settings && current === 'pro-restock'" />
+      <ProRestockView v-if="settings && current === 'pro-restock'" :default-page-size="settings.default_page_size || 10" />
       <ProManagementView v-if="settings && current === 'pro'" :accounts="proAccounts" :admin-accounts="adminAccounts" :default-page-size="settings.default_page_size || 10" @reload="syncProAccounts" @open-ejh-card="openEJHCard" />
-      <EJHManagementView v-if="settings && current === 'ejh'" :entry="ejhEntry" @entry-applied="ejhEntry=null" />
-      <EJHFinanceView v-if="settings && current === 'ejh-finance'" />
+      <EJHManagementView v-if="settings && current === 'ejh'" :default-page-size="settings.default_page_size || 10" :entry="ejhEntry" @entry-applied="ejhEntry=null" />
+      <EJHFinanceView v-if="settings && current === 'ejh-finance'" :default-page-size="settings.default_page_size || 10" />
       <template v-if="spaceMergeVisited">
         <WorkflowView v-show="current === 'full'" mode="full" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />
         <WorkflowView v-show="current === 'enter'" mode="enter" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />

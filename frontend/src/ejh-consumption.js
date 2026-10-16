@@ -21,5 +21,6 @@ export function cardConsumption(rows = []) {
     if (value !== null) { total += value; known++ }
   }
   const missing = accounts.size - known
-  return { text: consumptionText(known || !accounts.size ? total : null), missing }
+  const amount = known || !accounts.size ? total : null
+  return { text: consumptionText(amount), total: amount, missing }
 }

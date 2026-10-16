@@ -5,16 +5,17 @@ import { api } from '../api'
 import { needsPayPoll, paymentRetryBlocked, supplierPaymentLabel, payRequestID, payStatusName, proPlanName, payProviderName, paymentCountryLabel } from '../gptpay'
 import Pagination from './Pagination.vue'
 
+const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const emit = defineEmits(['updated', 'progress'])
 const opened = ref(false), busy = ref(false), error = ref(''), email = ref(''), cards = ref([]), cardID = ref(''), order = ref(null)
 const settings = reactive({ terms_accepted: false, provider: 'tokenseek', plan_code: 'pro5', country: '', credit_quantity: 0, key_present: false, ejh_auto_open: false })
-const page = ref(1), pageSize = ref(10), total = ref(0)
+const page = ref(1), pageSize = ref(props.defaultPageSize || 10), total = ref(0)
 const chosen = computed(() => cards.value.find(card => card.id === cardID.value))
 let requestID = '', timer, disposed = false, generation = 0
 async function loadCards() { const result = await api(`/api/gptpay/cards?page=${page.value}&page_size=${pageSize.value}&enabled=true`); cards.value = result.items || []; total.value = result.total || 0; cardID.value = settings.ejh_auto_open ? '' : cards.value[0]?.id || '' }
 async function open(account) {
   if (busy.value) return
-  generation++; clearTimeout(timer); opened.value = true; email.value = account.email; order.value = null; error.value = ''; page.value = 1; cards.value = []; cardID.value = ''; requestID = payRequestID(); busy.value = true
+  generation++; clearTimeout(timer); opened.value = true; email.value = account.email; order.value = null; error.value = ''; page.value = 1; pageSize.value = props.defaultPageSize || 10; cards.value = []; cardID.value = ''; requestID = payRequestID(); busy.value = true
   try { const [config, history, pro] = await Promise.all([api('/api/gptpay/settings'), api(`/api/gptpay/orders?page=1&page_size=10&email=${encodeURIComponent(account.email)}`), api('/api/pro-settings'), loadCards()]); Object.assign(settings, config, {ejh_auto_open: !!pro.ejh_auto_open}); cardID.value = settings.ejh_auto_open ? '' : cards.value[0]?.id || ''; order.value = history.items?.find(item => !['success', 'failed'].includes(item.status)) || history.items?.[0] || null; schedule() }
   catch (e) { error.value = e.message }
   finally { busy.value = false }

@@ -19,7 +19,7 @@ const amounts = computed(() => accountAmounts(props.row))
    <div><dt>差额</dt><dd>{{amounts.difference===null?'—':amounts.difference+' '+amounts.currency}}</dd></div>
    <div class="consumption-total" title="Pro 管理中的用户消耗统计，按账号显示"><dt>消费总额</dt><dd>{{consumptionText(accountConsumption(row))}}</dd></div>
   </dl>
-  <EJHReversalFee :records="row.returns||[]" :fee-percent="feePercent" :cards="cards" :operations="operations" confirmed-only/>
+  <EJHReversalFee show-profit :consumption="accountConsumption(row)" :records="row.returns||[]" :fee-percent="feePercent" :cards="cards" :operations="operations" confirmed-only/>
   <p v-if="amounts.pending||amounts.invalid" class="return-note">{{amounts.pending?amounts.pending+' 笔回款待核实，未计入金额':'回款金额待核实'}}</p>
   <p v-else-if="amounts.paid!==null&&amounts.reason" class="return-note">{{amounts.reason}}</p>
   <p v-if="row.state_override?.state==='returned'&&!amounts.returned.length" class="return-note">人工标记已回款，尚无已确认金额</p>

@@ -319,7 +319,7 @@ func TestProStageValidationAndConcurrency(t *testing.T) {
 	if len(f.calls) != 0 {
 		t.Fatal("stage editor sent network request")
 	}
-	for _, query := range []string{"?limit=0", "?limit=101", "?cursor=invalid"} {
+	for _, query := range []string{"?limit=0", "?limit=501", "?cursor=invalid"} {
 		if out := f.request(f.s.listProAccountEvents, "GET", "/events"+query, ""); out.Code != 400 {
 			t.Fatal("invalid cursor accepted")
 		}

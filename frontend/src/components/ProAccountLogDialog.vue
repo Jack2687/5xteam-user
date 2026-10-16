@@ -5,6 +5,7 @@ import { api, downloadFile } from '../api'
 import { formatTime } from '../utils'
 import IconButton from './IconButton.vue'
 
+const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const view = reactive({ account: null, events: [], cursor: '', hasMore: false, loading: false, error: '', exporting: false })
 const root = ref(null)
 const sentinel = ref(null)
@@ -46,7 +47,7 @@ async function loadMore(initial = false) {
   view.loading = true
   view.error = ''
   try {
-    const params = new URLSearchParams({ limit: '50' })
+    const params = new URLSearchParams({ limit: String(props.defaultPageSize || 10) })
     if (!initial && view.cursor) params.set('cursor', view.cursor)
     const result = await api(`${path(view.account)}?${params}`, { signal: controller.signal })
     if (current !== generation) return

@@ -25,7 +25,7 @@ import { isClosedCard } from '../card-status'
 import Pagination from './Pagination.vue'
 import { newestCards, cancelCardReason, runEJHBatch, refreshCancellationProgress } from '../ejh'
 import EJHProgress from './EJHProgress.vue'
-const props=defineProps({entry:{type:Object,default:null}})
+const props=defineProps({defaultPageSize:{type:Number,default:10},entry:{type:Object,default:null}})
 const emit=defineEmits(['entry-applied'])
 const cardView=ref(readCardView(window.localStorage))
 const targetCardID=ref('')
@@ -37,7 +37,7 @@ const accountReturnStates={opened:returnStates.opened,waiting:returnStates.waiti
 const caseCategory=ref('normal')
 const caseCounts=computed(()=>({normal:data.value.cases.filter(c=>Object.hasOwn(accountReturnStates,c.state)).length,unopened:data.value.cases.filter(c=>c.state==='unopened').length}))
 function setCaseCategory(value){caseCategory.value=value;status.value='';page.value=1}
-const query=ref(''),status=ref(''),page=ref(1),pageSize=ref(10),detail=ref(null),resolving=ref(null)
+const query=ref(''),status=ref(''),page=ref(1),pageSize=ref(props.defaultPageSize || 10),detail=ref(null),resolving=ref(null)
 const cardStatusFilter=ref(''),cardReturnFilter=ref(''),lifecycleFilter=ref('normal'),tradeDialog=ref(null)
 const lifecycleCounts=computed(()=>({normal:data.value.cards.filter(c=>cardLifecycle(c)==='normal').length,closed:data.value.cards.filter(c=>cardLifecycle(c)==='closed').length}))
 function setLifecycle(value){lifecycleFilter.value=value;cardStatusFilter.value='';targetCardID.value='';page.value=1}
@@ -328,7 +328,7 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',keydown);disposed=true
  <div class="ejh-risk-zone"><h3>资金操作</h3><p>这些操作会提交至 EJH。请先核实卡片与金额，结果未知时不要重复提交。</p><div class="ejh-toolbar"><button class="btn ghost" :disabled="busy||managedCard.issuer_linked===false" @click="cardAction(managedCard,'increase')">追加额度</button><button class="btn danger" :disabled="busy||!!cancelReason(managedCard)" :title="cancelReason(managedCard)" @click="cardAction(managedCard,'cancel')">{{cardState(managedCard)==='8'?'销卡处理中':cardState(managedCard)==='cancel_pending'?'销卡结果确认中':isClosedCard(managedCard)?'已销卡':'销卡'}}</button></div></div><p class="muted">冻结 / 解冻：供应商暂未开放。</p>
  </template>
  <form v-else-if="resolving" @submit.prevent="saveResolve"><h2>核实卡台操作</h2><p>未知结果不能直接重复提交，先核对卡台记录。</p><label class="field"><span>实际结果</span><select v-model="resolveForm.outcome"><option value="completed">已完成</option><option value="not_executed">确认未执行</option></select></label><label class="field"><span>EJH 开卡订单号</span><input v-model="resolveForm.order_no" :required="resolving.method==='open'&&resolveForm.outcome==='completed'"/></label><label class="field"><span>核实依据</span><textarea v-model="resolveForm.evidence" minlength="3" required/></label><button class="btn primary" :disabled="busy">提交核实</button></form><p v-if="message.type==='error'" class="danger-text">{{message.text}}</p><button class="btn" :disabled="busy" @click="closeOverlay">关闭</button></section></div></Teleport>
-  <EJHCardTrades :operations="data.operations" :fee-percent="data.reversal_fee_percent" ref="tradeDialog" @updated="load"/>
+  <EJHCardTrades :default-page-size="defaultPageSize" :operations="data.operations" :fee-percent="data.reversal_fee_percent" ref="tradeDialog" @updated="load"/>
   <p class="ejh-footnote"><ShieldCheck :size="14"/>同卡付款与回款自动识别；授权撤销及已入账退款均计入回款。销卡退余额不计入账号回款。</p>
  </div>
 </template>

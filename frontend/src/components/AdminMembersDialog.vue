@@ -7,19 +7,19 @@ import { formatTime } from '../utils'
 import IconButton from './IconButton.vue'
 import StatusPill from './StatusPill.vue'
 
-const props = defineProps({ account: { type: Object, required: true } })
+const props = defineProps({ defaultPageSize:{type:Number,default:10}, account: { type: Object, required: true } })
 const emit = defineEmits(['close', 'changed'])
 const search = ref('')
 const query = ref('')
 const offset = ref(0)
-const limit = 25
+const limit = ref(props.defaultPageSize || 10)
 const rows = ref([])
 const total = ref(-1)
 const hasMore = ref(false)
 const loading = ref(false)
 const error = ref('')
 const queriedAt = ref('')
-const page = computed(() => Math.floor(offset.value / limit) + 1)
+const page = computed(() => Math.floor(offset.value / limit.value) + 1)
 let controller
 const confirmation = ref(null)
 const action = reactive({ running: false, email: '', label: '', message: '', error: '', completed: false, started: 0, elapsed: 0 })
@@ -37,7 +37,7 @@ async function executeRemove() {
     action.completed = true
     action.message = `${action.label}完成`
     emit('changed')
-    await loadMembers(rows.value.length === 1 && offset.value > 0 ? offset.value - limit : offset.value)
+    await loadMembers(rows.value.length === 1 && offset.value > 0 ? offset.value - limit.value : offset.value)
   } catch (e) { action.error = e.message; action.message = '操作未完成，请查看原因' }
   finally { action.running = false; window.clearInterval(elapsedTimer) }
 }
@@ -54,7 +54,7 @@ async function loadMembers(nextOffset = offset.value) {
   hasMore.value = false
   offset.value = nextOffset
   try {
-    const params = new URLSearchParams({ offset: String(nextOffset), limit: String(limit), query: query.value })
+    const params = new URLSearchParams({ offset: String(nextOffset), limit: String(limit.value), query: query.value })
     const data = await api(`/api/admin-accounts/${encodeURIComponent(props.account.id)}/members?${params}`, { cache: 'no-store', signal: request.signal })
     if (controller !== request || request.signal.aborted) return
     rows.value = data.items || []
@@ -67,6 +67,7 @@ async function loadMembers(nextOffset = offset.value) {
     if (controller === request) loading.value = false
   }
 }
+function changeSize(event) { if (loading.value || action.running) return; limit.value = Number(event.target.value); loadMembers(0) }
 function searchMembers() { if (action.running) return; query.value = search.value.trim(); loadMembers(0) }
 function resetSearch() { search.value = ''; searchMembers() }
 function seatLabel(seat) { return ({ prolite: '高级席位 5x', default: '普通席位', pro: 'Pro' })[seat] || seat || '未返回' }
@@ -106,7 +107,7 @@ onUnmounted(() => { controller?.abort(); window.clearInterval(elapsedTimer) })
       </template>
       <footer class="members-footer">
         <span>{{ total >= 0 ? `共 ${total} 位成员` : '成员总数待确认' }}<small v-if="queriedAt">查询于 {{ formatTime(queriedAt) }}</small></span>
-        <div><button class="btn ghost" type="button" :disabled="loading || action.running || offset === 0" @click="loadMembers(Math.max(0, offset - limit))">上一页</button><span>第 {{ page }} 页</span><button class="btn ghost" type="button" :disabled="loading || action.running || !hasMore" @click="loadMembers(offset + limit)">下一页</button></div>
+        <div><label>每页 <select :value="limit" :disabled="loading || action.running" @change="changeSize"><option v-for="size in [10,50,100,500]" :key="size" :value="size">{{ size }}</option></select> 条</label><button class="btn ghost" type="button" :disabled="loading || action.running || offset === 0" @click="loadMembers(Math.max(0, offset - limit))">上一页</button><span>第 {{ page }} 页</span><button class="btn ghost" type="button" :disabled="loading || action.running || !hasMore" @click="loadMembers(offset + limit)">下一页</button></div>
       </footer>
     </section>
   </div>
