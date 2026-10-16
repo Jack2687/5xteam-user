@@ -1,0 +1,70 @@
+package model
+
+import (
+	"errors"
+	"time"
+)
+
+// Pro uses its own connection and policy; Team rotation settings are independent.
+type ProQualitySettings struct {
+	Enabled             bool             `json:"enabled"`
+	PollIntervalSeconds int              `json:"poll_interval_seconds"`
+	MaxResultAgeSeconds int              `json:"max_result_age_seconds"`
+	QuestionEnabled     bool             `json:"question_enabled"`
+	ModelAuditEnabled   bool             `json:"model_audit_enabled"`
+	ConditionMode       string           `json:"condition_mode"`
+	Action              string           `json:"action"`
+	NormalGroupIDs      []int64          `json:"normal_group_ids"`
+	DegradedGroupIDs    []int64          `json:"degraded_group_ids"`
+	AutoRestore         bool             `json:"auto_restore"`
+	RecoveryLimit       int              `json:"recovery_limit"`
+	Concurrency         int              `json:"concurrency"`
+	Revision            string           `json:"revision"`
+	Downstream          ProDownstreamRef `json:"downstream"`
+}
+
+func DefaultProQualitySettings() ProQualitySettings {
+	return ProQualitySettings{PollIntervalSeconds: 60, MaxResultAgeSeconds: 900, QuestionEnabled: true,
+		ConditionMode: "any", Action: "merge", RecoveryLimit: 2, Concurrency: 4,
+		NormalGroupIDs: []int64{}, DegradedGroupIDs: []int64{}}
+}
+
+func (q ProQualitySettings) DecisionSettings() QualitySettings {
+	v := DefaultQualitySettings()
+	v.Enabled, v.QuestionEnabled, v.ModelAuditEnabled = q.Enabled, q.QuestionEnabled, q.ModelAuditEnabled
+	v.PollIntervalSeconds, v.MaxResultAgeSeconds, v.ConditionMode = q.PollIntervalSeconds, q.MaxResultAgeSeconds, q.ConditionMode
+	v.NormalGroupIDs, v.DegradedGroupIDs = q.NormalGroupIDs, q.DegradedGroupIDs
+	v.AutoRestore, v.RecoveryLimit, v.Concurrency = q.AutoRestore, q.RecoveryLimit, q.Concurrency
+	v.Action = q.Action
+	if v.Action == "merge" {
+		v.Action = "kick" // Only reuse validation/decision rules, never the Team action.
+	}
+	return v
+}
+
+func (q ProQualitySettings) Validate() error {
+	if q.Action != "merge" && q.Action != "groups" {
+		return errors.New("降智处理请选择切换分组或直接合并")
+	}
+	if q.PollIntervalSeconds < 10 || q.MaxResultAgeSeconds < 30 {
+		return errors.New("查询间隔至少 10 秒，结果有效期至少 30 秒")
+	}
+	return q.DecisionSettings().Validate()
+}
+
+type ProQualityState struct {
+	AccountQuality
+	ActionError   string     `json:"action_error,omitempty"`
+	ValidUntil    *time.Time `json:"valid_until,omitempty"`
+	FetchedAt     *time.Time `json:"fetched_at,omitempty"`
+	MergeAttempts int        `json:"merge_attempts"`
+	NextMergeAt   *time.Time `json:"next_merge_at,omitempty"`
+}
+
+func (p *MailAccountProfile) ReconcileProQualityMerge() {
+	if p.ProQuality.Action == "merge" && p.TransferStatus == "completed" &&
+		(p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") && !p.ProPostMergeGroupsPending() {
+		p.ProQuality.ActionStatus, p.ProQuality.ActionError = "completed", ""
+		p.ProQuality.NextMergeAt = nil
+	}
+}

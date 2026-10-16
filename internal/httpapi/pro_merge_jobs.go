@@ -24,6 +24,10 @@ func proTransferNeedsConfirmation(p model.MailAccountProfile) bool {
 // the worker; nil queues a worker that acquires the same lock after the caller
 // finishes its quota check. No request context is retained.
 func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccountProfile, error) {
+	return s.startProMergeJobWithQuality(email, unlock, nil)
+}
+
+func (s *Server) startProMergeJobWithQuality(email string, unlock func(), quality *proQualityMergeRequest) (model.MailAccountProfile, error) {
 	s.proMergeMu.Lock()
 	defer s.proMergeMu.Unlock()
 	if s.proMergeClosed {
@@ -52,6 +56,9 @@ func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccoun
 	}
 	finishStage := s.beginProManualStage(email, "merge")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	if quality != nil {
+		ctx = context.WithValue(ctx, proQualityMergeKey{}, quality)
+	}
 	if s.proMergeJobs == nil {
 		s.proMergeJobs = make(map[string]context.CancelFunc)
 	}
@@ -78,6 +85,7 @@ func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccoun
 		if runErr == nil {
 			_, runErr = s.performProMerge(ctx, email)
 		}
+		s.finishProQualityMerge(email, quality, runErr)
 		// Also clear the queued flag if preparation or lock acquisition failed.
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			p.ProWorkflowRunning = false

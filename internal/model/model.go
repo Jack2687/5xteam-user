@@ -26,6 +26,8 @@ type Settings struct {
 // MailAccountProfile is the local mailbox projection used by registration.
 // Secrets are encrypted in Store and never returned by list APIs.
 type MailAccountProfile struct {
+	ProQuality                 ProQualityState             `json:"pro_quality"`
+	ProQualitySince            *time.Time                  `json:"pro_quality_since,omitempty"`
 	ProDailyMerge              *ProDailyMergeRequest       `json:"pro_daily_merge,omitempty"`
 	ProPushTimeoutEnabled      *bool                       `json:"pro_push_timeout_enabled,omitempty"`
 	ProPushTimeoutMinutes      int                         `json:"pro_push_timeout_minutes,omitempty"`

@@ -137,6 +137,7 @@ func (s *Store) initSchema() error {
 			id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS quality_settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL);
+		CREATE TABLE IF NOT EXISTS pro_quality_settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS vm2api_quality_settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS sub2_push_attempts (id TEXT PRIMARY KEY, encrypted_payload TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS proxies (

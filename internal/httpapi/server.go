@@ -25,6 +25,7 @@ import (
 )
 
 type Server struct {
+	proQuality                proQualityRuntime
 	proFallback               proFallbackRuntime
 	proRestock                proRestockRuntime
 	ejh                       ejhRuntime
@@ -160,6 +161,7 @@ func New(dataStore *store.Store, jobs *workflow.Manager) (*Server, error) {
 	}
 	go server.auditWriter()
 	server.startProAutomationMonitor()
+	server.startProQualityMonitor()
 	return server, nil
 }
 
@@ -170,6 +172,7 @@ func (s *Server) Close() {
 		return
 	}
 	s.auditCloseOnce.Do(func() {
+		s.stopProQuality()
 		s.stopEJH()
 		s.stopSeatRecovery()
 		s.qualityMu.Lock()
@@ -343,6 +346,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events", s.listProAccountEvents)
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events/export", s.exportProAccountEvents)
 	mux.HandleFunc("GET /api/pro-settings", s.getProSettings)
+	mux.HandleFunc("GET /api/pro-quality/settings", s.getProQualitySettings)
+	mux.HandleFunc("PUT /api/pro-quality/settings", s.saveProQualitySettings)
+	mux.HandleFunc("POST /api/pro-quality/run", s.triggerProQuality)
 	mux.HandleFunc("PUT /api/pro-settings", s.saveProSettings)
 	mux.HandleFunc("PUT /api/pro-settings/automation", s.saveProAutomationSettings)
 	mux.HandleFunc("POST /api/pro-settings/sub2/test", s.testProSub2)

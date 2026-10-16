@@ -229,6 +229,7 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 	}
 	p.UpdatedAt = time.Now()
 	p.ReconcileProAutoMerge(p.UpdatedAt)
+	p.ReconcileProQualityMerge()
 	encoded, err := json.Marshal(p)
 	if err != nil {
 		return p, err

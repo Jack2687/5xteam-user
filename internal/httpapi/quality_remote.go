@@ -30,14 +30,18 @@ func remoteQualityFresh(v sub2.RemoteQualityVerdict, since, now time.Time, maxAg
 	return v.Error == "" && v.EvidenceAt != nil && !v.EvidenceAt.Before(since) && !v.EvidenceAt.After(now.Add(5*time.Second)) && now.Sub(*v.EvidenceAt) <= maxAge && v.StreakStartedAt != nil && !v.StreakStartedAt.Before(since)
 }
 func remoteQualityDecision(q model.QualitySettings, p model.FreeAccountProfile, snapshot sub2.RemoteQualitySnapshot, v sub2.RemoteQualityResult) (bad, recovered bool) {
-	if !snapshot.Settings.Enabled || snapshot.Settings.Revision == "" || v.Revision != snapshot.Settings.Revision || v.Version == "" {
-		return false, false
-	}
 	since := p.CreatedAt
 	for _, at := range []*time.Time{p.JoinedAt, p.PushedAt} {
 		if at != nil && at.After(since) {
 			since = *at
 		}
+	}
+	return remoteQualityDecisionSince(q, since, snapshot, v)
+}
+
+func remoteQualityDecisionSince(q model.QualitySettings, since time.Time, snapshot sub2.RemoteQualitySnapshot, v sub2.RemoteQualityResult) (bad, recovered bool) {
+	if !snapshot.Settings.Enabled || snapshot.Settings.Revision == "" || v.Revision != snapshot.Settings.Revision || v.Version == "" {
+		return false, false
 	}
 	results := []bool{}
 	normal := true

@@ -58,7 +58,12 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 	if err != nil {
 		return nil, err
 	}
+	quality, err := s.store.ProQualitySettings()
+	if err != nil {
+		return nil, err
+	}
 	for _, item := range items {
+		item.ProQuality = proQualityDisplay(item, quality, config)
 		if !proCostBindingMatches(item, config) {
 			item.ClearProCostSnapshot()
 		}
@@ -847,6 +852,8 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 		p.PushProvider, p.PushStatus = "sub2", "completed"
 		ref := model.ProDownstream(v)
 		p.ProPushDownstream = &ref
+		now := time.Now()
+		p.ProQualitySince, p.ProQuality = &now, model.ProQualityState{}
 		if p.ProMigration != nil {
 			p.ProMigration.Downstream = model.ProDownstream(v)
 		}
@@ -1141,6 +1148,9 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	if profile.ManagementScope != "pro" {
 		return profile, errors.New("账号不在 Pro 管理中")
 	}
+	if err = s.checkProQualityMerge(ctx, profile, false); err != nil {
+		return profile, err
+	}
 	if proTransferNeedsConfirmation(profile) {
 		return profile, errProTransferUncertain
 	}
@@ -1234,6 +1244,9 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 		return profile, err
 	}
 	defer release()
+	if err = s.checkProQualityMerge(ctx, profile, true); err != nil {
+		return profile, err
+	}
 	adminSettings, err := s.settingsForAdmin(s.store.Settings(), admin)
 	if err != nil {
 		return profile, err
