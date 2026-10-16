@@ -98,6 +98,11 @@ func (s *Store) SetEJHCaseState(id string, in EJHCaseStateInput) (ejh.Case, erro
 	if err = s.ejhPutTx(tx, "match_audit", EJHID("audit", fmt.Sprintf("case-state:%s:%d", id, change.Revision)), map[string]any{"action": "manual_case_state", "order_id": id, "email": email, "card_id": out.CardID, "before_state": out.State, "before_override": out.StateOverride, "after": change, "at": change.UpdatedAt}); err != nil {
 		return out, err
 	}
+	// An explicit state adjustment restores a previously removed return record.
+	if _, err = tx.Exec(`UPDATE ejh_cases SET profile=json_remove(profile,'$.removed_at') WHERE id=?`, id); err != nil {
+		return out, err
+	}
+	out.RemovedAt = nil
 	out.StateOverride = &change
 	out.State = out.AutomaticState
 	if state != "" {

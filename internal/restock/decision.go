@@ -133,7 +133,7 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	if c.TimeEnabled && !timeWithinHorizon {
 		d.Warnings = append(d.Warnings, "预计就绪或补后目标超出预测上限，暂停时间侧新增；并发和最低备用仍独立生效")
 	}
-	d.Money = ForecastMoney(s, now)
+	d.Money = ForecastMoney(c, s, now)
 	d.Coverage = d.Money.Coverage
 	if d.Money.State == "ready" {
 		minutes := *d.Money.RemainingUSD / *d.Money.RateUSD

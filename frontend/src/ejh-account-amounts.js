@@ -69,3 +69,32 @@ export function accountAmounts(row){
   difference:comparable?format(paid-(totals.get(charge.card_currency)||0n)):null,
   reason:paid===null?'等待自动识别付款或金额缺失':charge.status!=='2'&&charge.type!=='1'?'付款流水待入账':invalid?'回款金额待核实':!comparable?'币种不同，不能直接相减':''}
 }
+
+// Use the one payment attributed to each case, not all raw authorization and
+// clearing rows. Keep transaction and settlement currencies independent.
+export function summarizeInFlightPayments(cases=[]){
+ const orders=new Map(),payments=new Map(),transaction=new Map(),settlement=new Map()
+ for(const row of cases)if(['opened','waiting'].includes(row.state))orders.set(row.id||row,row)
+ let missingTransaction=0,missingSettlement=0,authorizations=0
+ for(const row of orders.values()){
+  const charge=row.charge
+  const valid=charge&&(['1','4'].includes(charge.type)&&charge.status==='2'||charge.type==='1'&&charge.status==='1')
+  if(!valid){missingTransaction++;missingSettlement++;continue}
+  const card=row.ejh_card_id||row.card_id||''
+  const key=charge.trade_no?`${card}:trade:${charge.trade_no}`:charge.id?`id:${charge.id}`:row.id||row
+  const previous=payments.get(key)
+  if(!previous||(Date.parse(charge.synced_at)||0)>(Date.parse(previous.synced_at)||0))payments.set(key,charge)
+ }
+ const add=(totals,value,currency)=>{
+  const n=units(value)
+  if(n===null||!currencyOK(currency))return false
+  totals.set(currency,(totals.get(currency)||0n)+n);return true
+ }
+ for(const charge of payments.values()){
+  if(charge.type==='1')authorizations++
+  if(!add(transaction,charge.trade_amount,charge.trade_currency))missingTransaction++
+  if(!add(settlement,charge.bill_amount,charge.bill_currency))missingSettlement++
+ }
+ const rows=totals=>[...totals].sort(([a],[b])=>a.localeCompare(b)).map(([currency,n])=>({amount:format(n),currency}))
+ return {count:orders.size,transaction:rows(transaction),settlement:rows(settlement),missingTransaction,missingSettlement,authorizations}
+}

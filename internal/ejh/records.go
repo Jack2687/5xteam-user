@@ -55,6 +55,10 @@ func ValidCaseState(state string) bool {
 }
 
 type Case struct {
+	// Removal only affects the unopened return record in the EJH dashboard.
+	// Keep the underlying case for payment reconciliation and card occupancy.
+	RemovedAt *time.Time `json:"removed_at,omitempty"`
+
 	// Read from the account's current user-cost snapshot; nil means unqueried.
 	ConsumptionTotal *float64 `json:"consumption_total,omitempty"`
 

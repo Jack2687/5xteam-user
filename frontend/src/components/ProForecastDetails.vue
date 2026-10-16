@@ -8,7 +8,7 @@ const report = computed(()=>forecastDetails(props.decision,props.historical ? Da
  <section class="forecast-detail" aria-label="美元额度与消耗详情">
   <header><h3>额度与消耗</h3><b>{{report.supply}}</b></header>
   <p>{{report.summary}}</p>
-  <p class="hint">按最近 3 分钟账号费用计算，剩余额度 ÷ 每分钟消耗。</p>
+  <p class="hint">按最近 {{report.windowMinutes}} 分钟账号费用计算，剩余额度 ÷ 每分钟消耗。</p>
   <div class="forecast-scroll"><table><thead><tr><th>账号</th><th>预计总额</th><th>已用</th><th>剩余</th><th>每分钟消耗</th></tr></thead><tbody>
    <tr v-for="row in report.rows" :key="row.id"><td>{{row.name || '#'+row.id}}<small>{{row.reason || windowLabel(row.seconds)}}</small></td><td>{{moneyLabel(row.total_usd)}}</td><td>{{moneyLabel(row.used_usd)}}</td><td>{{moneyLabel(row.remaining_usd)}}</td><td>{{rateLabel(row.rate_usd)}}</td></tr>
    <tr v-if="!report.rows.length"><td colspan="5">{{report.supply}}</td></tr>

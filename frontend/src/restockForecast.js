@@ -11,6 +11,8 @@ export function supplyLabel(decision, unavailable = false) {
 }
 export function forecastDetails(decision = {}, now = Date.now()) {
   const snapshot = decision.snapshot || {}, config = decision.config || {}, money = decision.money || {}
+  const windowMinutes = config.money_window_minutes ?? 3
+  const sameWindow = (money.window_minutes || 3) === windowMinutes
   const at = Date.parse(snapshot.at || '')
   const until = Date.parse(money.valid_until || '')
   const complete = ['ready','idle'].includes(money.state)
@@ -19,10 +21,10 @@ export function forecastDetails(decision = {}, now = Date.now()) {
   const current = (snapshot.accounts || []).filter(a=>a.ready && !a.shared && (!a.expires_at || Date.parse(a.expires_at)>now)).map(a=>a.id).sort((a,b)=>a-b)
   const sampled = rows.map(a=>a.id).sort((a,b)=>a-b)
   const sameAccounts = JSON.stringify(current) === JSON.stringify(sampled)
-  const usable = !stale && complete && sameAccounts && finite(money.remaining_usd) && finite(money.rate_usd)
-  const label = stale ? '数据过期' : !sameAccounts ? '采样中' : states[money.state] || '数据不足'
+  const usable = !stale && sameWindow && complete && sameAccounts && finite(money.remaining_usd) && finite(money.rate_usd)
+  const label = stale ? '数据过期' : !sameWindow || !sameAccounts ? '采样中' : states[money.state] || '数据不足'
   return {
-    stale, rows:stale ? rows.map(r=>({...r,total_usd:null,used_usd:null,remaining_usd:null,rate_usd:null,reason:'数据过期'})) : rows, coverage:money.coverage || 0,
+    stale, windowMinutes, rows:stale ? rows.map(r=>({...r,total_usd:null,used_usd:null,remaining_usd:null,rate_usd:null,reason:'数据过期'})) : !sameWindow ? rows.map(r=>({...r,rate_usd:null,reason:'采样中'})) : rows, coverage:money.coverage || 0,
     remaining:usable ? money.remaining_usd : null,
     rate:usable ? money.rate_usd : null,
     supply:usable ? supplyLabel(decision) : label,

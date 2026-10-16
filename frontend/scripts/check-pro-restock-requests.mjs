@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { ref, reactive, computed } from 'vue'
 import { createLatestRequest } from '../src/latestRequest.js'
+import { forecastDetails, concurrencyDetails } from '../src/restockForecast.js'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const source = readFileSync(new URL('../src/components/ProRestockView.vue', import.meta.url), 'utf8')
@@ -11,7 +12,7 @@ function fixture() {
   const requests = [], timers = new Map()
   let mounted, unmounted, timerID = 0
   const context = vm.createContext({
-    ref, reactive, computed, createLatestRequest, nextTick: tick,
+    ref, reactive, computed, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
     onMounted(fn) { mounted = fn }, onUnmounted(fn) { unmounted = fn },
     setInterval(fn) { const id = ++timerID; timers.set(id, fn); return id },
     clearInterval(id) { timers.delete(id) },
@@ -22,7 +23,7 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
 }
 
@@ -164,3 +165,44 @@ for (const [start, end] of [['', '07:00'], ['7:00', '23:00'], ['24:00', '07:00']
   f.unmounted()
 }
 console.log('Passed: restock request ordering, paging, retry recovery, and daily no-restock configuration')
+
+// Inline window saves update only the saved config and never send other drafts.
+for (const unsaved of [false,true]) {
+ const f=fixture()
+ const before={enabled:false,version:1,money_window_minutes:3,trigger_minutes:5}
+ f.state.value={config:before};Object.assign(f.form,before)
+ if(unsaved){f.form.trigger_minutes=9;f.dirty.value=true}
+ f.windowDraft.value=5;f.windowEdited.value=true
+ const saving=f.saveWindow();await tick()
+ const put=f.requests[0]
+ assert.equal(put.options.body.money_window_minutes,5)
+ assert.equal(put.options.body.trigger_minutes,5,'inline save sent unrelated draft')
+ assert.equal(put.options.body.enabled,false,'inline save enabled automatic replenishment')
+ assert.equal(f.savingWindow.value,true)
+ const config={...before,version:2,money_window_minutes:5}
+ put.resolve(config);await tick()
+ f.requests.findLast(r=>r.url==='/api/pro-restock').resolve({config})
+ await tick();f.requests.findLast(r=>r.url.includes('/records')).resolve([]);await saving
+ assert.equal(f.windowDraft.value,5);assert.equal(f.windowEdited.value,false)
+ assert.equal(f.state.value.config.money_window_minutes,5)
+ assert.equal(f.form.trigger_minutes,unsaved?9:5)
+ assert.equal(f.form.version,unsaved?1:2,'unsaved form lost conflict protection')
+ assert.equal(f.savingWindow.value,false)
+ f.unmounted()
+}
+for(const value of [0,-1,61,1.5,'',NaN]){
+ const f=fixture();f.state.value={config:{version:1}};f.windowDraft.value=value
+ await f.saveWindow();assert.equal(f.requests.length,0);assert.match(f.error.value,/1～60/);f.unmounted()
+}
+{
+ const f=fixture();f.state.value={config:{version:1,money_window_minutes:3}}
+ f.windowDraft.value=5;f.windowEdited.value=true
+ const poll=f.refresh();await tick();f.requests[0].resolve({config:{version:1,money_window_minutes:3}})
+ await tick();f.requests.findLast(r=>r.url.includes('/records')).resolve([]);await poll
+ assert.equal(f.windowDraft.value,5,'poll overwrote window input')
+ const saving=f.saveWindow();await tick();f.requests.findLast(r=>r.options.method).reject(new Error('配置已被其他页面修改'))
+ await saving
+ assert.equal(f.windowDraft.value,5);assert.equal(f.state.value.config.money_window_minutes,3)
+ assert.match(f.error.value,/其他页面/);assert.equal(f.savingWindow.value,false);f.unmounted()
+}
+console.log('Passed: editable money window, bounds, draft isolation, polling and save-failure behavior')

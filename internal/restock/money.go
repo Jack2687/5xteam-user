@@ -6,7 +6,8 @@ import (
 )
 
 const MoneyMaxAge = 120 * time.Second
-const MoneyRateWindow = 3 * time.Minute
+const DefaultMoneyWindowMinutes = 3
+const MaxMoneyWindowMinutes = 60
 
 type MoneySample struct {
 	At   time.Time `json:"at"`
@@ -19,13 +20,14 @@ type MoneyWindow struct {
 	UsedUSD     float64   `json:"used_usd"`
 }
 type AccountMoney struct {
-	At       time.Time     `json:"at"`
-	BudgetAt time.Time     `json:"budget_at"`
-	Day      string        `json:"day"`
-	Windows  []MoneyWindow `json:"windows"`
-	Samples  []MoneySample `json:"samples"`
-	RateUSD  *float64      `json:"rate_usd,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	WindowMinutes int           `json:"window_minutes"`
+	At            time.Time     `json:"at"`
+	BudgetAt      time.Time     `json:"budget_at"`
+	Day           string        `json:"day"`
+	Windows       []MoneyWindow `json:"windows"`
+	Samples       []MoneySample `json:"samples"`
+	RateUSD       *float64      `json:"rate_usd,omitempty"`
+	Error         string        `json:"error,omitempty"`
 }
 type MoneyRow struct {
 	ID           int64    `json:"id"`
@@ -38,23 +40,36 @@ type MoneyRow struct {
 	Reason       string   `json:"reason"`
 }
 type MoneyForecast struct {
-	State        string     `json:"state"`
-	Coverage     float64    `json:"coverage"`
-	TotalUSD     *float64   `json:"total_usd"`
-	RemainingUSD *float64   `json:"remaining_usd"`
-	RateUSD      *float64   `json:"rate_usd"`
-	ValidUntil   time.Time  `json:"valid_until"`
-	Rows         []MoneyRow `json:"rows"`
+	WindowMinutes int        `json:"window_minutes"`
+	State         string     `json:"state"`
+	Coverage      float64    `json:"coverage"`
+	TotalUSD      *float64   `json:"total_usd"`
+	RemainingUSD  *float64   `json:"remaining_usd"`
+	RateUSD       *float64   `json:"rate_usd"`
+	ValidUntil    time.Time  `json:"valid_until"`
+	Rows          []MoneyRow `json:"rows"`
 }
 
 func moneyNumber(n float64) bool  { return !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 }
 func moneyPtr(n float64) *float64 { return &n }
 
+// Records created before this option used a fixed three-minute window.
+func moneyWindowMinutes(minutes int) int {
+	if minutes == 0 {
+		return DefaultMoneyWindowMinutes
+	}
+	return minutes
+}
+
 // Only consecutive samples of the SAME account, binding, plan and UTC day may
-// be differenced. Keep a boundary sample to interpolate exactly three minutes.
-func ObserveMoney(current AccountMoney, previous *AccountMoney, cost float64) AccountMoney {
+// be differenced. Keep a boundary sample for the configured rolling window.
+func ObserveMoney(current AccountMoney, previous *AccountMoney, cost float64, minutes int) AccountMoney {
+	current.WindowMinutes = moneyWindowMinutes(minutes)
 	current.RateUSD = nil
 	current.Samples = nil
+	if current.WindowMinutes < 1 || current.WindowMinutes > MaxMoneyWindowMinutes {
+		current.Error = "消耗计算窗口无效"
+	}
 	if current.Error != "" || !moneyNumber(cost) {
 		return current
 	}
@@ -66,28 +81,40 @@ func ObserveMoney(current AccountMoney, previous *AccountMoney, cost float64) Ac
 		}
 	}
 	current.Samples = append(current.Samples, MoneySample{At: current.At, Cost: cost})
-	cut := current.At.Add(-MoneyRateWindow)
+	cut := current.At.Add(-time.Duration(current.WindowMinutes) * time.Minute)
 	for len(current.Samples) > 2 && !current.Samples[1].At.After(cut) {
 		current.Samples = current.Samples[1:]
 	}
-	if len(current.Samples) < 2 || current.Samples[0].At.After(cut) {
-		return current
-	}
-	first, next := current.Samples[0], current.Samples[1]
-	span := next.At.Sub(first.At).Seconds()
-	if span <= 0 {
-		return current
-	}
-	baseline := first.Cost + (next.Cost-first.Cost)*cut.Sub(first.At).Seconds()/span
-	rate := math.Max(0, cost-baseline) / MoneyRateWindow.Minutes()
-	if moneyNumber(rate) {
-		current.RateUSD = moneyPtr(rate)
-	}
+	current.RateUSD = sampledMoneyRate(current.Samples, current.At, current.WindowMinutes)
 	return current
 }
 
+func sampledMoneyRate(samples []MoneySample, at time.Time, minutes int) *float64 {
+	if minutes < 1 || minutes > MaxMoneyWindowMinutes {
+		return nil
+	}
+	cut := at.Add(-time.Duration(minutes) * time.Minute)
+	for len(samples) > 2 && !samples[1].At.After(cut) {
+		samples = samples[1:]
+	}
+	if len(samples) < 2 || samples[0].At.After(cut) || !samples[len(samples)-1].At.Equal(at) {
+		return nil
+	}
+	first, next := samples[0], samples[1]
+	span := next.At.Sub(first.At).Seconds()
+	if span <= 0 {
+		return nil
+	}
+	baseline := first.Cost + (next.Cost-first.Cost)*cut.Sub(first.At).Seconds()/span
+	rate := math.Max(0, samples[len(samples)-1].Cost-baseline) / float64(minutes)
+	if moneyNumber(rate) {
+		return moneyPtr(rate)
+	}
+	return nil
+}
+
 // One account contributes one budget: the limiting active window, never 5h+7d.
-func accountMoneyRow(a Account, now time.Time) MoneyRow {
+func accountMoneyRow(a Account, now time.Time, minutes int) MoneyRow {
 	r := MoneyRow{ID: a.ID, Name: a.Name}
 	m := a.Money
 	if m == nil {
@@ -131,27 +158,32 @@ func accountMoneyRow(a Account, now time.Time) MoneyRow {
 		r.Reason = "缺少费用或使用率"
 		return r
 	}
-	if m.RateUSD == nil {
+	rate := m.RateUSD
+	if moneyWindowMinutes(m.WindowMinutes) != minutes {
+		// Reuse sufficient history for shorter windows; never reuse the old rate.
+		rate = sampledMoneyRate(m.Samples, m.At, minutes)
+	}
+	if rate == nil {
 		r.Reason = "采样中"
 		return r
 	}
-	if !moneyNumber(*m.RateUSD) {
+	if !moneyNumber(*rate) {
 		r.Reason = "费用数据无效"
 		return r
 	}
-	r.RateUSD = moneyPtr(*m.RateUSD)
+	r.RateUSD = moneyPtr(*rate)
 	return r
 }
 
-func ForecastMoney(s Snapshot, now time.Time) MoneyForecast {
-	f := MoneyForecast{State: "empty", Rows: []MoneyRow{}}
+func ForecastMoney(c Config, s Snapshot, now time.Time) MoneyForecast {
+	f := MoneyForecast{State: "empty", Rows: []MoneyRow{}, WindowMinutes: moneyWindowMinutes(c.MoneyWindowMinutes)}
 	total, remaining, rate, covered := 0., 0., 0., 0
 	missing, sampling, stale := false, false, false
 	for _, a := range s.Accounts {
 		if !availableAccount(a, now) {
 			continue
 		}
-		r := accountMoneyRow(a, now)
+		r := accountMoneyRow(a, now, f.WindowMinutes)
 		f.Rows = append(f.Rows, r)
 		if r.Reason != "" {
 			if r.Reason == "数据过期" {
@@ -226,7 +258,7 @@ func moneyTimeNeed(c Config, s Snapshot, f MoneyForecast, tasks []Task, target, 
 		if s.NewPlan == "" || first(a.PurchasePlan, a.Plan) != s.NewPlan {
 			continue
 		}
-		r := accountMoneyRow(a, now)
+		r := accountMoneyRow(a, now, moneyWindowMinutes(c.MoneyWindowMinutes))
 		if r.Reason == "" && r.TotalUSD != nil && *r.TotalUSD > 0 {
 			newBudget = math.Min(newBudget, *r.TotalUSD)
 		}

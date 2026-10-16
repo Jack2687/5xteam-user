@@ -35,6 +35,7 @@ type Config struct {
 	EmptyGroupCount          int    `json:"empty_group_count"`
 	CheckSeconds             int    `json:"check_seconds"`
 	QuotaSeconds             int    `json:"quota_seconds"`
+	MoneyWindowMinutes       int    `json:"money_window_minutes"`
 	CooldownSeconds          int    `json:"cooldown_seconds"`
 	EmergencyCooldownSeconds int    `json:"emergency_cooldown_seconds"`
 	HourLimit                int    `json:"hour_limit"`
@@ -54,9 +55,12 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
+	return Config{NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, MoneyWindowMinutes: DefaultMoneyWindowMinutes, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
 }
 func (c Config) Validate() error {
+	if c.MoneyWindowMinutes < 1 || c.MoneyWindowMinutes > MaxMoneyWindowMinutes {
+		return errors.New("消耗计算窗口应为 1～60 分钟的整数")
+	}
 	if c.NoRestockEnabled {
 		start, startOK := dailyMinute(c.NoRestockStart)
 		end, endOK := dailyMinute(c.NoRestockEnd)

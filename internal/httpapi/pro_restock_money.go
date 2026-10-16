@@ -65,12 +65,12 @@ func (s *Server) sampleRestockMoneyBetweenChecks(c restock.Config, now time.Time
 	if err != nil || snap.Binding != restockBinding(p) || validateRestockTarget(c, p) != nil {
 		return
 	}
-	s.refreshRestockMoney(p, password, snap)
+	s.refreshRestockMoney(c, p, password, snap)
 }
 
 // Money sampling is independent of the quota-percent refresh interval: a long
-// quota interval must not turn a three-minute cost rate into an hour average.
-func (s *Server) refreshRestockMoney(p model.ProSettings, password string, snap restock.Snapshot) {
+// quota interval must not change the configured cost calculation window.
+func (s *Server) refreshRestockMoney(c restock.Config, p model.ProSettings, password string, snap restock.Snapshot) {
 	s.proRestock.mu.Lock()
 	if s.proRestock.moneyBusy || time.Now().Before(s.proRestock.moneyNext) {
 		s.proRestock.mu.Unlock()
@@ -106,7 +106,7 @@ func (s *Server) refreshRestockMoney(p model.ProSettings, password string, snap 
 					m := restock.AccountMoney{At: time.Now(), Error: "费用读取失败"}
 					if err == nil {
 						m = restockMoneyUsage(u, time.Now())
-						m = restock.ObserveMoney(m, a.Money, u.DailyCost)
+						m = restock.ObserveMoney(m, a.Money, u.DailyCost, c.MoneyWindowMinutes)
 					}
 					s.proRestock.mu.Lock()
 					if generation == s.proRestock.moneyGeneration && s.proRestock.quotaBinding == snap.Binding {

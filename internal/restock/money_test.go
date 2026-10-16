@@ -14,7 +14,7 @@ func TestMoneySamplingThreeMinutesAndReset(t *testing.T) {
 	now := time.Date(2026, 10, 16, 8, 0, 0, 0, time.UTC)
 	var p *AccountMoney
 	for i := 0; i <= 6; i++ {
-		v := ObserveMoney(AccountMoney{At: now.Add(time.Duration(i) * 30 * time.Second), Day: "2026-10-16"}, p, 100+float64(i)*5)
+		v := ObserveMoney(AccountMoney{At: now.Add(time.Duration(i) * 30 * time.Second), Day: "2026-10-16"}, p, 100+float64(i)*5, 3)
 		if i < 6 && v.RateUSD != nil {
 			t.Fatal("partial window reported as a three-minute sample")
 		}
@@ -34,7 +34,7 @@ func TestMoneySamplingThreeMinutesAndReset(t *testing.T) {
 		{"duplicate", "2026-10-16", p.At, 130},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ObserveMoney(AccountMoney{At: tt.at, Day: tt.day}, p, tt.cost)
+			got := ObserveMoney(AccountMoney{At: tt.at, Day: tt.day}, p, tt.cost, 3)
 			if got.RateUSD != nil || len(got.Samples) != 1 {
 				t.Fatal(got)
 			}
@@ -42,7 +42,7 @@ func TestMoneySamplingThreeMinutesAndReset(t *testing.T) {
 	}
 	// A long idle period must decay to a real zero, not retain a percentage EMA.
 	for i := 1; i <= 6; i++ {
-		v := ObserveMoney(AccountMoney{At: p.At.Add(30 * time.Second), Day: p.Day}, p, 130)
+		v := ObserveMoney(AccountMoney{At: p.At.Add(30 * time.Second), Day: p.Day}, p, 130, 3)
 		p = &v
 	}
 	if p.RateUSD == nil || *p.RateUSD != 0 {
@@ -53,9 +53,70 @@ func TestMoneySamplingThreeMinutesAndReset(t *testing.T) {
 func TestMoneySamplingInterpolatesBoundary(t *testing.T) {
 	now := time.Now()
 	p := &AccountMoney{Day: "same", Samples: []MoneySample{{now.Add(-200 * time.Second), 10}, {now.Add(-140 * time.Second), 20}, {now.Add(-80 * time.Second), 30}, {now.Add(-20 * time.Second), 40}}}
-	v := ObserveMoney(AccountMoney{At: now, Day: "same"}, p, 43.333333333333)
+	v := ObserveMoney(AccountMoney{At: now, Day: "same"}, p, 43.333333333333, 3)
 	if v.RateUSD == nil || math.Abs(*v.RateUSD-10) > 1e-8 {
 		t.Fatal(v)
+	}
+}
+
+func TestMoneyConfigurableWindowAndSwitching(t *testing.T) {
+	start := time.Date(2026, 10, 16, 8, 0, 0, 0, time.UTC)
+	for _, minutes := range []int{1, 3, 5, 60} {
+		var previous *AccountMoney
+		for i := 0; i <= minutes+1; i++ {
+			current := *testMoney(start.Add(time.Duration(i)*time.Minute), 50, 100, 0)
+			got := ObserveMoney(current, previous, float64(i*i), minutes)
+			if got.WindowMinutes != minutes {
+				t.Fatal("wrong sampling window", got)
+			}
+			if i < minutes && got.RateUSD != nil {
+				t.Fatal("partial history reported as a complete window")
+			}
+			if i >= minutes {
+				want := float64(i*i-(i-minutes)*(i-minutes)) / float64(minutes)
+				if got.RateUSD == nil || *got.RateUSD != want || len(got.Samples) != minutes+1 {
+					t.Fatalf("window %d: got %+v, want rate %v", minutes, got, want)
+				}
+			}
+			previous = &got
+		}
+	}
+
+	// Costs accelerate at the end: a shorter window must change both the rate
+	// and the restock decision, without waiting for another upstream request.
+	c, s, now := fixture()
+	c.Early, c.ConcurrencyEnabled, c.TriggerMinutes = false, false, 5
+	var previous *AccountMoney
+	for i, cost := range []float64{0, 1, 2, 3, 4, 14} {
+		current := *testMoney(now.Add(time.Duration(i-5)*time.Minute), 50, 20, 0)
+		got := ObserveMoney(current, previous, cost, 3)
+		previous = &got
+	}
+	s.Accounts[0].Money = previous
+	d := Evaluate(c, s, nil, Limits{}, 2, 20, 2, now)
+	if d.SupplyMinutes == nil || *d.SupplyMinutes != 5 || *d.Money.RateUSD != 4 || d.Money.WindowMinutes != 3 {
+		t.Fatal("three-minute average", d)
+	}
+	c.MoneyWindowMinutes = 1
+	d = Evaluate(c, s, nil, Limits{}, 2, 20, 2, now)
+	if d.SupplyMinutes == nil || *d.SupplyMinutes != 2 || *d.Money.RateUSD != 10 || d.Money.WindowMinutes != 1 || d.TimeNeed != 4 {
+		t.Fatal("shorter window did not change dollar rate and demand", d)
+	}
+	if previous.WindowMinutes != 3 || *previous.RateUSD != 4 {
+		t.Fatal("evaluation mutated the shared sample")
+	}
+	c.MoneyWindowMinutes = 5
+	d = Evaluate(c, s, nil, Limits{}, 2, 20, 2, now)
+	if d.SupplyMinutes != nil || d.TimeNeed != 0 || d.Money.State != "sampling" || d.Money.WindowMinutes != 5 {
+		t.Fatal("old short-window rate reused for a longer window", d)
+	}
+	for i := 1; i <= 2; i++ {
+		at := now.Add(time.Duration(i) * time.Minute)
+		got := ObserveMoney(*testMoney(at, 50, 20, 0), previous, 14+float64(i)*10, 5)
+		previous = &got
+	}
+	if previous.RateUSD == nil || *previous.RateUSD != 6.4 {
+		t.Fatal("longer window did not reuse valid contiguous history", previous)
 	}
 }
 

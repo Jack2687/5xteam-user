@@ -19,21 +19,22 @@ const tick = () => new Promise(resolve=>setImmediate(resolve))
 let time=100000
 const saved = new Map(), storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
 const gate=createEJHRefreshGate({now:()=>time,storage:()=>storage})
-function fixture({failSync=false,holdSync=false}={}) {
- const calls=[],mounts=[],unmounts=[]
+function fixture({failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[]}={}) {
+ const calls=[],mounts=[],unmounts=[],confirmations=[]
  let release
  const blocked=new Promise(resolve=>{release=resolve})
- const context=vm.createContext({...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
+ const context=vm.createContext({...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
  async api(url,options={}){
   calls.push({url,options})
   if(url==='/api/ejh/settings')return {enabled:true}
-  if(url==='/api/ejh/dashboard')return {cards:[],cases:[],trades:[],operations:[],audit:[],sync:{}}
+  if(url==='/api/ejh/dashboard')return {cards:[],cases:savedCases,trades:[],operations:[],audit:[],sync:{}}
+  if(options.method==='DELETE')return deleteResult
   if(url==='/api/ejh/sync'){if(holdSync)await blocked;if(failSync)throw Error('sync failed')}
   return {}
  }})
  context.watch=watch
- vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates};',context)
- return {...context.exposed,calls,release,unmount:()=>unmounts.forEach(fn=>fn())}
+ vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates,caseCategory,caseCounts,setCaseCategory,deleteUnopenedCase,page,pageSize,visible};',context)
+ return {...context.exposed,calls,confirmations,release,unmount:()=>unmounts.forEach(fn=>fn())}
 }
 let f=fixture();await f.initialize()
 assert.equal(f.calls.filter(r=>r.url==='/api/ejh/sync').length,1)
@@ -89,7 +90,35 @@ assert.deepEqual(Array.from(f.filtered.value,c=>c.id),['opened','waiting','retur
 assert.equal(Object.hasOwn(f.accountReturnStates,'unopened'),false)
 f.query.value='unopened@example.com';assert.equal(f.filtered.value.length,0)
 f.clearFilters();assert.equal(f.filtered.value.length,3)
-f.showCaseState('unopened');assert.equal(f.tab.value,'cards')
+f.showCaseState('unopened');assert.equal(f.tab.value,'cases');assert.equal(f.caseCategory.value,'unopened');assert.equal(f.filtered.value[0].id,'unopened')
+assert.equal(f.caseCounts.value.normal,3);assert.equal(f.caseCounts.value.unopened,1)
+f.status.value='waiting';f.page.value=5;f.setCaseCategory('normal')
+assert.equal(f.status.value,'');assert.equal(f.page.value,1);assert.equal(f.filtered.value.length,3)
 f.showCaseState('waiting');assert.equal(f.tab.value,'cases');assert.equal(f.filtered.value[0].id,'waiting')
+f.changeTab('cards');f.changeTab('cases');assert.equal(f.caseCategory.value,'normal');assert.equal(f.filtered.value.length,3)
 f.unmount()
-console.log('Passed: unopened accounts excluded from returns list, counts and search; unopened summary links to card management')
+console.log('Passed: normal returns default, separate unopened category, counts, search, summary navigation and category reset')
+
+const unopenedRows=Array.from({length:12},(_,i)=>({id:'unopened-'+i,email:'account-'+i+'@example.com',state:'unopened'}))
+const normalRow={id:'normal',email:'normal@example.com',state:'opened'}
+f=fixture({deleteResult:{deleted:12,deleted_ids:unopenedRows.map(c=>c.id)},savedCases:[normalRow]})
+f.data.value.cases=[...unopenedRows,normalRow];f.changeTab('cases');f.setCaseCategory('unopened')
+f.query.value='account-11@example.com'
+assert.equal(f.filtered.value.length,1)
+await f.deleteUnopenedCase()
+assert.match(f.confirmations[0],/全部 12 条.*其他分页和搜索范围外/)
+assert.deepEqual(JSON.parse(JSON.stringify(f.calls[0])),{url:'/api/ejh/cases/unopened',options:{method:'DELETE',body:{confirm:true}}})
+assert.equal(f.caseCounts.value.unopened,0);assert.equal(f.caseCounts.value.normal,1)
+assert.match(f.message.text,/已删除 12 条/)
+f.unmount()
+f=fixture({deleteResult:{deleted:1,deleted_ids:['unopened-10']},savedCases:unopenedRows.slice(0,10)})
+f.data.value.cases=unopenedRows.slice(0,11);f.changeTab('cases');f.setCaseCategory('unopened');f.page.value=2
+await f.deleteUnopenedCase(f.visible.value[0])
+assert.equal(f.calls[0].url,'/api/ejh/cases/unopened-10');assert.equal(f.page.value,1)
+assert.match(f.confirmations[0],/account-10@example.com.*unopened-10/)
+f.unmount()
+f=fixture({confirmDelete:false});f.data.value.cases=unopenedRows;await f.deleteUnopenedCase()
+assert.equal(f.calls.length,0);assert.equal(f.data.value.cases.length,12);f.unmount()
+f=fixture();f.data.value.cases=unopenedRows;f.busy.value=true;await f.deleteUnopenedCase();f.busy.value=false;await f.deleteUnopenedCase(normalRow)
+assert.equal(f.calls.length,0);assert.equal(f.confirmations.length,0);f.unmount()
+console.log('Passed: delete all across search/pages, single deletion, last-page clamping, confirmation cancellation and busy/state guards')

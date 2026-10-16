@@ -245,7 +245,7 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	}
 	s.refreshRestockQuota(c, p, password, snap)
 	if snap.Valid && snap.LoadValid {
-		s.refreshRestockMoney(p, password, snap)
+		s.refreshRestockMoney(c, p, password, snap)
 	}
 	return snap, nil
 }

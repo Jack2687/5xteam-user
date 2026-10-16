@@ -149,6 +149,7 @@ func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SaveProRestockDecision(restock.Decision{ID: randomRegistrationID(), At: time.Now(), Version: c.Version, Config: c, Reason: "配置已保存：" + c.Mode})
 	s.proFallback.next = time.Time{}
+	s.proRestock.next = time.Time{}
 	writeAPI(w, 200, c, "")
 }
 func (s *Server) getProRestockGroups(w http.ResponseWriter, r *http.Request) {

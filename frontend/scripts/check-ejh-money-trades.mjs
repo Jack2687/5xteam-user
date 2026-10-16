@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { ref, reactive } from 'vue'
-import { accountAmounts, cardAmounts } from '../src/ejh-account-amounts.js'
+import { accountAmounts, cardAmounts, summarizeInFlightPayments } from '../src/ejh-account-amounts.js'
 
 const charge={type:'4',status:'2',card_amount:'100.30',card_currency:'USD'}
 const returned=(id,amount,currency='USD',extra={})=>({id,confirmed:true,confirmed_amount:amount,confirmed_currency:currency,trade:{tradeType:'5',tradeStatus:'2'},...extra})
@@ -83,3 +83,37 @@ assert.equal(view.includes('流水同步'),false)
 assert.equal(view.includes('matchForm'),false)
 assert.equal((view.match(/<EJHCardAmounts /g)||[]).length,2)
 console.log('Passed: card totals, clearing/auth deduplication, per-currency differences, fixed fee and retired manual controls')
+
+// Only opened / waiting cases contribute to in-flight totals, independent of
+// card currency and consumption credits. Never merge transaction and bill units.
+const inFlightCase=(id,state='opened',extra={})=>({id,state,email:'same@example.com',ejh_card_id:'c',charge:{id:'charge-'+id,trade_no:'trade-'+id,type:'1',status:'1',trade_amount:'100.10',trade_currency:'PHP',bill_amount:'1.20',bill_currency:'USD',card_amount:'99999',card_currency:'JPY',...extra}})
+const inflightRows=[inFlightCase('a'),inFlightCase('b','waiting'),inFlightCase('c','returned'),inFlightCase('d','unopened')]
+const inFlightTotals=summarizeInFlightPayments(inflightRows)
+assert.equal(inFlightTotals.count,2)
+assert.deepEqual(inFlightTotals.transaction,[{amount:'200.20',currency:'PHP'}])
+assert.deepEqual(inFlightTotals.settlement,[{amount:'2.40',currency:'USD'}])
+assert.equal(inFlightTotals.authorizations,2)
+assert.equal(inFlightTotals.missingTransaction,0)
+assert.deepEqual(summarizeInFlightPayments([...inflightRows,inflightRows[0]]),inFlightTotals,'duplicate case does not duplicate payment')
+const duplicatePayment={...inflightRows[0],id:'same-charge'}
+assert.deepEqual(summarizeInFlightPayments([...inflightRows,duplicatePayment]).transaction,inFlightTotals.transaction,'duplicate attributed charge counted once')
+const mixed=summarizeInFlightPayments([...inflightRows,inFlightCase('eur','waiting',{type:'4',status:'2',trade_amount:'0.000001',trade_currency:'EUR',bill_amount:'0.10',bill_currency:'EUR'})])
+assert.deepEqual(mixed.transaction,[{amount:'0.000001',currency:'EUR'},{amount:'200.20',currency:'PHP'}])
+assert.deepEqual(mixed.settlement,[{amount:'0.10',currency:'EUR'},{amount:'2.40',currency:'USD'}])
+for(const extra of [{trade_amount:''},{trade_amount:'NaN'},{trade_amount:'-1'},{trade_currency:''}]){
+ const total=summarizeInFlightPayments([inFlightCase('missing','opened',extra)])
+ assert.equal(total.missingTransaction,1);assert.deepEqual(total.transaction,[])
+ assert.equal(total.missingSettlement,0);assert.deepEqual(total.settlement,[{amount:'1.20',currency:'USD'}])
+}
+const noBill=summarizeInFlightPayments([inFlightCase('no-bill','waiting',{bill_amount:''})])
+assert.equal(noBill.missingSettlement,1);assert.equal(noBill.missingTransaction,0)
+for(const row of [{id:'no-charge',state:'opened'},inFlightCase('failed','opened',{status:'3'}),inFlightCase('refund','waiting',{type:'5'}),inFlightCase('pending-clearing','opened',{type:'4',status:'1'})]){
+ const total=summarizeInFlightPayments([row])
+ assert.equal(total.count,1);assert.equal(total.missingTransaction,1);assert.equal(total.missingSettlement,1)
+ assert.deepEqual(total.transaction,[]);assert.deepEqual(total.settlement,[])
+}
+const zero=summarizeInFlightPayments([inFlightCase('zero','opened',{trade_amount:'0',bill_amount:'0'})])
+assert.deepEqual(zero.transaction,[{amount:'0.00',currency:'PHP'}]);assert.equal(zero.missingTransaction,0)
+assert.equal(summarizeInFlightPayments().count,0)
+assert.equal(summarizeInFlightPayments(inflightRows.map(r=>({...r,state:'returned'}))).count,0,'returned cases immediately leave in-flight totals')
+console.log('Passed: in-flight states, separate transaction/settlement currencies, exact decimals, duplicate payments, missing/failed evidence and returned exclusion')

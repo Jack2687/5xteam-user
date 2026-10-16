@@ -41,3 +41,13 @@ assert.equal(concurrencyDetails(d.snapshot,false,now).percent,'120%')
 d.snapshot.accounts[0].used=null
 assert.equal(concurrencyDetails(d.snapshot,false,now).percent,'—')
 console.log('Passed: dollar forecast, real zero, missing/stale samples, group changes, lifetime independence, matching concurrency cohorts')
+
+d=fixture();assert.equal(forecastDetails(d,now).windowMinutes,3)
+d.config.money_window_minutes=5
+r=forecastDetails(d,now)
+assert.equal(r.windowMinutes,5);assert.equal(r.supply,'采样中');assert.equal(r.rate,null);assert.equal(r.rows[0].rate_usd,null)
+d.money.window_minutes=5
+assert.equal(forecastDetails(d,now).supply,'26.6 分钟')
+const historical=structuredClone(d);historical.config.money_window_minutes=1;historical.money.window_minutes=1
+assert.equal(forecastDetails(historical,now).windowMinutes,1)
+console.log('Passed: window defaults, changed-window suppression and historical labels')

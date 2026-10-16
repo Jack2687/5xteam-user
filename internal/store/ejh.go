@@ -404,6 +404,9 @@ func ejhSaveCaseTx(tx *sql.Tx, o gptpay.Order) error {
 			return e
 		}
 	}
+	if o.Status == "success" && v.PaymentStatus != "success" {
+		v.RemovedAt = nil
+	}
 	v.ID, v.Email, v.CardID, v.CardName, v.Last4, v.Plan, v.Provider, v.PaymentStatus, v.CreatedAt = o.ID, o.Email, o.CardID, o.CardName, o.CardLast4, o.PlanCode, o.Provider, o.Status, o.CreatedAt
 	if o.Status == "success" && v.OpenedAt == nil {
 		now := o.UpdatedAt

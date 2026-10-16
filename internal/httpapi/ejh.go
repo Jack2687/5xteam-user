@@ -44,6 +44,9 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 	return c, k, nil
 }
 func (s *Server) ejhRoutes(m *http.ServeMux) {
+	m.HandleFunc("PUT /api/ejh/recharge-ledger", s.saveEJHRechargeLedger)
+	m.HandleFunc("DELETE /api/ejh/cases/unopened", s.deleteEJHUnopenedCases)
+	m.HandleFunc("DELETE /api/ejh/cases/{id}", s.deleteEJHUnopenedCases)
 	m.HandleFunc("PUT /api/ejh/cases/{id}/state", s.setEJHCaseState)
 	m.HandleFunc("POST /api/ejh/cards/{id}/trades", s.queryEJHCardTrades)
 	m.HandleFunc("GET /api/ejh/occupancy/{id}", s.getEJHOccupancyOrder)
@@ -193,7 +196,7 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	filteredCases := []ejh.Case{}
 	for _, v := range cases {
-		if v.CardType == "ejh" {
+		if v.CardType == "ejh" && (v.RemovedAt == nil || v.State != "unopened") {
 			filteredCases = append(filteredCases, v)
 		}
 	}
@@ -256,7 +259,12 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	audit = filteredAudit
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "audit": audit, "server_time": time.Now()}, "")
+	ledger, err := s.store.EJHRechargeLedger()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {
 	if len(n) > 4 {

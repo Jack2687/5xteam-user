@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -134,13 +135,15 @@ func TestRestockMoneyRefreshCadenceFailureAndRecovery(t *testing.T) {
 	s.proRestock.quotaNext = now.Add(time.Hour)
 	previous := &restock.AccountMoney{At: now.Add(-time.Minute), Day: now.UTC().Format("2006-01-02"), Samples: []restock.MoneySample{{At: now.Add(-3 * time.Minute), Cost: 10}, {At: now.Add(-2 * time.Minute), Cost: 20}, {At: now.Add(-time.Minute), Cost: 30}}}
 	snap := restock.Snapshot{Binding: restockBinding(p), Accounts: []restock.Account{{ID: 1, Ready: true, Money: previous}, {ID: 2, Ready: false}, {ID: 3, Ready: true, Shared: true}}}
-	s.refreshRestockMoney(p, "fixture", snap)
+	c := restock.DefaultConfig()
+	c.MoneyWindowMinutes = 1
+	s.refreshRestockMoney(c, p, "fixture", snap)
 	awaitMoneyWorker(t, s)
 	m := s.proRestock.money[1]
-	if m == nil || m.Error != "" || m.RateUSD == nil || math.Abs(*m.RateUSD-10) > .1 || calls.Load() != 1 {
+	if m == nil || m.Error != "" || m.RateUSD == nil || math.Abs(*m.RateUSD-10) > .1 || m.WindowMinutes != 1 || calls.Load() != 1 {
 		t.Fatalf("independent sampling or cost delta failed: %+v; calls=%d", m, calls.Load())
 	}
-	s.refreshRestockMoney(p, "fixture", snap)
+	s.refreshRestockMoney(restock.DefaultConfig(), p, "fixture", snap)
 	awaitMoneyWorker(t, s)
 	if calls.Load() != 1 {
 		t.Fatal("refresh ignored one-minute cadence")
@@ -148,7 +151,7 @@ func TestRestockMoneyRefreshCadenceFailureAndRecovery(t *testing.T) {
 	fail.Store(true)
 	snap.Accounts[0].Money = m
 	s.proRestock.moneyNext = time.Time{}
-	s.refreshRestockMoney(p, "fixture", snap)
+	s.refreshRestockMoney(restock.DefaultConfig(), p, "fixture", snap)
 	awaitMoneyWorker(t, s)
 	m = s.proRestock.money[1]
 	if m.Error == "" || m.RateUSD != nil || len(m.Samples) > 0 {
@@ -157,11 +160,59 @@ func TestRestockMoneyRefreshCadenceFailureAndRecovery(t *testing.T) {
 	fail.Store(false)
 	snap.Accounts[0].Money = m
 	s.proRestock.moneyNext = time.Time{}
-	s.refreshRestockMoney(p, "fixture", snap)
+	s.refreshRestockMoney(restock.DefaultConfig(), p, "fixture", snap)
 	awaitMoneyWorker(t, s)
 	m = s.proRestock.money[1]
 	if m.Error != "" || m.RateUSD != nil || len(m.Samples) != 1 {
 		t.Fatal("recovery must start a new contiguous sample window")
+	}
+}
+
+func TestRestockMoneyWindowConfigAPI(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &Server{store: st}
+	c := restock.DefaultConfig()
+	raw, _ := json.Marshal(c)
+	var payload map[string]any
+	json.Unmarshal(raw, &payload)
+	delete(payload, "money_window_minutes")
+	call := func() *httptest.ResponseRecorder {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRecorder()
+		s.saveProRestockConfig(r, httptest.NewRequest(http.MethodPut, "/api/pro-restock/config", bytes.NewReader(raw)))
+		return r
+	}
+	if r := call(); r.Code != http.StatusOK {
+		t.Fatal("legacy request rejected", r.Body.String())
+	}
+	got, err := st.ProRestockConfig()
+	if err != nil || got.MoneyWindowMinutes != 3 {
+		t.Fatal("API default", got, err)
+	}
+	payload["version"] = got.Version
+	for _, invalid := range []any{0, -1, 61, 1.5, "five"} {
+		payload["money_window_minutes"] = invalid
+		if r := call(); r.Code != http.StatusBadRequest {
+			t.Fatal("invalid minutes accepted", invalid, r.Body.String())
+		}
+	}
+	payload["money_window_minutes"] = 7
+	if r := call(); r.Code != http.StatusOK {
+		t.Fatal(r.Body.String())
+	}
+	got, err = st.ProRestockConfig()
+	if err != nil || got.MoneyWindowMinutes != 7 || got.Enabled || got.TriggerMinutes != c.TriggerMinutes {
+		t.Fatal("window did not save independently", got, err)
+	}
+	if r := call(); r.Code != http.StatusConflict {
+		t.Fatal("stale version overwrote newer settings", r.Body.String())
 	}
 }
 
@@ -185,7 +236,7 @@ func TestRestockMoneyOldGroupResponseDiscarded(t *testing.T) {
 	p := model.ProSettings{Sub2: model.Sub2Settings{URL: upstream.URL, Email: "fixture@example.com"}}
 	s := &Server{sub2: sub2.New()}
 	s.proRestock.quotaBinding = restockBinding(p)
-	s.refreshRestockMoney(p, "fixture", restock.Snapshot{Binding: restockBinding(p), Accounts: []restock.Account{{ID: 1, Ready: true}}})
+	s.refreshRestockMoney(restock.DefaultConfig(), p, "fixture", restock.Snapshot{Binding: restockBinding(p), Accounts: []restock.Account{{ID: 1, Ready: true}}})
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
