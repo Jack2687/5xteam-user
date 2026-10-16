@@ -71,15 +71,15 @@ export function accountAmounts(row){
 }
 
 // Use the one payment attributed to each case, not all raw authorization and
-// clearing rows. Keep transaction and settlement currencies independent.
+// clearing rows. Keep card, transaction and settlement currencies independent.
 export function summarizeInFlightPayments(cases=[]){
- const orders=new Map(),payments=new Map(),transaction=new Map(),settlement=new Map()
+ const orders=new Map(),payments=new Map(),payment=new Map(),transaction=new Map(),settlement=new Map()
  for(const row of cases)if(['opened','waiting'].includes(row.state))orders.set(row.id||row,row)
- let missingTransaction=0,missingSettlement=0,authorizations=0
+ let missingPayment=0,missingTransaction=0,missingSettlement=0,pendingSettlement=0,authorizations=0
  for(const row of orders.values()){
   const charge=row.charge
   const valid=charge&&(['1','4'].includes(charge.type)&&charge.status==='2'||charge.type==='1'&&charge.status==='1')
-  if(!valid){missingTransaction++;missingSettlement++;continue}
+  if(!valid){missingPayment++;missingTransaction++;missingSettlement++;continue}
   const card=row.ejh_card_id||row.card_id||''
   const key=charge.trade_no?`${card}:trade:${charge.trade_no}`:charge.id?`id:${charge.id}`:row.id||row
   const previous=payments.get(key)
@@ -92,9 +92,15 @@ export function summarizeInFlightPayments(cases=[]){
  }
  for(const charge of payments.values()){
   if(charge.type==='1')authorizations++
+  if(!add(payment,charge.card_amount,charge.card_currency))missingPayment++
   if(!add(transaction,charge.trade_amount,charge.trade_currency))missingTransaction++
-  if(!add(settlement,charge.bill_amount,charge.bill_currency))missingSettlement++
+  // EJH can return zero transaction/bill fields while cardAmount contains a
+  // real authorization hold. Zero is not an actual USD settlement in this case.
+  if(units(charge.card_amount)>0n&&units(charge.bill_amount)===0n){
+   if(charge.type==='1'&&charge.status==='1')pendingSettlement++
+   else missingSettlement++
+  }else if(!add(settlement,charge.bill_amount,charge.bill_currency))missingSettlement++
  }
  const rows=totals=>[...totals].sort(([a],[b])=>a.localeCompare(b)).map(([currency,n])=>({amount:format(n),currency}))
- return {count:orders.size,transaction:rows(transaction),settlement:rows(settlement),missingTransaction,missingSettlement,authorizations}
+ return {count:orders.size,payment:rows(payment),transaction:rows(transaction),settlement:rows(settlement),missingPayment,missingTransaction,missingSettlement,pendingSettlement,authorizations}
 }
