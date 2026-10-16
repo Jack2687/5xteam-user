@@ -7,6 +7,7 @@ import (
 )
 
 type Config struct {
+	CapacityPercent          int    `json:"capacity_percent"`
 	ExitEnabled              bool   `json:"exit_enabled"`
 	ExitMinutes              int    `json:"exit_minutes"`
 	ExitWarningPercent       int    `json:"exit_warning_percent"`
@@ -60,9 +61,12 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{ExitMinutes: 5, ExitWarningPercent: 5, ExitRefreshSeconds: 15, ExitDemandHoldSeconds: 60, NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, MoneyWindowMinutes: DefaultMoneyWindowMinutes, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
+	return Config{CapacityPercent: DefaultCapacityPercent, ExitMinutes: 5, ExitWarningPercent: 5, ExitRefreshSeconds: 15, ExitDemandHoldSeconds: 60, NoRestockStart: "00:00", NoRestockEnd: "07:00", ForceMergeMinutes: 15, FaultPercent: 50, Version: 1, Mode: "observe", TimeEnabled: true, TriggerMinutes: 10, TargetMinutes: 15, Early: true, ConcurrencyEnabled: true, TriggerPercent: 85, TargetPercent: 75, Confirmations: 2, EmergencyQueue: 3, MinBatch: 3, MaxBatch: 5, AllowSmall: true, MaxInflight: 6, CheckSeconds: 5, QuotaSeconds: 60, MoneyWindowMinutes: DefaultMoneyWindowMinutes, CooldownSeconds: 60, EmergencyCooldownSeconds: 20, HourLimit: 20, DayLimit: 100, PoolLimit: 100, FailureLimit: 3, FreshSeconds: 20, QuotaCoverage: 80, LeadMinutes: 5, MarginMinutes: 1, ForecastMinutes: 60, LeadSamples: 10, RetentionDays: 7}
 }
 func (c Config) Validate() error {
+	if c.CapacityPercent < 1 || c.CapacityPercent > 100 {
+		return errors.New("总并发容量使用比例应为 1～100% 的整数")
+	}
 	if c.ExitMinutes < 1 || c.ExitMinutes > 1440 || c.ExitWarningPercent < 0 || c.ExitWarningPercent > 20 || c.ExitRefreshSeconds < 5 || c.ExitRefreshSeconds > 60 || c.ExitDemandHoldSeconds < 5 || c.ExitDemandHoldSeconds > 600 {
 		return errors.New("退出前补货：提前时间应为 1～1440 分钟，额度预警为 0～20 个百分点，临期刷新为 5～60 秒，需求保留为 5～600 秒")
 	}
@@ -216,41 +220,42 @@ type Limits struct {
 	LastBatch *time.Time `json:"last_batch,omitempty"`
 }
 type Decision struct {
-	Exit            *ExitForecast   `json:"exit,omitempty"`
-	ExitNeed        int             `json:"exit_need"`
-	Trace           *DecisionTrace  `json:"trace,omitempty"`
-	Money           MoneyForecast   `json:"money"`
-	NoRestockActive bool            `json:"no_restock_active"`
-	ForceMerge      ForceMergeStats `json:"force_merge"`
-	ForceMergeNeed  int             `json:"force_merge_need"`
-	DemandKnown     bool            `json:"demand_known"`
-	IdleEquivalent  float64         `json:"idle_equivalent"`
-	ID              string          `json:"id"`
-	At              time.Time       `json:"at"`
-	Version         int             `json:"version"`
-	Snapshot        Snapshot        `json:"snapshot"`
-	Config          Config          `json:"config"`
-	Limits          Limits          `json:"limits"`
-	Reason          string          `json:"reason"`
-	Warnings        []string        `json:"warnings"`
-	SupplyMinutes   *float64        `json:"supply_minutes"`
-	SupplyCapped    bool            `json:"supply_capped"`
-	Coverage        float64         `json:"coverage"`
-	Usable          int             `json:"usable"`
-	Capacity        int             `json:"capacity"`
-	Used            int             `json:"used"`
-	Waiting         int             `json:"waiting"`
-	Inflight        int             `json:"inflight"`
-	LeadMinutes     float64         `json:"lead_minutes"`
-	TriggerMinutes  float64         `json:"trigger_minutes"`
-	TargetMinutes   float64         `json:"target_minutes"`
-	TimeNeed        int             `json:"time_need"`
-	ConcurrencyNeed int             `json:"concurrency_need"`
-	ReserveNeed     int             `json:"reserve_need"`
-	EmptyGroupNeed  int             `json:"empty_group_need"`
-	Suggested       int             `json:"suggested"`
-	Started         int             `json:"started"`
-	Confirmations   int             `json:"confirmations"`
+	Exit             *ExitForecast   `json:"exit,omitempty"`
+	ExitNeed         int             `json:"exit_need"`
+	Trace            *DecisionTrace  `json:"trace,omitempty"`
+	Money            MoneyForecast   `json:"money"`
+	NoRestockActive  bool            `json:"no_restock_active"`
+	ForceMerge       ForceMergeStats `json:"force_merge"`
+	ForceMergeNeed   int             `json:"force_merge_need"`
+	DemandKnown      bool            `json:"demand_known"`
+	IdleEquivalent   float64         `json:"idle_equivalent"`
+	ID               string          `json:"id"`
+	At               time.Time       `json:"at"`
+	Version          int             `json:"version"`
+	Snapshot         Snapshot        `json:"snapshot"`
+	Config           Config          `json:"config"`
+	Limits           Limits          `json:"limits"`
+	Reason           string          `json:"reason"`
+	Warnings         []string        `json:"warnings"`
+	SupplyMinutes    *float64        `json:"supply_minutes"`
+	SupplyCapped     bool            `json:"supply_capped"`
+	Coverage         float64         `json:"coverage"`
+	Usable           int             `json:"usable"`
+	ReportedCapacity int             `json:"reported_capacity"`
+	Capacity         float64         `json:"capacity"`
+	Used             int             `json:"used"`
+	Waiting          int             `json:"waiting"`
+	Inflight         int             `json:"inflight"`
+	LeadMinutes      float64         `json:"lead_minutes"`
+	TriggerMinutes   float64         `json:"trigger_minutes"`
+	TargetMinutes    float64         `json:"target_minutes"`
+	TimeNeed         int             `json:"time_need"`
+	ConcurrencyNeed  int             `json:"concurrency_need"`
+	ReserveNeed      int             `json:"reserve_need"`
+	EmptyGroupNeed   int             `json:"empty_group_need"`
+	Suggested        int             `json:"suggested"`
+	Started          int             `json:"started"`
+	Confirmations    int             `json:"confirmations"`
 }
 
 // EmptyGroupOnly identifies an explicit startup quantity, which must not be

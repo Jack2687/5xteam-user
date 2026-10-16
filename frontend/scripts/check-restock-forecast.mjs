@@ -32,12 +32,13 @@ d=fixture();d.money.rate_usd=Infinity
 assert.equal(forecastDetails(d,now).rate,null)
 d=fixture();d.snapshot.accounts.push({id:2,ready:false,capacity:100,used:100},{id:3,ready:true,shared:true,capacity:100,used:100},{id:4,ready:true,expires_at:at,capacity:100,used:100})
 d.snapshot.accounts[0].waiting=99
-assert.deepEqual(concurrencyDetails(d.snapshot,false,now),{used:228,capacity:300,percent:'76%'})
+assert.deepEqual(concurrencyDetails(d.snapshot,false,now,{capacity_percent:100}),{used:228,capacity:300,reportedCapacity:300,capacityPercent:100,triggerCount:null,percent:'76%'})
+assert.equal(concurrencyDetails(d.snapshot,false,now).capacity,180,'legacy config must default to 60%')
 assert.equal(concurrencyDetails(d.snapshot,true,now).percent,'—')
 d.snapshot.accounts[0].capacity=0
 assert.equal(concurrencyDetails(d.snapshot,false,now).percent,'—')
 d.snapshot.accounts[0].capacity=100;d.snapshot.accounts[0].used=120
-assert.equal(concurrencyDetails(d.snapshot,false,now).percent,'120%')
+assert.equal(concurrencyDetails(d.snapshot,false,now,{capacity_percent:100}).percent,'120%')
 d.snapshot.accounts[0].used=null
 assert.equal(concurrencyDetails(d.snapshot,false,now).percent,'—')
 console.log('Passed: dollar forecast, real zero, missing/stale samples, group changes, lifetime independence, matching concurrency cohorts')
@@ -51,3 +52,13 @@ assert.equal(forecastDetails(d,now).supply,'26.6 分钟')
 const historical=structuredClone(d);historical.config.money_window_minutes=1;historical.money.window_minutes=1
 assert.equal(forecastDetails(historical,now).windowMinutes,1)
 console.log('Passed: window defaults, changed-window suppression and historical labels')
+
+// Actual capacity is scaled once; only the trigger occupancy is rounded down.
+const load={valid:true,load_valid:true,accounts:[{id:1,ready:true,capacity:40,used:16},{id:2,ready:true,capacity:40,used:17}]}
+assert.deepEqual(concurrencyDetails(load,false,now,{capacity_percent:60,trigger_percent:70}),{used:33,capacity:48,reportedCapacity:80,capacityPercent:60,triggerCount:33,percent:'68.8%'})
+assert.equal(concurrencyDetails(load,false,now,{capacity_percent:80,trigger_percent:70}).capacity,64)
+assert.equal(concurrencyDetails(load,false,now,{capacity_percent:100,trigger_percent:70}).triggerCount,56)
+assert.equal(concurrencyDetails(load,true,now,{capacity_percent:60,trigger_percent:70}).triggerCount,null)
+assert.equal(load.accounts[0].capacity,40,'saved snapshot must remain raw')
+assert.equal(concurrencyDetails({valid:true,load_valid:true,accounts:[{ready:true,capacity:1,used:0},{ready:true,capacity:2,used:0}]},false,now).capacity,1.8)
+console.log('Passed: configurable effective capacity, default 60%, exact 33 trigger, fractional totals and unchanged raw observations')

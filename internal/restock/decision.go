@@ -47,12 +47,12 @@ func pressureAt(c Config, s Snapshot, now time.Time) bool {
 		}
 		queue += a.Waiting
 	}
-	return queue > 0 || (capacity > 0 && float64(used)*100 >= float64(capacity*c.TriggerPercent))
+	return queue > 0 || (capacity > 0 && used > 0 && used >= c.ConcurrencyTrigger(capacity))
 }
 
 func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, newSlots int, lead float64, now time.Time) (d Decision) {
 	d = Decision{At: now, Version: c.Version, Snapshot: s, Config: c, Limits: limits, Confirmations: confirmations, LeadMinutes: lead, TriggerMinutes: float64(c.TriggerMinutes), TargetMinutes: float64(c.TargetMinutes), Warnings: []string{}}
-	d.Trace = &DecisionTrace{Version: 1, NewAccountCapacity: newSlots, StopStage: "data"}
+	d.Trace = &DecisionTrace{Version: 1, NewAccountCapacity: newSlots, EffectiveNewAccountCapacity: c.EffectiveCapacity(newSlots), StopStage: "data"}
 	// Keep forecasts, demand and collection errors visible while suppressing
 	// every trigger, including startup, replacement and emergency demand.
 	defer func() {
@@ -73,11 +73,13 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	for _, a := range s.Accounts {
 		if availableAccount(a, now) {
 			d.Usable++
-			d.Capacity += a.Capacity
+			d.ReportedCapacity += a.Capacity
 			d.Used += a.Used
 		}
 		d.Waiting += a.Waiting
 	}
+	d.Capacity = c.EffectiveCapacity(d.ReportedCapacity)
+	d.Trace.ConcurrencyTrigger = c.ConcurrencyTrigger(d.ReportedCapacity)
 	timely, groupInflight := 0, 0
 	for _, t := range tasks {
 		if t.Active() {
@@ -144,9 +146,9 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	}
 	if c.ConcurrencyEnabled && confirmations >= c.Confirmations && pressureAt(c, s, now) {
 		d.Trace.ConcurrencyTriggered = true
-		d.ConcurrencyNeed = max(0, int(math.Ceil((float64(d.Used+d.Waiting)*100/float64(c.TargetPercent)-float64(futureCapacity+timely*newSlots))/float64(newSlots))))
+		d.ConcurrencyNeed = max(0, int(math.Ceil((float64(d.Used+d.Waiting)*100/float64(c.TargetPercent)-c.EffectiveCapacity(futureCapacity+timely*newSlots))/c.EffectiveCapacity(newSlots))))
 	}
-	d.Trace.FutureCapacity = futureCapacity
+	d.Trace.FutureCapacity = c.EffectiveCapacity(futureCapacity)
 	timeWithinHorizon := lead < float64(c.ForecastMinutes) && d.TargetMinutes <= float64(c.ForecastMinutes)
 	if c.TimeEnabled && !timeWithinHorizon {
 		d.Warnings = append(d.Warnings, "预计就绪或补后目标超出预测上限，暂停时间侧新增；并发和最低备用仍独立生效")

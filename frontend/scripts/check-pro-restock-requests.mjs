@@ -24,7 +24,7 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
 }
 
@@ -253,3 +253,27 @@ for (const finish of ['success', 'failure']) {
  f.unmounted()
 }
 console.log('Passed: detail cancellation, reopening, loading, retry and unmount isolation')
+
+// Capacity percentage is validated before saving and survives refresh/polling.
+for(const percent of [0,-1,101,60.5,'']){
+ const f=fixture();f.form.capacity_percent=percent;await f.save()
+ assert.equal(f.requests.length,0)
+ assert.match(f.error.value,/总并发容量使用比例/)
+ f.unmounted()
+}
+{
+ const f=fixture(),config={version:2,enabled:false,capacity_percent:60,trigger_percent:70}
+ Object.assign(f.form,config,{version:1})
+ const saving=f.save();await tick()
+ assert.equal(f.requests[0].options.body.capacity_percent,60)
+ f.requests[0].resolve(config);await tick()
+ const at=new Date().toISOString()
+ f.requests.findLast(r=>r.url==='/api/pro-restock').resolve({config,server_time:at,snapshot:{valid:true,load_valid:true,at,accounts:[{id:1,ready:true,capacity:80,used:33}]}})
+ await tick();f.requests.findLast(r=>r.url.includes('/records')).resolve([]);await saving
+ assert.equal(f.form.capacity_percent,60)
+ assert.equal(f.concurrencyReport.value.capacity,48)
+ assert.equal(f.concurrencyReport.value.triggerCount,33)
+ assert.equal(f.concurrencyReport.value.percent,'68.8%')
+ f.unmounted()
+}
+console.log('Passed: capacity percentage validation, save round-trip and live dashboard recalculation')

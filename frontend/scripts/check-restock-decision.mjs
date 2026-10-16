@@ -36,3 +36,11 @@ assert.match(empty.steps[1],/不抬高到最小批量/)
 assert.match(empty.rules.find(r=>r.key==='empty').evidence,/实际 0 个账号/)
 assert.equal(decisionReport({}).evaluation,false)
 console.log('Passed: historical trigger reasons, sizing, caps, legacy/failed data, events and daily pause')
+
+const scaled={...base,capacity:48,reported_capacity:80,used:33,concurrency_need:1,config:{...base.config,capacity_percent:60,trigger_percent:70},trace:{...base.trace,new_account_capacity:40,effective_new_account_capacity:24,concurrency_trigger:33,future_capacity:48}}
+const scaledRule=decisionReport(scaled).rules.find(r=>r.key==='concurrency')
+assert.match(scaledRule.evidence,/原始容量 80 × 60% = 48/)
+assert.match(scaledRule.evidence,/≥ 33 并发（70% 向下取整）/)
+assert.match(scaledRule.extra,/每号 24 有效槽位/)
+assert.doesNotMatch(scaledRule.extra,/每号 40 有效槽位/)
+console.log('Passed: saved capacity percentage, rounded trigger and scaled new-account capacity in decision details')

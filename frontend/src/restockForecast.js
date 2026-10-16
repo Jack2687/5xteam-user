@@ -32,9 +32,12 @@ export function forecastDetails(decision = {}, now = Date.now()) {
     summary:usable ? `剩余 ${moneyLabel(money.remaining_usd)} · 消耗 ${rateLabel(money.rate_usd)}` : label,
   }
 }
-export function concurrencyDetails(snapshot = {}, unavailable = false, now = Date.now()) {
+export function concurrencyDetails(snapshot = {}, unavailable = false, now = Date.now(), config = {}) {
+  const capacityPercent = Number.isInteger(config.capacity_percent) && config.capacity_percent >= 1 && config.capacity_percent <= 100 ? config.capacity_percent : 60
   const accounts = (snapshot.accounts || []).filter(a=>a.ready && !a.shared && (!a.expires_at || Date.parse(a.expires_at)>now))
   const valid = !unavailable && snapshot.valid && snapshot.load_valid && accounts.every(a=>finite(a.used) && finite(a.capacity))
-  const used = accounts.reduce((sum,a)=>sum+a.used,0), capacity = accounts.reduce((sum,a)=>sum+a.capacity,0)
-  return {used:valid?used:null,capacity:valid?capacity:null,percent:valid && capacity>0 ? (used*100/capacity).toLocaleString('zh-CN',{maximumFractionDigits:1})+'%' : '—'}
+  const used = accounts.reduce((sum,a)=>sum+a.used,0), reportedCapacity = accounts.reduce((sum,a)=>sum+a.capacity,0)
+  const capacity = reportedCapacity * capacityPercent / 100
+  const triggerCount = valid && Number.isInteger(config.trigger_percent) && config.trigger_percent >= 1 && config.trigger_percent <= 100 ? Math.floor(reportedCapacity * capacityPercent * config.trigger_percent / 10000) : null
+  return {used:valid?used:null,capacity:valid?capacity:null,triggerCount,reportedCapacity:valid?reportedCapacity:null,capacityPercent,percent:valid && capacity>0 ? (used*100/capacity).toLocaleString('zh-CN',{maximumFractionDigits:1})+'%' : '—'}
 }

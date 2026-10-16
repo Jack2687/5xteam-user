@@ -141,7 +141,7 @@ func TestProRestockExitReservationDispatchAndDrop(t *testing.T) {
 			for _, d := range records {
 				if d.Started > 0 {
 					found = true
-					if d.Exit == nil || d.ExitNeed != 1 || len(d.Exit.Rows) != 2 {
+					if d.Exit == nil || d.ExitNeed != 5 || d.Capacity != 60 || d.Exit.AfterCapacity != 30 || d.Trace.EffectiveNewAccountCapacity != 6 || len(d.Exit.Rows) != 2 {
 						t.Fatal("missing decision evidence", d)
 					}
 				}

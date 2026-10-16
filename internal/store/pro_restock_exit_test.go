@@ -37,7 +37,7 @@ func TestProRestockExitEmergencyReservationAndEvidence(t *testing.T) {
 		t.Fatal("task lost pinned capacity", tasks[0])
 	}
 	records, err := s.ProRestockDecisions(10, 0)
-	if err != nil || len(records) != 1 || records[0].ExitNeed != 1 || records[0].Exit.AfterCapacity != 50 || records[0].Exit.Demand != 60 {
+	if err != nil || len(records) != 1 || records[0].ExitNeed != 2 || records[0].Exit.AfterCapacity != 30 || records[0].Config.CapacityPercent != 60 || records[0].Exit.Demand != 60 {
 		t.Fatalf("missing exit decision evidence: %+v %v", records, err)
 	}
 	if again, err := s.ReserveProRestock(d, "target", 0); len(again) > 0 || err == nil {

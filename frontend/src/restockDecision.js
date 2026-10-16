@@ -12,21 +12,25 @@ export function decisionReport(d = {}) {
  const age=(Date.parse(d.at)-Date.parse(s.at))/1000
  const snapshotStatus=!s.valid?'采集失败':Number.isFinite(age)&&(age>c.fresh_seconds||age < -5)?'快照过期或时间异常':'采集成功'
  const utilization=number(d.capacity)&&d.capacity>0&&number(d.used)?d.used*100/d.capacity:null
- const pressure=d.waiting>0||(utilization!==null&&utilization>=c.trigger_percent)
+ const scaled=number(c.capacity_percent)&&number(d.reported_capacity)
+ const trigger=scaled?Math.floor(d.reported_capacity*c.capacity_percent*c.trigger_percent/10000):null
+ const pressure=d.waiting>0||(utilization!==null&&(scaled?d.used>0&&d.used>=trigger:utilization>=c.trigger_percent))
  const timeTriggered=tr?tr.time_triggered:known&&c.time_enabled&&number(d.supply_minutes)&&d.supply_minutes<=d.trigger_minutes&&d.lead_minutes<c.forecast_minutes&&d.target_minutes<=c.forecast_minutes
  const concurrencyTriggered=tr?tr.concurrency_triggered:known&&c.concurrency_enabled&&pressure&&d.confirmations>=c.confirmations
  function rule(key,name,enabled,need,triggered,evidence,extra='') {
   const status=!enabled?'已关闭':!known?'未评估':!number(need)?'未记录':key==='time'&&!number(d.supply_minutes)?(d.money?.state==='idle'?'近期无消耗':'暂不可估'):need>0?'产生补货缺口':triggered?(key==='time'&&tr&&!tr.money_sizing?'条件达到 · 计算依据不足':'条件达到 · 无新增净缺口'):'未产生缺口'
   return {key,name,need:value(need,' 个'),active:known&&need>0,status,evidence,extra}
  }
+ const newCapacity=tr?.effective_new_account_capacity??tr?.new_account_capacity
+ const capacityBasis=number(c.capacity_percent)&&number(d.reported_capacity)?`原始容量 ${value(d.reported_capacity)} × ${c.capacity_percent}% = ${value(d.capacity)}。`:''
  const sizing=tr?.money_sizing
  const rules=[
   rule('time','预计供给不足',c.time_enabled,d.time_need,timeTriggered,
    `预计支撑 ${number(d.supply_minutes)?minutes(d.supply_minutes):'暂不可估'}；实际触发水位 ≤ ${minutes(d.trigger_minutes)}；补后目标 ${minutes(d.target_minutes)}。`,
    `配置水位 ${minutes(c.trigger_minutes)}，预计就绪 ${minutes(d.lead_minutes)}，${c.early?'已开启按就绪耗时提前补货':'未开启按就绪耗时提前补货'}。`+(sizing?` 目标消耗 ${value(d.money?.rate_usd)} USD/分钟 × ${value(d.target_minutes)} 分钟 − 剩余 ${value(d.money?.remaining_usd)} USD − ${sizing.pending} 个在途 × 每号 ${value(sizing.new_budget_usd)} USD = ${value(sizing.gap_usd)} USD 缺口；按每号额度向上取整，并受最大在途 ${value(c.max_inflight)} 个限制。`:'')),
   rule('concurrency','持续并发压力',c.concurrency_enabled,d.concurrency_need,concurrencyTriggered,
-   `占用 ${value(d.used)} / 容量 ${value(d.capacity)}（${utilization===null?'无有效容量':value(utilization,'%')}），触发 ≥ ${value(c.trigger_percent,'%')}；账号侧等待 ${value(d.waiting)}，有等待也参与触发；连续确认 ${value(d.confirmations)} / ${value(c.confirmations)} 次。`,
-   `补后目标利用率 ${value(c.target_percent,'%')}。`+(tr&&known?` 需求槽位按（占用 ${value(d.used)} + 等待 ${value(d.waiting)}）÷ ${value(c.target_percent,'%')} 计算，扣除预计到货时有效容量 ${tr.future_capacity} 及 ${tr.timely_inflight} 个及时在途 × 每号 ${tr.new_account_capacity} 槽位，再按每号容量向上取整。`:'')),
+   capacityBasis+`占用 ${value(d.used)} / 容量 ${value(d.capacity)}（${utilization===null?'无有效容量':value(utilization,'%')}），触发 ≥ ${scaled?value(trigger)+' 并发（'+value(c.trigger_percent,'%')+' 向下取整）':value(c.trigger_percent,'%')}；账号侧等待 ${value(d.waiting)}，有等待也参与触发；连续确认 ${value(d.confirmations)} / ${value(c.confirmations)} 次。`,
+   `补后目标利用率 ${value(c.target_percent,'%')}。`+(tr&&known?` 需求槽位按（占用 ${value(d.used)} + 等待 ${value(d.waiting)}）÷ ${value(c.target_percent,'%')} 计算，扣除预计到货时有效容量 ${tr.future_capacity} 及 ${tr.timely_inflight} 个及时在途 × 每号 ${value(newCapacity)} 有效槽位，再按每号容量向上取整。`:'')),
   rule('exit','账号退出前补货',c.exit_enabled,d.exit_need,d.exit?.pressure,
    `手动提前 ${minutes(c.exit_minutes)}；临期 ${value(d.exit?.at_risk)} 个，当前容量 ${value(d.exit?.current_capacity)}，退出后容量 ${value(d.exit?.after_capacity)}，采用需求 ${value(d.exit?.demand)}。`,
    `沿用并发触发 ${value(c.trigger_percent,'%')}、目标 ${value(c.target_percent,'%')}；退出压力确认 ${value(d.exit?.confirmations)} / ${value(c.confirmations)} 次${d.exit?.emergency?'，预测存在容量不足，确认后采用紧急冷却':''}。`+(d.exit?.demand_held?' 当前占用受容量下降限制，暂保留退出前的近期需求。':'')+(d.exit?.transient_gap?' 存在短时衔接缺口，按新增任务到位时的容量计算，避免重复开通。':'')),

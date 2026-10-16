@@ -21,7 +21,7 @@ type ExitDemand struct {
 type ExitRow struct {
 	ID               int64    `json:"id"`
 	Name             string   `json:"name"`
-	Capacity         int      `json:"capacity"`
+	Capacity         float64  `json:"capacity"`
 	DepletionMinutes *float64 `json:"depletion_minutes,omitempty"`
 	ExitMinutes      *float64 `json:"exit_minutes,omitempty"`
 	Reason           string   `json:"reason"`
@@ -31,16 +31,17 @@ type ExitRow struct {
 	WarningOnly      bool     `json:"warning_only"`
 	Known            bool     `json:"known"`
 	// Internal timeline, never reconstructed from rounded UI values.
-	exitAt *time.Time
+	exitAt           *time.Time
+	reportedCapacity int
 }
 
 type ExitPoint struct {
 	Minutes         float64 `json:"minutes"`
-	Capacity        int     `json:"capacity"`
+	Capacity        float64 `json:"capacity"`
 	Pending         int     `json:"pending"`
-	PendingCapacity int     `json:"pending_capacity"`
+	PendingCapacity float64 `json:"pending_capacity"`
 	SizingMinutes   float64 `json:"sizing_minutes"`
-	SizingCapacity  int     `json:"sizing_capacity"`
+	SizingCapacity  float64 `json:"sizing_capacity"`
 	LaterPending    int     `json:"later_pending"`
 	Need            int     `json:"need"`
 	Gap             bool    `json:"gap"`
@@ -54,8 +55,8 @@ type ExitForecast struct {
 	Demand          int         `json:"demand"`
 	ObservedDemand  int         `json:"observed_demand"`
 	DemandHeld      bool        `json:"demand_held"`
-	CurrentCapacity int         `json:"current_capacity"`
-	AfterCapacity   int         `json:"after_capacity"`
+	CurrentCapacity float64     `json:"current_capacity"`
+	AfterCapacity   float64     `json:"after_capacity"`
 	AtRisk          int         `json:"at_risk"`
 	Unknown         int         `json:"unknown"`
 	Pressure        bool        `json:"pressure"`
@@ -111,7 +112,7 @@ func ObserveExitDemand(c Config, current, previous Snapshot, now time.Time) *Exi
 		return d
 	}
 	low := 0
-	if capacity > 0 && waiting == 0 && u*100 < capacity*c.TriggerPercent {
+	if capacity > 0 && waiting == 0 && (u == 0 || u < c.ConcurrencyTrigger(capacity)) {
 		low = p.LowSamples + 1
 	}
 	if low >= 2 {
@@ -121,7 +122,7 @@ func ObserveExitDemand(c Config, current, previous Snapshot, now time.Time) *Exi
 }
 
 func exitRow(c Config, a Account, now time.Time) ExitRow {
-	r := ExitRow{ID: a.ID, Name: a.Name, Capacity: a.Capacity, Reason: "额度样本不足", Threshold: a.QuotaMergeThreshold}
+	r := ExitRow{ID: a.ID, Name: a.Name, Capacity: c.EffectiveCapacity(a.Capacity), reportedCapacity: a.Capacity, Reason: "额度样本不足", Threshold: a.QuotaMergeThreshold}
 	setExit := func(at time.Time, reason string, warning bool) {
 		if r.exitAt == nil || at.Before(*r.exitAt) || (at.Equal(*r.exitAt) && !warning) {
 			r.exitAt = &at
@@ -273,8 +274,9 @@ func exitRow(c Config, a Account, now time.Time) ExitRow {
 func ForecastExits(c Config, s Snapshot, tasks []Task, newSlots int, lead float64, now time.Time) ExitForecast {
 	f := ExitForecast{Rows: []ExitRow{}, Points: []ExitPoint{}, Valid: exitSnapshotValid(c, s, now), Complete: true, Confirmations: s.ExitConfirmations}
 	u, capacity, waiting := exitLoad(s, now)
-	f.CurrentCapacity = capacity
-	f.AfterCapacity = capacity
+	f.CurrentCapacity = c.EffectiveCapacity(capacity)
+	f.AfterCapacity = f.CurrentCapacity
+	afterCapacity := capacity
 	f.Demand = u + waiting
 	f.ObservedDemand = f.Demand
 	if p := s.ExitDemand; p != nil && p.Version == c.Version && p.Held && !p.At.After(now) && now.Sub(p.At) <= time.Duration(c.ExitDemandHoldSeconds)*time.Second {
@@ -304,7 +306,8 @@ func ForecastExits(c Config, s Snapshot, tasks []Task, newSlots int, lead float6
 		}
 		if r.Risk {
 			f.AtRisk++
-			f.AfterCapacity -= r.Capacity
+			afterCapacity -= r.reportedCapacity
+			f.AfterCapacity = c.EffectiveCapacity(afterCapacity)
 			events = append(events, maxExitTime(now, *r.exitAt))
 		}
 		if r.ExitMinutes != nil && (f.EarliestMinutes == nil || *r.ExitMinutes < *f.EarliestMinutes) {
@@ -321,7 +324,7 @@ func ForecastExits(c Config, s Snapshot, tasks []Task, newSlots int, lead float6
 		certain := false
 		for _, r := range f.Rows {
 			if r.Risk && !r.exitAt.After(at) {
-				v -= r.Capacity
+				v -= r.reportedCapacity
 				certain = certain || !r.WarningOnly
 			}
 		}
@@ -354,17 +357,17 @@ func ForecastExits(c Config, s Snapshot, tasks []Task, newSlots int, lead float6
 		}
 		base, certain := baseAt(at)
 		pending, slots := pendingAt(at)
-		point := ExitPoint{Minutes: math.Max(0, at.Sub(now).Minutes()), Capacity: base, Pending: pending, PendingCapacity: slots}
+		point := ExitPoint{Minutes: math.Max(0, at.Sub(now).Minutes()), Capacity: c.EffectiveCapacity(base), Pending: pending, PendingCapacity: c.EffectiveCapacity(slots)}
 		sizingAt := maxExitTime(at, arrival)
 		sizingBase, _ := baseAt(sizingAt)
 		later, laterSlots := pendingAt(sizingAt)
 		point.SizingMinutes = sizingAt.Sub(now).Minutes()
-		point.SizingCapacity = sizingBase + laterSlots
+		point.SizingCapacity = c.EffectiveCapacity(sizingBase + laterSlots)
 		point.LaterPending = later - pending
-		if f.Demand > 0 && float64(f.Demand)*100 >= float64(base*c.TriggerPercent) {
+		if f.Demand > 0 && f.Demand >= c.ConcurrencyTrigger(base) {
 			f.Pressure = true
-			point.Need = max(0, int(math.Ceil((float64(f.Demand)*100/float64(max(1, c.TargetPercent))-float64(point.SizingCapacity))/float64(newSlots))))
-			point.Gap = f.Demand > base+slots
+			point.Need = max(0, int(math.Ceil((float64(f.Demand)*100/float64(max(1, c.TargetPercent))-point.SizingCapacity)/c.EffectiveCapacity(newSlots))))
+			point.Gap = float64(f.Demand) > c.EffectiveCapacity(base+slots)
 			f.TransientGap = f.TransientGap || point.Gap
 			f.Emergency = f.Emergency || (point.Gap && (certain || f.DemandHeld))
 			f.Need = max(f.Need, point.Need)

@@ -504,12 +504,32 @@ func TestAccountLifecyclePagesStayBoundedAndExportRemainsComplete(t *testing.T) 
 	if !payload.OK || len(payload.Data.Events) != 10 || !payload.Data.HasMore || payload.Data.NextCursor == "" {
 		t.Fatalf("unexpected account log page: %+v", payload)
 	}
-	defaultReq := httptest.NewRequest(http.MethodGet, "/api/free-accounts/"+account.ID+"/events", nil)
-	defaultReq.SetPathValue("id", account.ID)
-	defaultRec := httptest.NewRecorder()
-	server.listFreeAccountEvents(defaultRec, defaultReq)
-	if err := json.Unmarshal(defaultRec.Body.Bytes(), &payload); err != nil || len(payload.Data.Events) != 50 {
-		t.Fatalf("default page is not bounded: count=%d err=%v", len(payload.Data.Events), err)
+	// Omitted limits follow the persisted global page size, including the
+	// installation default of 10. Explicit limits still override that setting.
+	for _, size := range []int{st.Settings().DefaultPageSize, 50, 100, 500} {
+		settings := st.Settings()
+		settings.DefaultPageSize = size
+		if err := st.SaveSettings(settings); err != nil {
+			t.Fatal(err)
+		}
+		for _, explicit := range []bool{false, true} {
+			url := "/api/free-accounts/" + account.ID + "/events"
+			want := min(size, len(events))
+			if explicit {
+				url += "?limit=10"
+				want = 10
+			}
+			pageReq := httptest.NewRequest(http.MethodGet, url, nil)
+			pageReq.SetPathValue("id", account.ID)
+			pageRec := httptest.NewRecorder()
+			server.listFreeAccountEvents(pageRec, pageReq)
+			if err := json.Unmarshal(pageRec.Body.Bytes(), &payload); err != nil || pageRec.Code != http.StatusOK || !payload.OK || len(payload.Data.Events) != want || payload.Data.HasMore != (want < len(events)) {
+				t.Fatalf("global page size %d explicit=%t: want=%d got=%d hasMore=%t status=%d err=%v", size, explicit, want, len(payload.Data.Events), payload.Data.HasMore, pageRec.Code, err)
+			}
+			if payload.Data.HasMore && payload.Data.NextCursor == "" {
+				t.Fatal("bounded page lost its continuation cursor")
+			}
+		}
 	}
 	for _, query := range []string{"limit=501", "limit=-1", "limit=abc", "cursor=invalid"} {
 		badReq := httptest.NewRequest(http.MethodGet, "/api/free-accounts/"+account.ID+"/events?"+query, nil)

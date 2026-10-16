@@ -8,6 +8,7 @@ import (
 func fixture() (Config, Snapshot, time.Time) {
 	n := time.Now()
 	c := DefaultConfig()
+	c.CapacityPercent = 100 // Legacy scenarios exercise the unscaled policy explicitly.
 	c.Enabled = true
 	c.Mode = "auto"
 	s := Snapshot{ID: "s", At: n, Valid: true, LoadValid: true, GroupID: 1, Binding: "pool", NewPlan: "pro20", Accounts: []Account{{ID: 1, Plan: "pro20", Ready: true, Capacity: 20, Used: 19, Windows: []Window{{Seconds: 18000, ResetAt: n.Add(time.Hour).Unix(), Used: 90, Rate: 2, Samples: 3, At: n}}}}}
@@ -149,6 +150,7 @@ func TestArrivalExpiryAndLimits(t *testing.T) {
 }
 func TestConfigValidation(t *testing.T) {
 	c := DefaultConfig()
+	c.CapacityPercent = 100 // Legacy scenarios exercise the unscaled policy explicitly.
 	if c.Validate() != nil {
 		t.Fatal(c.Validate())
 	}
