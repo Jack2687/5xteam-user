@@ -28,10 +28,10 @@ func TestDecisionTracePreservesSizingEvidence(t *testing.T) {
 	if tr.MoneySizing == nil || tr.MoneySizing.Pending != 1 || tr.MoneySizing.NewBudgetUSD != 100 || tr.MoneySizing.GapUSD != -80 {
 		t.Fatalf("money sizing: %+v", tr.MoneySizing)
 	}
-	if d.TimeNeed != 0 || d.ConcurrencyNeed != 5 || tr.NetNeed != 5 || *tr.AfterMinimum != 5 || *tr.HardLimit != 2 || d.Suggested != 2 {
+	if d.TimeNeed != 0 || d.ConcurrencyNeed != 5 || tr.NetNeed != 5 || *tr.AfterMinimum != 5 || *tr.HardLimit != 2 || d.Suggested != 0 || d.BatchWait == nil {
 		t.Fatalf("quantity/cap trace does not match decision: %+v", d)
 	}
-	if len(tr.Caps) != 5 || tr.Caps[1].Remaining != 3 || tr.EvaluationReason != d.Reason || tr.StopStage != "complete" {
+	if len(tr.Caps) != 5 || tr.Caps[1].Remaining != 3 || tr.EvaluationReason != d.Reason || tr.StopStage != "batch" {
 		t.Fatalf("missing limit explanation: %+v", tr)
 	}
 	// Execution errors may replace Reason, but cannot replace the rule result.

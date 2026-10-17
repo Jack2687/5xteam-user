@@ -93,7 +93,7 @@ func (s *Server) startProRestockMonitor(ctx context.Context) {
 }
 func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p model.ProSettings, password string) (restock.Snapshot, error) {
 	now := time.Now()
-	snap := restock.Snapshot{ID: randomRegistrationID(), At: now, GroupID: c.GroupID, Binding: restockBinding(p), Accounts: []restock.Account{}}
+	snap := restock.Snapshot{ID: randomRegistrationID(), At: now, CollectionStartedAt: now, GroupID: c.GroupID, Binding: restockBinding(p), Accounts: []restock.Account{}}
 	if e := validateRestockTarget(c, p); e != nil {
 		return snap, e
 	}

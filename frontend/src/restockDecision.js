@@ -50,6 +50,7 @@ export function decisionReport(d = {}) {
  if(tr?.hard_limit!=null)steps.push(`本轮硬上限 ${Math.max(0,tr.hard_limit)} 个；最终建议 ${value(d.suggested)} 个${d.no_restock_active?'（每日禁补已覆盖建议）':''}。`)
  steps.push(`实际新增预留 ${value(d.started)} 个。预留后仍需经过登录、开通、推送和入组核验，未就绪前不计为可用账号。`)
  if(d.started>0&&d.started<d.suggested)steps.push('实际预留少于建议数量；执行时还会复核可领取账号和各项上限。具体限制以本条执行结果为准。')
+ if(d.batch_wait?.message)steps.push(d.batch_wait.message)
  const protections=[
   {name:'运行方式',text:`${c.enabled?'总开关开启':'总开关关闭'} · ${c.mode==='auto'?'自动执行':c.mode==='observe'?'观察模式':'模式未记录'}${d.no_restock_active?' · 每日禁补生效':''}`},
   {name:'采集情况',text:`${snapshotStatus} · 并发采集${s.load_valid?'完整':'不可用'}${s.error?' · '+s.error:''}`},

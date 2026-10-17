@@ -58,7 +58,7 @@ func (s *Store) SaveProRestockConfig(c restock.Config) (restock.Config, error) {
 	return c, err
 }
 func (s *Store) ProRestockTasks() ([]restock.Task, error) {
-	return s.proRestockTasksWhere("status NOT IN ('ready','failed','cancelled') OR created_at>? OR EXISTS(SELECT 1 FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id)", formatTime(time.Now().Add(-48*time.Hour)))
+	return s.proRestockTasksWhere("status NOT IN ('ready','failed','cancelled') OR created_at>?1 OR json_extract(payload,'$.updated_at')>?1 OR EXISTS(SELECT 1 FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id)", formatTime(time.Now().Add(-48*time.Hour)))
 }
 func (s *Store) ProRestockDecisionTasks(id string) ([]restock.Task, error) {
 	return s.proRestockTasksWhere("json_extract(payload,'$.decision_id')=?", id)
@@ -188,6 +188,23 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	var active int
 	if err = tx.QueryRow(`SELECT count(*) FROM pro_restock_tasks WHERE status NOT IN ('ready','failed','cancelled')`).Scan(&active); err != nil {
 		return nil, err
+	}
+	if active > 0 || existingInflight > 0 {
+		return nil, errors.New("上一批仍有在途任务，全部结束并刷新监控后才能新增")
+	}
+	// Recheck the refresh barrier under the reservation transaction, including
+	// confirmed failures and cancellations. Restart or an obsolete decision
+	// must not bypass the final monitoring round.
+	var completedJSON string
+	if err = tx.QueryRow(`SELECT coalesce(json_group_array(json(payload)),'[]') FROM pro_restock_tasks WHERE status IN ('ready','failed','cancelled') AND json_extract(payload,'$.binding')=? AND json_extract(payload,'$.group_id')=?`, d.Snapshot.Binding, d.Snapshot.GroupID).Scan(&completedJSON); err != nil {
+		return nil, err
+	}
+	var completed []restock.Task
+	if err = json.Unmarshal([]byte(completedJSON), &completed); err != nil {
+		return nil, err
+	}
+	if wait := restock.WaitForBatch(d.Snapshot, completed); wait != nil {
+		return nil, errors.New(wait.Message)
 	}
 	persisted, err := replacementTasks(tx)
 	if err != nil {

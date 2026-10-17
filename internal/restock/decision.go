@@ -56,6 +56,11 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	// Keep forecasts, demand and collection errors visible while suppressing
 	// every trigger, including startup, replacement and emergency demand.
 	defer func() {
+		if wait := WaitForBatch(s, tasks); wait != nil {
+			d.BatchWait = wait
+			d.Suggested, d.Reason = 0, wait.Message
+			d.Trace.StopStage = "batch"
+		}
 		if reason := c.NoRestockReason(now); reason != "" {
 			if !d.DemandKnown && d.Reason != "" {
 				d.Warnings = append(d.Warnings, d.Reason)

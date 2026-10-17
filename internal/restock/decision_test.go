@@ -64,8 +64,8 @@ func TestInflightAndCooldown(t *testing.T) {
 	}
 	task.ETA = nil
 	d = Evaluate(c, s, []Task{task}, Limits{}, 2, 20, 2, n)
-	if d.Suggested != 1 {
-		t.Fatal("unknown arrival must not promise capacity")
+	if d.Suggested != 0 || d.ConcurrencyNeed != 1 || d.BatchWait == nil {
+		t.Fatal("unknown arrival must retain demand but block the next batch")
 	}
 	last := n.Add(-10 * time.Second)
 	d = Evaluate(c, s, nil, Limits{LastBatch: &last}, 2, 20, 2, n)

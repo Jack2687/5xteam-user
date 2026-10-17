@@ -51,7 +51,7 @@ func TestProRestockScheduleCancelsPendingButTracksStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = st.UpdateProAccount(first.Email, func(p *model.MailAccountProfile) {
-		p.ProAuto = model.ProAutoState{ID: "already-started", Status: "waiting_quota"}
+		p.ProAuto = model.ProAutoState{ID: "already-started", Status: "waiting_quota", StageTimes: map[string]time.Time{"push:completed": now}}
 		p.PushStatus, p.PushProvider, p.Sub2AccountID = "completed", "sub2", 88
 	}); err != nil {
 		t.Fatal(err)

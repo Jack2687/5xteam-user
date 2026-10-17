@@ -34,9 +34,20 @@ func TestRestockOverlapReservationAcrossRounds(t *testing.T) {
 	tasks := []restock.Task{}
 	for round := 0; round < 4; round++ {
 		at := now.Add(time.Duration(round) * time.Minute)
+		if round == 2 {
+			readyAt := at.Add(-time.Second)
+			tasks[0].Status, tasks[0].AccountID, tasks[0].ETA, tasks[0].ReadyAt = "ready", 10, nil, &readyAt
+			if err = s.SaveProRestockTask(tasks[0]); err != nil {
+				t.Fatal(err)
+			}
+			snap.Accounts = append(snap.Accounts, restock.Account{ID: 10, Ready: true, Capacity: 50, Plan: snap.NewPlan})
+		}
 		snap.At = at
 		for i := range snap.Accounts {
 			snap.Accounts[i].Money = overlapMoney(at, 96, 1)
+			if snap.Accounts[i].ID >= 10 {
+				snap.Accounts[i].Money = overlapMoney(at, 1, 0)
+			}
 		}
 		limits, e := s.ProRestockLimits(at)
 		if e != nil {
@@ -45,14 +56,14 @@ func TestRestockOverlapReservationAcrossRounds(t *testing.T) {
 		d := restock.Evaluate(c, snap, tasks, limits, c.Confirmations, 50, 2, at)
 		d.ID = fmt.Sprintf("overlap-%d", round)
 		want := 0
-		if round < 2 {
+		if round == 0 || round == 2 {
 			want = 1
 		}
 		if d.Suggested != want {
 			t.Fatalf("round %d: want %d, got %+v", round, want, d)
 		}
 		if d.Suggested > 0 {
-			added, e := s.ReserveProRestock(d, "", len(tasks))
+			added, e := s.ReserveProRestock(d, "", d.Inflight)
 			if e != nil || len(added) != want {
 				t.Fatal(added, e)
 			}
@@ -81,7 +92,9 @@ func TestRestockOverlapReservationAcrossRounds(t *testing.T) {
 		if err = s.SaveProRestockTask(tasks[i]); err != nil {
 			t.Fatal(err)
 		}
-		snap.Accounts = append(snap.Accounts, restock.Account{ID: int64(10 + i), Ready: true, Capacity: 50, Plan: snap.NewPlan, Money: overlapMoney(at, 1, 0)})
+		if i > 0 {
+			snap.Accounts = append(snap.Accounts, restock.Account{ID: int64(10 + i), Ready: true, Capacity: 50, Plan: snap.NewPlan, Money: overlapMoney(at, 1, 0)})
+		}
 	}
 	tasks, err = s.ProRestockTasks()
 	if err != nil {

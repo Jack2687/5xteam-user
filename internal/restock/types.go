@@ -169,18 +169,19 @@ type Account struct {
 	Windows             []Window      `json:"windows"`
 }
 type Snapshot struct {
-	ExitConfirmations int         `json:"exit_confirmations"`
-	ExitDemand        *ExitDemand `json:"exit_demand,omitempty"`
-	NewPlan           string      `json:"new_plan"`
-	LifetimeMinutes   int         `json:"lifetime_minutes"`
-	ID                string      `json:"id"`
-	At                time.Time   `json:"at"`
-	GroupID           int64       `json:"group_id"`
-	Binding           string      `json:"binding"`
-	Valid             bool        `json:"valid"`
-	LoadValid         bool        `json:"load_valid"`
-	Error             string      `json:"error"`
-	Accounts          []Account   `json:"accounts"`
+	CollectionStartedAt time.Time   `json:"collection_started_at,omitempty"`
+	ExitConfirmations   int         `json:"exit_confirmations"`
+	ExitDemand          *ExitDemand `json:"exit_demand,omitempty"`
+	NewPlan             string      `json:"new_plan"`
+	LifetimeMinutes     int         `json:"lifetime_minutes"`
+	ID                  string      `json:"id"`
+	At                  time.Time   `json:"at"`
+	GroupID             int64       `json:"group_id"`
+	Binding             string      `json:"binding"`
+	Valid               bool        `json:"valid"`
+	LoadValid           bool        `json:"load_valid"`
+	Error               string      `json:"error"`
+	Accounts            []Account   `json:"accounts"`
 }
 type Task struct {
 	Capacity          int                  `json:"capacity,omitempty"`
@@ -229,6 +230,7 @@ type Limits struct {
 	LastBatch *time.Time `json:"last_batch,omitempty"`
 }
 type Decision struct {
+	BatchWait        *BatchWait      `json:"batch_wait,omitempty"`
 	Exit             *ExitForecast   `json:"exit,omitempty"`
 	ExitNeed         int             `json:"exit_need"`
 	Trace            *DecisionTrace  `json:"trace,omitempty"`

@@ -53,7 +53,7 @@ func TestForceMergeCoverageAndHardLimits(t *testing.T) {
 	for _, status := range []string{"reserved", "running", "unknown", "attention", "verifying"} {
 		tasks := []Task{{ID: "one", Status: status, ForceMergeSource: "1", Binding: s.Binding, GroupID: s.GroupID}}
 		d := Evaluate(c, s, tasks, Limits{}, 0, 20, 5, now)
-		if d.ForceMergeNeed != 1 || d.ForceMerge.Pending != 1 || d.Suggested != 1 {
+		if d.ForceMergeNeed != 1 || d.ForceMerge.Pending != 1 || d.Suggested != 0 || d.BatchWait == nil {
 			t.Fatal(status, d)
 		}
 	}

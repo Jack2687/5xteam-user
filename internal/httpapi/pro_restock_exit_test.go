@@ -40,7 +40,7 @@ func TestRestockExitPolicyUsesActualThreshold(t *testing.T) {
 	}
 }
 
-func TestProRestockExitReservationDispatchAndDrop(t *testing.T) {
+func TestProRestockExitReservationDispatchDespiteDemandDrop(t *testing.T) {
 	for _, cancelDemand := range []bool{false, true} {
 		t.Run(map[bool]string{false: "dispatch", true: "demand_drop"}[cancelDemand], func(t *testing.T) {
 			s, st, email := gptPayFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected payment") })
@@ -125,16 +125,9 @@ func TestProRestockExitReservationDispatchAndDrop(t *testing.T) {
 			if err = s.tickProRestock(context.Background(), true); err != nil {
 				t.Fatal(err)
 			}
-			if cancelDemand {
-				tasks, _ = st.ProRestockTasks()
-				if tasks[0].Status != "cancelled" || entered.Load() != 0 {
-					t.Fatal("lower demand failed to cancel unsubmitted task", tasks)
-				}
-			} else {
-				waitProAutoFinished(t, s, email)
-				if entered.Load() != 1 {
-					t.Fatal("future-only pressure did not dispatch the full automation workflow")
-				}
+			waitProAutoFinished(t, s, email)
+			if entered.Load() != 1 {
+				t.Fatal("committed batch stopped dispatching after demand changed")
 			}
 			records, _ := st.ProRestockDecisions(10, 0)
 			found := false

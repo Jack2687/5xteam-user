@@ -97,7 +97,7 @@ func TestProRestockDispatchRejectsExpiredSnapshot(t *testing.T) {
 	if err != nil || len(tasks) != 1 {
 		t.Fatalf("reserve: %v %v", tasks, err)
 	}
-	s.dispatchProRestock(context.Background(), c, p, snap, false)
+	s.dispatchProRestock(context.Background(), c, p, snap)
 	tasks, err = st.ProRestockTasks()
 	if err != nil || len(tasks) != 1 || tasks[0].Status != "reserved" || tasks[0].SubmittedAt != nil {
 		t.Fatalf("expired snapshot dispatched a payment intent: %+v %v", tasks, err)
