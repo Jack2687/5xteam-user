@@ -36,14 +36,14 @@ let report=financeReport(data,history,'day','2026-10-16')
 assert.equal(report.summary.r,12);assert.equal(report.summary.rechargeUSD,'10.00');assert.equal(report.summary.usdt,'0.00');assert.equal(report.baseline,100)
 assert.equal(report.events.filter(e=>e.kind==='reversal').length,1)
 assert.equal(report.summary.earnings.costR,'104.2520')
-assert.equal(report.summary.earnings.profitR,'-92.2520')
+assert.equal(report.summary.earnings.profitR,null,'legacy increments with unknown dates must not imply complete period profit')
 const openDay=financeReport(data,history,'day','2026-10-15')
 assert.equal(openDay.summary.earnings.openingR,'3.3500')
-assert.equal(openDay.summary.earnings.profitR,'4.6500')
+assert.equal(openDay.summary.earnings.profitR,null)
 for(const period of ['week','month']){
  const scoped=financeReport(data,history,period,'2026-10-16')
  assert.equal(scoped.summary.earnings.costR,'107.6020')
- assert.equal(scoped.summary.earnings.profitR,'-87.6020','undated opening and recharge costs belong to all-time only')
+ assert.equal(scoped.summary.earnings.profitR,null,'unknown historical usage prevents exact period profit')
 }
 assert.equal(eventAmountR({kind:'opening',amount:'0.50',currency:'USDT'}),'3.3500')
 assert.equal(eventAmountR({kind:'reversal',usd:'5.56'}),'37.2520')
@@ -75,3 +75,14 @@ const snapshot={...data,at:'2026-10-16T00:05:00+08:00'}
 assert.equal(financeReport(data,{...history,snapshots:[snapshot]},'day','2026-10-16').lossChange,null,'one observation is not a period loss')
 assert.equal(financeReport(data,{...history,snapshots:[snapshot,{...snapshot,at:'2026-10-16T23:59:00+08:00',balance:{data:{abroadList:[{currency:'USD',balance:'2270.15'}]}}}]},'day','2026-10-16').lossChange,'3.00')
 console.log('Passed: all three costs and net profit in R, day/week/month/all-time totals, missing ledger and consumption, signed adjustments, no cash-loss double deduction, exact fee arithmetic, duplicate transactions/cards/accounts, closed and pending cards, missing FX, Beijing day/week/month, undated baselines, deleted accounts and snapshot loss changes')
+
+const daily={...history,consumption:[{id:'recorded',email:'user@example.com',total:120,daily_checked_at:'2026-10-17T01:00:00+08:00'}],usage_days:[{id:'day1',email:'user@example.com',day:'2026-10-15',amount:90,source:'sub2_daily'},{id:'day2',email:'user@example.com',day:'2026-10-16',amount:30,source:'sub2_daily'}]}
+for(const mode of ['day','week','month','all']){
+ const corrected=financeReport(data,daily,mode,'2026-10-16')
+ assert.equal(corrected.summary.r,mode==='day'?30:120)
+ assert.equal(corrected.baseline,0)
+ assert.equal(corrected.periodIncomplete,false)
+ assert.notEqual(corrected.summary.earnings.profitR,null)
+}
+assert.equal(financeReport(data,{...daily,usage_days:[...daily.usage_days,daily.usage_days[0]]},'week','2026-10-16').summary.r,120,'duplicate daily snapshots must not inflate revenue')
+assert.equal(total.earnings.costUSD,'36.56')

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,8 +36,9 @@ func Encrypt(param []byte, secret string) (string, error) {
 }
 
 type APIError struct {
-	Code    string
-	Message string
+	Code         string
+	Message      string
+	authRejected bool
 }
 
 func (e *APIError) Error() string { return "EJH " + e.Code + ": " + e.Message }
@@ -92,6 +94,11 @@ func (c *Client) post(ctx context.Context, address, token string, body any) (jso
 		if len(code) > 6 || strings.IndexFunc(code, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
 			return nil, fmt.Errorf("卡台业务代码格式异常，结果待核对")
 		}
+		// Never expose arbitrary supplier messages (which may contain card data).
+		// 000009 is generic; only exact authentication errors identify a bad token.
+		if code == "000009" && rejectedTokenMessage(env.Msg) {
+			return nil, &APIError{Code: code, Message: "认证令牌失效，请重新认证", authRejected: true}
+		}
 		return nil, &APIError{Code: code, Message: knownMessage(code)}
 	}
 	data := bytes.TrimSpace(env.Data)
@@ -113,17 +120,46 @@ func (c *Client) post(ctx context.Context, address, token string, body any) (jso
 	return json.RawMessage(data), nil
 }
 func knownMessage(code string) string {
+	if code == "000009" {
+		return "请求失败，原因未明确，请核对卡台结果"
+	}
 	m := map[string]string{"000007": "验签失败", "000008": "参数缺失", "100004": "开卡余额不足", "100012": "不支持此结算币种", "100018": "卡类型权限未开通", "100022": "开卡过于频繁，请稍后核对", "100023": "开卡超过最大金额", "100024": "开卡金额过小", "300003": "存在未清算授权，无法销卡", "800003": "账户可用余额不足"}
 	if s := m[code]; s != "" {
 		return s
 	}
 	return "供应商返回业务错误，请凭响应码核查（不输出敏感原始报文）"
 }
+func rejectedTokenMessage(message string) bool {
+	switch strings.ToLower(strings.TrimSpace(message)) {
+	case "token不正确", "token不能为空", "token已过期", "token过期", "token无效", "token失效", "token已失效":
+		return true
+	}
+	return false
+}
+func tokenScope(cfg Settings, secret string) string {
+	sum := sha256.Sum256([]byte(cfg.URL + "|" + cfg.AppKey + "|" + secret))
+	return fmt.Sprintf("%x", sum)
+}
+func (c *Client) invalidateToken(cfg Settings, secret, rejected string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A late failure must not discard a newer token or another account's token.
+	if c.scope == tokenScope(cfg, secret) && c.token == rejected {
+		c.token = ""
+		c.expires = time.Time{}
+	}
+}
+func readOnlyMethod(method string) bool {
+	switch method {
+	case "account.balance.info", "card.balance.info", "card.query.info", "card.list.info", "card.trade.info":
+		return true
+	}
+	return false
+}
 func (c *Client) Token(ctx context.Context, cfg Settings, secret string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	sum := sha256.Sum256([]byte(cfg.URL + "|" + cfg.AppKey + "|" + secret))
-	scope := fmt.Sprintf("%x", sum)
+	scope := tokenScope(cfg, secret)
 	if c.scope == scope && c.token != "" && time.Now().Before(c.expires) {
 		return c.token, nil
 	}
@@ -169,6 +205,22 @@ func (c *Client) Call(ctx context.Context, cfg Settings, secret, method string, 
 		return e
 	}
 	raw, e = c.post(ctx, cfg.URL+"/api/v3/card", token, map[string]string{"appKey": cfg.AppKey, "param": encrypted})
+	var authError *APIError
+	if errors.As(e, &authError) && authError.authRejected {
+		c.invalidateToken(cfg, secret, token)
+		if readOnlyMethod(method) {
+			// Only queries are retried, once. Mutations and ambiguous failures
+			// remain subject to the existing operation reconciliation workflow.
+			token, e = c.Token(ctx, cfg, secret)
+			if e != nil {
+				return e
+			}
+			raw, e = c.post(ctx, cfg.URL+"/api/v3/card", token, map[string]string{"appKey": cfg.AppKey, "param": encrypted})
+			if errors.As(e, &authError) && authError.authRejected {
+				c.invalidateToken(cfg, secret, token)
+			}
+		}
+	}
 	if e != nil {
 		return e
 	}

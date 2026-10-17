@@ -96,6 +96,7 @@ function revealInvalid(event) {
 const settingsReady = ref(false)
 const busy = ref(false), message = reactive({ text: '', type: '' }), account = ref(null)
 const rows = ref([]), page = ref(1), pageSize = ref(props.defaultPageSize), total = ref(0)
+const cardFilter = ref('available')
 const queryIDs = ref(''), queryRows = ref([]), emailFilter = ref('')
 const editor = ref(null), rawCard = ref('')
 let disposed = false, requestID = 0
@@ -114,6 +115,7 @@ async function action(fn) { if (busy.value) return; busy.value = true; notify();
 async function load() {
   const id = ++requestID
   const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize.value) })
+  if (props.mode === 'cards' && cardFilter.value === 'available') params.set('enabled', 'true')
   if (props.mode === 'orders' && emailFilter.value.trim()) params.set('email', emailFilter.value.trim())
   const result = await api(`/api/gptpay/${props.mode === 'cards' ? 'cards' : 'orders'}?${params}`)
   if (disposed || id !== requestID) return
@@ -123,6 +125,13 @@ async function load() {
 }
 function changePage(v) { page.value = v; action(load) }
 function changeSize(v) { pageSize.value = v; page.value = 1; action(load) }
+function changeCardFilter(value) {
+  if (busy.value || cardFilter.value === value) return
+  action(async () => {
+    cardFilter.value = value; page.value = 1; rows.value = []; total.value = 0
+    await load()
+  })
+}
 async function saveSettings() {
   if (!settingsReady.value || catalogSelectionInvalid.value) return
   await action(async () => {
@@ -269,8 +278,9 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
     <template v-else-if="mode === 'cards'">
       <section class="panel">
         <div class="panel-title"><div><span>PAYMENT CARDS</span><h2>银行卡信息</h2><p>卡片须启用、未过期且有剩余名额；已绑定 EJH 的卡还须卡台状态可用。</p></div><button class="btn primary" :disabled="busy" @click="edit()">添加银行卡</button></div>
+        <div class="card-filter" role="group" aria-label="银行卡筛选"><button v-for="[value,label] in [['available','可开通'],['all','全部']]" :key="value" type="button" :disabled="busy" :class="{active:cardFilter===value}" :aria-pressed="cardFilter===value" @click="changeCardFilter(value)">{{label}}</button><span>{{busy?'正在读取…':`共 ${total} 张`}}</span></div>
         <div class="table-shell"><table><thead><tr><th>名称</th><th>类型</th><th>银行卡</th><th>已开通账号</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>
-          <tr v-if="!rows.length"><td colspan="7" class="empty-cell">暂无银行卡</td></tr>
+          <tr v-if="!rows.length"><td colspan="7" class="empty-cell">{{busy?'正在读取银行卡…':cardFilter==='available'?'暂无可开通银行卡，可切换“全部”查看':'暂无银行卡'}}</td></tr>
           <tr v-for="card in rows" :key="card.id"><td>{{ card.name }}</td><td>{{card.card_type==='ejh'?'EJH':'其他'}}</td><td>•••• {{ card.last4 }}</td><td><CardAccountPreview :rows="associated(card)"><button class="btn ghost compact" @click="cardDetail=card">{{card.opened_accounts||0}} / {{card.account_limit||3}}</button></CardAccountPreview><small class="order-id">{{ card.max_accounts ? '单独设置' : card.card_type==='ejh'?'EJH 默认':'沿用全局' }}</small><small class="order-id">在途 {{card.pending_accounts||0}} · 剩余 {{card.remaining_accounts??0}}</small><CardOccupancy v-if="card.card_type==='ejh'" :card="card" @updated="load" /></td><td>{{ card.exp_year }}-{{ String(card.exp_month).padStart(2, '0') }}</td><td><PaymentCardStatus :card="card" /></td><td><div class="row-actions"><button class="btn ghost compact" :disabled="busy || isClosedCard(card)" @click="toggle(card)">{{ isClosedCard(card) ? '已销卡' : card.enabled ? '禁用' : '启用' }}</button><button class="btn ghost compact" :disabled="busy" @click="edit(card)">编辑</button><button class="btn ghost compact danger-text" :disabled="busy" @click="remove(card)">删除</button></div></td></tr>
         </tbody></table></div>
         <Pagination :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
@@ -351,4 +361,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 .config-runtime{border:1px solid var(--line);border-radius:12px;background:var(--surface)}.config-runtime>summary{display:flex;align-items:center;gap:10px;padding:18px 22px;cursor:pointer;font-size:13px}.config-runtime>summary>span{flex:1}.config-runtime[open]>summary>svg:last-child{transform:rotate(90deg)}.config-runtime :deep(.pro-schedule-panel){box-shadow:none;border-top:1px solid var(--line);border-radius:0 0 12px 12px}
 @media(max-width:1000px){.config-workspace{grid-template-columns:190px minmax(0,1fr)}.config-body{padding:24px}.config-body .settings-fields{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:720px){.config-workspace{display:block}.config-heading{padding:20px;align-items:flex-start;flex-direction:column}.config-nav{border-right:0;border-bottom:1px solid var(--line);display:flex;gap:6px;overflow-x:auto;padding:10px}.config-nav>button{width:auto;min-width:130px;margin:0;flex-shrink:0;padding:10px}.config-nav small,.config-nav>button>svg:last-child,.config-nav-note{display:none}.config-body{padding:20px}.config-savebar{padding:14px;align-items:flex-end}.config-savebar>span{font-size:11px}.config-body .toggle-row{gap:12px}}
+</style>
+<style scoped>
+.card-filter{display:flex;gap:4px;align-items:center;padding:0 20px 16px}.card-filter button{padding:8px 18px;border:1px solid var(--line);border-radius:7px;font-size:12px;color:var(--muted);background:var(--surface)}.card-filter button.active{background:var(--green-bg);color:var(--green-strong);border-color:var(--green-strong)}.card-filter button:disabled{opacity:.6}.card-filter>span{font-size:11px;color:var(--muted);margin-left:10px}
 </style>

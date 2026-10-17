@@ -7,12 +7,13 @@ import { summarizeCardBalancesUSD } from '../ejh-card-funding'
 import { summarizeInFlightPayments } from '../ejh-account-amounts'
 import { formatTime } from '../utils'
 import EJHFinanceTotals from './EJHFinanceTotals.vue'
+import EJHReconciliationBar from './EJHReconciliationBar.vue'
 
 const props = defineProps({ data: { type: Object, required: true }, busy: Boolean, ready: Boolean, enabled: Boolean, progress: { type: Object, default: null }, failures: { type: Array, default: () => [] } })
 const emit = defineEmits(['refresh', 'ledger-updated'])
 const balances = computed(() => summarizeCardBalances(props.data.cards))
 const usd = computed(() => summarizeCardBalancesUSD(props.data.cards, props.data.operations))
-const inFlight = computed(() => summarizeInFlightPayments(props.data.cases, props.data.cards, props.data.operations))
+const inFlight = computed(() => summarizeInFlightPayments(props.data.cases, props.data.cards, props.data.operations, props.data.trades))
 const ledger = computed(() => props.data.recharge_ledger || { amount: '' })
 const editing = ref(false), saving = ref(false), draft = ref(''), error = ref(''), amountInput = ref(null)
 const valid = computed(() => draft.value.trim() === '' || /^\d{1,12}(\.\d{1,2})?$/.test(draft.value.trim()))
@@ -35,6 +36,7 @@ async function saveLedger() {
 <template>
  <section class="ejh-balance-overview" aria-label="余额总览">
   <header class="overview-header"><div><Wallet :size="18"/><h2>余额总览</h2></div><button class="btn primary" type="button" :disabled="busy||saving||!ready||!enabled" @click="emit('refresh')"><RefreshCw :size="14" :class="{spin:progress}"/>{{progress?'刷新中 '+progress.done+' / '+progress.total:'刷新数据'}}</button></header>
+  <EJHReconciliationBar :data="data"/>
   <div class="overview-grid">
    <div class="overview-ledger">
     <div class="overview-label"><span>充值总账</span><button v-if="!editing" type="button" class="ledger-edit" :disabled="busy||saving||!ready" aria-label="修改充值总账 USD" @click="editLedger"><Pencil :size="12"/>{{ledger.amount===''?'填写':'修改'}}</button></div>
@@ -68,11 +70,11 @@ async function saveLedger() {
     </dl>
     <div class="overview-usd" title="按各卡初始开卡的 USD 结算比例估算"><span>卡内付款折合 USD{{inFlight.paymentUSD.missing&&inFlight.paymentUSD.known?'（部分）':''}}</span><strong>{{inFlight.paymentUSD.estimated?'≈ ':''}}{{inFlight.paymentUSD.amount??(inFlight.paymentUSD.missing?'—':'0.00')}} <em>USD</em></strong></div>
     <small v-if="inFlight.paymentUSD.missing">{{inFlight.paymentUSD.missing}} 笔缺少金额或 USD 折算依据，未计入</small>
-    <small>已开通 + 已申请待回款<span v-if="inFlight.authorizations"> · 含授权占用</span></small>
+    <small>扣除已清算成本后的待退金额<span v-if="inFlight.authorizations"> · 含授权占用</span></small>
    </div>
   </div>
   <EJHFinanceTotals :data="data"/>
-  <footer class="overview-footer"><details><summary>统计说明</summary><p>实际到账＝充值总额 × 99%；充值手续费为 1%。实际损耗＝实际到账 − EJH 账户余额 − 卡片余额折合 USD − 在途卡内付款折合 USD。它是资金差额，授权撤销费和开卡费不能再重复加上。消费收益来自下游用户消耗；净利润＝消费收益 − 开卡费 − 充值手续费 − 授权撤销费，全部折算为 R。1 USD = 6.7 R，开卡费按 1 USDT = 1 USD 记账。单卡结余未分摊充值手续费，由总账统一扣除。</p><p>充值总账为手动填写的累计金额。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 卡内余额和卡内付款按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片或付款不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次，卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{failures.length}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
+  <footer class="overview-footer"><details><summary>统计说明</summary><p>实际到账＝充值总额 × 99%；充值手续费为 1%。实际损耗＝实际到账 − EJH 账户余额 − 卡片余额折合 USD − 在途卡内付款折合 USD。它是资金差额，授权撤销费和开卡费不能再重复加上。消费收益来自下游用户消耗；净利润＝消费收益 − 开卡费 − 充值手续费 − 授权撤销费 − 清算成本，全部折算为 R。1 USD = 6.7 R，开卡费按 1 USDT = 1 USD 记账。单卡结余未分摊充值手续费，由总账统一扣除。</p><p>充值总账为手动填写的累计金额。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 卡内余额和卡内付款按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片或付款不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次；有清算时，待退授权余款＝原授权 − 已清算 − 已撤销，清算成本另列。卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{failures.length}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
  </section>
 </template>
 

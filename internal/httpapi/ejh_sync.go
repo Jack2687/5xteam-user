@@ -251,6 +251,7 @@ func (s *Server) startEJH(parent context.Context) {
 				return
 			}
 			s.captureEJHFinance()
+			s.syncEJHDailyConsumption(ctx)
 			select {
 			case <-ctx.Done():
 				return

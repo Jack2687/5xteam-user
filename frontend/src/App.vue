@@ -15,6 +15,7 @@ import ProManagementView from './components/ProManagementView.vue'
 import ProRestockView from './components/ProRestockView.vue'
 import EJHManagementView from './components/EJHManagementView.vue'
 import EJHFinanceView from './components/EJHFinanceView.vue'
+import EJHReconciliationView from './components/EJHReconciliationView.vue'
 import ProxiesView from './components/ProxiesView.vue'
 import SettingsView from './components/SettingsView.vue'
 import StatusPill from './components/StatusPill.vue'
@@ -26,6 +27,7 @@ const nav = [
   { id: 'pro-restock', label: 'Pro 自动补货', icon: Waypoints, group: '账号' },
   { id: 'ejh', label: 'EJH 卡台', icon: Crown, group: '卡片与回款' },
   { id: 'ejh-finance', label: '成本统计', icon: ChartNoAxesCombined, group: '卡片与回款' },
+  { id: 'ejh-reconciliation', label: '财务对账', icon: ChartNoAxesCombined, group: '卡片与回款' },
   { id: 'space-merge', label: '空间合并', icon: ArrowLeftRight, group: '空间合并' },
   { id: 'mail', label: '邮件管理', icon: Inbox, group: '账号流水线' },
   { id: 'free', label: 'Team 轮转', icon: Waypoints, group: '账号流水线' },
@@ -163,6 +165,7 @@ onMounted(checkAuth)
       <ProManagementView v-if="settings && current === 'pro'" :accounts="proAccounts" :admin-accounts="adminAccounts" :default-page-size="settings.default_page_size || 10" @reload="syncProAccounts" @open-ejh-card="openEJHCard" />
       <EJHManagementView v-if="settings && current === 'ejh'" :default-page-size="settings.default_page_size || 10" :entry="ejhEntry" @entry-applied="ejhEntry=null" />
       <EJHFinanceView v-if="settings && current === 'ejh-finance'" :default-page-size="settings.default_page_size || 10" />
+      <EJHReconciliationView v-if="settings && current === 'ejh-reconciliation'" :default-page-size="settings.default_page_size || 10" @navigate="selectTab" />
       <template v-if="spaceMergeVisited">
         <WorkflowView v-show="current === 'full'" mode="full" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />
         <WorkflowView v-show="current === 'enter'" mode="enter" :admin-accounts="adminAccounts" :pro-accounts="proAccounts" :any-active="anyActive" @job-state="updateJob" @history-changed="reloadHistory" @navigate="selectTab" />

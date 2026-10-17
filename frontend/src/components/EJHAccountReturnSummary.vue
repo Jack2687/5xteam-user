@@ -4,10 +4,13 @@ import { accountAmounts } from '../ejh-account-amounts'
 import { accountConsumption, consumptionText } from '../ejh-consumption'
 import { formatTime } from '../utils'
 import EJHCaseState from './EJHCaseState.vue'
+import { casePaymentTrades, summarizeClearingCosts } from '../ejh-clearing'
+import EJHClearingCost from './EJHClearingCost.vue'
 import EJHReversalFee from './EJHReversalFee.vue'
 
-const props = defineProps({ row: { type: Object, required: true }, cards: { type: Array, default: () => [] }, operations: { type: Array, default: () => [] }, feePercent: { type: Number, default: 6 } })
-const amounts = computed(() => accountAmounts(props.row))
+const props = defineProps({ row: { type: Object, required: true }, cards: { type: Array, default: () => [] }, operations: { type: Array, default: () => [] }, trades: { type: Array, default: () => [] }, feePercent: { type: Number, default: 6 } })
+const amounts = computed(() => accountAmounts(props.row,props.trades))
+const clearing = computed(() => summarizeClearingCosts(casePaymentTrades(props.row,props.trades),props.cards,props.operations))
 </script>
 
 <template>
@@ -19,7 +22,7 @@ const amounts = computed(() => accountAmounts(props.row))
    <div><dt>差额</dt><dd>{{amounts.difference===null?'—':amounts.difference+' '+amounts.currency}}</dd></div>
    <div class="consumption-total" title="Pro 管理中的用户消耗统计，按账号显示"><dt>消费收益</dt><dd>{{consumptionText(accountConsumption(row))}}</dd></div>
   </dl>
-  <EJHReversalFee show-profit :consumption="accountConsumption(row)" :records="row.returns||[]" :fee-percent="feePercent" :cards="cards" :operations="operations" confirmed-only/>
+  <p v-if="['opened','waiting'].includes(row.state)" class="return-note">尚待回款：{{amounts.remaining??'待核实'}} {{amounts.currency}}（已扣清算）</p><EJHClearingCost :summary="clearing"/><EJHReversalFee :clearing="clearing" show-profit :consumption="accountConsumption(row)" :records="row.returns||[]" :fee-percent="feePercent" :cards="cards" :operations="operations" confirmed-only/>
   <p v-if="amounts.pending||amounts.invalid" class="return-note">{{amounts.pending?amounts.pending+' 笔回款待核实，未计入金额':'回款金额待核实'}}</p>
   <p v-else-if="amounts.paid!==null&&amounts.reason" class="return-note">{{amounts.reason}}</p>
   <p v-if="row.state_override?.state==='returned'&&!amounts.returned.length" class="return-note">人工标记已回款，尚无已确认金额</p>

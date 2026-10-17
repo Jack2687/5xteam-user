@@ -276,6 +276,7 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
+	applyEJHFinancialConsumption(cases, usage)
 	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "reversal_fee_percent": settings.ReversalFeePercent, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {

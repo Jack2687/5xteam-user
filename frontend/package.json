@@ -8,6 +8,7 @@
     "build": "vite build",
     "check": "vue-tsc --noEmit",
     "test:ejh": "node scripts/check-ejh.mjs",
+    "test:ejh-reconciliation": "node scripts/check-ejh-reconciliation.mjs",
     "test:ejh-reversal-fees": "node scripts/check-ejh-reversal-fees.mjs",
     "test:config-layout": "node scripts/check-config-layout.mjs",
     "test:card-status": "node scripts/check-card-status.mjs",

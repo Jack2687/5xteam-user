@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,11 +25,20 @@ type EJHRechargeEvent struct {
 }
 
 type EJHConsumption struct {
-	ID       string    `json:"id"`
-	Email    string    `json:"email"`
-	Total    float64   `json:"total"`
-	Baseline float64   `json:"baseline"`
-	At       time.Time `json:"at"`
+	ID                 string     `json:"id"`
+	Email              string     `json:"email"`
+	Total              float64    `json:"total"`
+	Baseline           float64    `json:"baseline"`
+	At                 time.Time  `json:"at"`
+	ConnectionIdentity string     `json:"connection_identity,omitempty"`
+	DownstreamID       int64      `json:"downstream_id,omitempty"`
+	StartDay           string     `json:"start_day,omitempty"`
+	EndDay             string     `json:"end_day,omitempty"`
+	SourceAt           *time.Time `json:"source_at,omitempty"`
+	DailySourceAt      *time.Time `json:"daily_source_at,omitempty"`
+	DailyCheckedAt     *time.Time `json:"daily_checked_at,omitempty"`
+	DailyAttemptAt     *time.Time `json:"daily_attempt_at,omitempty"`
+	DailyError         string     `json:"daily_error,omitempty"`
 }
 type EJHConsumptionDay struct {
 	ID     string    `json:"id"`
@@ -36,9 +46,11 @@ type EJHConsumptionDay struct {
 	Day    string    `json:"day"`
 	Amount float64   `json:"amount"`
 	At     time.Time `json:"at"`
+	Source string    `json:"source,omitempty"`
 }
 type EJHFinancialSnapshot struct {
 	At      time.Time         `json:"at"`
+	Trades  []ejh.TradeRecord `json:"trades"`
 	Ledger  EJHRechargeLedger `json:"recharge_ledger"`
 	Balance json.RawMessage   `json:"balance"`
 	Cards   []ejh.CardRecord  `json:"cards"`
@@ -80,12 +92,39 @@ func (s *Store) recordEJHConsumptionTx(tx *sql.Tx, p model.MailAccountProfile, n
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if errors.Is(err, sql.ErrNoRows) {
+	first := errors.Is(err, sql.ErrNoRows)
+	if first {
 		previous = EJHConsumption{ID: id, Email: p.Email, Total: p.UserCostDownstreamSnapshot, Baseline: p.UserCostDownstreamSnapshot, At: now}
+	}
+	// Retain the original downstream binding even after account deletion. The
+	// daily recorder must never look up the same numeric ID on a different server.
+	if p.CostProvider == "sub2" && p.CostConnectionIdentity != "" && p.Sub2AccountID > 0 && strconv.FormatInt(p.Sub2AccountID, 10) == p.UserCostDownstreamIdentity && p.CostCheckedAt != nil {
+		previous.ConnectionIdentity, previous.DownstreamID = p.CostConnectionIdentity, p.Sub2AccountID
+		start := p.CreatedAt
+		if p.ProPushStartedAt != nil {
+			start = *p.ProPushStartedAt
+		}
+		if !start.IsZero() && !start.After(*p.CostCheckedAt) {
+			day := start.In(financeZone).Format("2006-01-02")
+			if previous.StartDay == "" || day < previous.StartDay {
+				previous.StartDay = day
+			}
+			end := p.CostCheckedAt.In(financeZone).Format("2006-01-02")
+			if end > previous.EndDay {
+				previous.EndDay = end
+			}
+			previous.SourceAt = p.CostCheckedAt
+		}
+	}
+	if first || p.UserCostDownstreamSnapshot <= previous.Total {
 		return s.ejhPutTx(tx, "finance_usage", id, previous)
 	}
-	if p.UserCostDownstreamSnapshot <= previous.Total {
-		return nil
+	if previous.DailyCheckedAt != nil {
+		// Once actual usage dates are available, never append a polling-time delta
+		// to them. The next read-only downstream poll replaces the affected days.
+		previous.Baseline += p.UserCostDownstreamSnapshot - previous.Total
+		previous.Total, previous.At = p.UserCostDownstreamSnapshot, now
+		return s.ejhPutTx(tx, "finance_usage", id, previous)
 	}
 	day := now.In(financeZone).Format("2006-01-02")
 	dayID := id + ":" + day
@@ -106,6 +145,10 @@ func (s *Store) recordEJHConsumptionTx(tx *sql.Tx, p model.MailAccountProfile, n
 // calls, and no credentials/card secrets are copied into these snapshots.
 func (s *Store) CaptureEJHFinance(now time.Time) error {
 	cards, err := EJHRecords[ejh.CardRecord](s, "card")
+	if err != nil {
+		return err
+	}
+	trades, err := EJHRecords[ejh.TradeRecord](s, "trade")
 	if err != nil {
 		return err
 	}
@@ -173,6 +216,11 @@ func (s *Store) CaptureEJHFinance(now time.Time) error {
 		if c.CardType == "ejh" && (c.State == "opened" || c.State == "waiting") {
 			snap.Cases = append(snap.Cases, ejh.Case{ID: c.ID, CardID: c.CardID, EJHCardID: c.EJHCardID, State: c.State, Charge: c.Charge})
 		}
+	}
+	for _, t := range trades {
+		v := t.Trade
+		t.Trade = ejh.Trade{OrderNo: v.OrderNo, TradeNo: v.TradeNo, AuthCode: v.AuthCode, Type: v.Type, Status: v.Status, CardAmount: v.CardAmount, CardCurrency: v.CardCurrency, BillAmount: v.BillAmount, BillCurrency: v.BillCurrency, TradeTime: v.TradeTime, CreatedAt: v.CreatedAt}
+		snap.Trades = append(snap.Trades, t)
 	}
 	day := now.In(financeZone).Format("2006-01-02")
 	var first EJHFinancialSnapshot
