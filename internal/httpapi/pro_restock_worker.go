@@ -447,7 +447,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 			s.proCardAdmissionMu.Unlock()
 			d.Started = len(reserved)
 			if e == nil && d.Started > 0 {
-				s.queueNotification("restock", "自动补货已安排", fmt.Sprintf("监控分组：%d\n本次补货：%d 个账号\n触发原因：%s", c.GroupID, d.Started, d.Reason))
+				s.queueNotification("restock", "自动补货已安排", fmt.Sprintf("监控分组：%d\n本次补货：%d 个账号\n触发原因：\n%s", c.GroupID, d.Started, restockNotificationReasons(d)))
 			}
 		}
 		if e != nil {

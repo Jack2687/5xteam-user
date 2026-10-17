@@ -27,6 +27,8 @@ type Bot struct {
 	WebhookPresent bool   `json:"webhook_present"`
 	SecretPresent  bool   `json:"secret_present"`
 	ClearSecret    bool   `json:"clear_secret,omitempty"`
+	// nil retains the legacy global event choices; [] explicitly opts out.
+	Events []string `json:"events"`
 }
 type Settings struct {
 	Enabled     bool  `json:"enabled"`
@@ -49,11 +51,49 @@ func (s Settings) Public() Settings {
 		b.Webhook = ""
 		b.Secret = ""
 		b.ClearSecret = false
+		b.Events = s.EventsFor(*b)
 	}
 	return out
 }
 func (s Settings) Accepts(kind string) bool {
-	return s.Enabled && (kind == "restock" && s.Restock || kind == "merge_start" && s.MergeStart || kind == "merge_result" && s.MergeResult)
+	return s.Enabled && validEvent(kind)
+}
+
+func validEvent(kind string) bool {
+	switch kind {
+	case "restock", "merge_start", "merge_result", "pro_start", "pro_pushed", "pro_failed", "ejh_open":
+		return true
+	}
+	return false
+}
+
+// Existing bots keep their original subscriptions until explicitly edited.
+func (s Settings) EventsFor(b Bot) []string {
+	if b.Events != nil {
+		return append([]string{}, b.Events...)
+	}
+	events := []string{}
+	for _, event := range []struct {
+		kind    string
+		enabled bool
+	}{{"restock", s.Restock}, {"merge_start", s.MergeStart}, {"merge_result", s.MergeResult}} {
+		if event.enabled {
+			events = append(events, event.kind)
+		}
+	}
+	return events
+}
+
+func (s Settings) AcceptsBot(b Bot, kind string) bool {
+	if !s.Accepts(kind) || !b.Enabled {
+		return false
+	}
+	for _, event := range s.EventsFor(b) {
+		if event == kind {
+			return true
+		}
+	}
+	return false
 }
 
 var hookPath = regexp.MustCompile(`^/open-apis/bot/v2/hook/[A-Za-z0-9_-]+$`)
@@ -84,6 +124,23 @@ func MergeSettings(in, previous Settings) (Settings, error) {
 			return in, errors.New("机器人名称不能为空，标识不能重复")
 		}
 		seen[b.ID] = true
+		// An older client omitting events must not erase saved subscriptions.
+		if b.Events == nil && old[b.ID].Events != nil {
+			b.Events = append([]string{}, old[b.ID].Events...)
+		}
+		if b.Events != nil {
+			events, selected := []string{}, map[string]bool{}
+			for _, event := range b.Events {
+				if !validEvent(event) {
+					return in, errors.New("通知类型无效，请刷新页面后重试")
+				}
+				if !selected[event] {
+					events = append(events, event)
+					selected[event] = true
+				}
+			}
+			b.Events = events
+		}
 		if b.Webhook == "" {
 			b.Webhook = old[b.ID].Webhook
 		}

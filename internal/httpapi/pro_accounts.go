@@ -1150,7 +1150,7 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	}
 	notice := &mergeNoticeState{}
 	ctx = context.WithValue(ctx, mergeNoticeKey{}, notice)
-	s.queueNotification("merge_start", "Pro 触发合并", "账号："+profile.Email+"\n已进入合并流程，按配置并发执行")
+	s.notifyMergeStarted(profile)
 	defer func() {
 		if retErr != nil && !notice.failed {
 			s.notifyMergeFailure(ctx, profile, "", false, errors.Is(retErr, errProTransferUncertain))

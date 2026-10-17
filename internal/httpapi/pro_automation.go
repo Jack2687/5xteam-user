@@ -86,7 +86,13 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) autoProUpdate(email, stage, status, message string) error {
+	shouldNotify := false
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		if p.ProAuto.ID != "" && p.ProAuto.Steps[stage] != status {
+			shouldNotify = stage == "push" && status == "completed" ||
+				status == "failed" && p.ProAuto.Steps["push"] != "completed" &&
+					(stage == "login" || stage == "recharge" || stage == "oauth" || stage == "push")
+		}
 		if p.ProAuto.Steps == nil {
 			p.ProAuto.Steps = map[string]string{}
 		}
@@ -111,6 +117,9 @@ func (s *Server) autoProUpdate(email, stage, status, message string) error {
 	})
 	if err == nil {
 		s.auditProEvent(p, stage, status, "pro_auto", message, map[string]any{"automation_id": p.ProAuto.ID, "order_id": p.ProAuto.OrderID})
+		if shouldNotify {
+			s.notifyProAutomation(p, stage, status)
+		}
 	}
 	return err
 }
@@ -592,6 +601,12 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 		if err = s.autoProUpdate(email, "recharge", "running", "提交 GPTPay 开通订单，原登录会话保持中"); err != nil {
 			return nil, err
 		}
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Only a newly reserved order reaches this boundary. Paid recovery and
+		// repeated RPCs cannot send another start notice or create a payment.
+		s.queueNotification("pro_start", "Pro 全自动开始开通", "账号："+email+"\n套餐："+order.PlanCode+"\n已完成登录，开始提交开通订单")
 		order, err = s.submitGPTPayOrder(ctx, order, snap)
 		if err != nil {
 			return nil, err

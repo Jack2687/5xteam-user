@@ -204,6 +204,7 @@ func TestEJHOpeningIdempotencyAndUnknown(t *testing.T) {
 	for _, status := range []int{200, 503} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			s, calls := ejhTestServer(t, status)
+			s.notifications.queue = make(chan notificationEvent, 10)
 			input := ejh.OpenInput{CardType: "fixture", CardAmount: "20", CardCurrency: "USD", BillCurrency: "USD", MCC: "ecom", UseTime: 1, ActiveDate: "2099-12-31"}
 			var wg sync.WaitGroup
 			for i := 0; i < 8; i++ {
@@ -228,6 +229,17 @@ func TestEJHOpeningIdempotencyAndUnknown(t *testing.T) {
 			wg.Wait()
 			if calls.Load() != 1 {
 				t.Fatalf("duplicate charges: %d", calls.Load())
+			}
+			if len(s.notifications.queue) != 1 {
+				t.Fatal("duplicate opening result notices", len(s.notifications.queue))
+			}
+			event := <-s.notifications.queue
+			wantTitle := "EJH 开卡成功"
+			if status != 200 {
+				wantTitle = "EJH 开卡待核实"
+			}
+			if event.Kind != "ejh_open" || event.Title != wantTitle || !strings.Contains(event.Text, "20 USD") || strings.Contains(event.Text, "4242424242424242") {
+				t.Fatal("incorrect or sensitive opening notice", event)
 			}
 			if status != 200 {
 				_, e := s.ejhOpenLocked(context.Background(), "new-id", input, false)
@@ -262,6 +274,7 @@ func TestEJHAutoOpeningBudgetAndExistingCard(t *testing.T) {
 	for _, budget := range []string{"19.99", "20"} {
 		t.Run(budget, func(t *testing.T) {
 			s, calls := ejhTestServer(t, 200)
+			s.notifications.queue = make(chan notificationEvent, 10)
 			cfg, _, err := s.store.EJHSettings()
 			if err != nil {
 				t.Fatal(err)
@@ -290,6 +303,12 @@ func TestEJHAutoOpeningBudgetAndExistingCard(t *testing.T) {
 			}
 			if _, err = s.ensureEJHCard(context.Background()); err != nil || calls.Load() != 1 {
 				t.Fatal("existing card not reused", err)
+			}
+			if len(s.notifications.queue) != 1 {
+				t.Fatal("automatic opening sent duplicate or no notice")
+			}
+			if event := <-s.notifications.queue; event.Kind != "ejh_open" || !strings.Contains(event.Text, "自动开卡") {
+				t.Fatal(event)
 			}
 			card.Enabled = false
 			_, secret, err := s.store.GPTPayCard(card.ID)

@@ -47,6 +47,7 @@ func TestProRetryOriginalPayment(t *testing.T) {
 				fmt.Fprintf(w, `{"code":0,"data":{"id":"original-remote","status":%q}}`, tc.result)
 			})
 			configureProAutoFixture(t, s)
+			captureProNotifications(s)
 			cfg, key, _ := st.GPTPaySettings()
 			p, c, _ := st.MailAccountCredential(email)
 			session, err := gptPaySession(p, c)
@@ -96,6 +97,13 @@ func TestProRetryOriginalPayment(t *testing.T) {
 			}
 			if creates.Load() != tc.creates {
 				t.Fatalf("payment creates %d, want %d", creates.Load(), tc.creates)
+			}
+			want := ""
+			if tc.success {
+				want = "pro_pushed"
+			}
+			if got := proNotificationKinds(t, s); got != want {
+				t.Fatalf("paid recovery notices %q, want %q (no new start)", got, want)
 			}
 		})
 	}

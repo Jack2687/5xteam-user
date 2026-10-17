@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,7 +75,7 @@ func TestProRestockEmptyStartupDispatchAcrossTicks(t *testing.T) {
 	if len(s.notifications.queue) != 1 {
 		t.Fatalf("repeated checks sent %d restock notifications", len(s.notifications.queue))
 	}
-	if event := <-s.notifications.queue; event.Kind != "restock" {
+	if event := <-s.notifications.queue; event.Kind != "restock" || !strings.Contains(event.Text, "空分组启动 · 净缺口 2 个") || !strings.Contains(event.Text, "监控组实际 0 个账号") {
 		t.Fatal(event)
 	}
 	// Simulate one original task arriving before the other obtains a slot.

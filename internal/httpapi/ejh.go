@@ -334,6 +334,7 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 		op.Result = &card
 		op.Status = "import_pending"
 		if e = s.store.EJHPut("operation", id, op); e != nil {
+			s.notifyEJHOpened(op)
 			return op, e
 		}
 		local, ie := s.store.ImportEJHCard(card, true)
@@ -345,8 +346,12 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 		}
 	}
 	if saveErr := s.store.EJHPut("operation", id, op); saveErr != nil {
+		notice := op
+		notice.Status = "unknown"
+		s.notifyEJHOpened(notice)
 		return op, saveErr
 	}
+	s.notifyEJHOpened(op)
 	return op, nil
 }
 func definiteEJHReject(code string) bool {
@@ -653,6 +658,7 @@ func (s *Server) resolveEJHOperation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, e.Error())
 		return
 	}
+	s.notifyEJHOpened(op)
 	op.Result = nil
 	writeAPI(w, 200, op, "")
 }

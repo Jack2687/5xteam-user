@@ -77,3 +77,37 @@ func TestNotificationSettingsPreserveSecretsByIdentity(t *testing.T) {
 		t.Fatal("public projection modified or exposed secrets")
 	}
 }
+
+func TestNotificationBotSubscriptionsAndLegacySettings(t *testing.T) {
+	legacy := Defaults()
+	legacy.Enabled, legacy.MergeStart = true, false
+	legacy.Bots = []Bot{{ID: "old", Name: "Old", Enabled: true, Webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/old"}}
+	pub := legacy.Public()
+	if strings.Join(pub.Bots[0].Events, ",") != "restock,merge_result" || legacy.AcceptsBot(legacy.Bots[0], "pro_start") {
+		t.Fatal("legacy choices changed or new notifications enabled without selection")
+	}
+	pub.Bots[0].Events = []string{"pro_start", "pro_pushed", "pro_failed", "pro_start"}
+	current, err := MergeSettings(pub, legacy)
+	if err != nil || len(current.Bots[0].Events) != 3 || !current.AcceptsBot(current.Bots[0], "pro_start") || current.AcceptsBot(current.Bots[0], "restock") {
+		t.Fatal("explicit per-bot selection not respected", err)
+	}
+	input := current.Public()
+	input.Bots[0].Events[0] = "merge_start"
+	if current.Bots[0].Events[0] != "pro_start" {
+		t.Fatal("public settings alias saved subscriptions")
+	}
+	input.Bots[0].Events = nil // An older cached client knows nothing about subscriptions.
+	merged, err := MergeSettings(input, current)
+	if err != nil || strings.Join(merged.Bots[0].Events, ",") != "pro_start,pro_pushed,pro_failed" {
+		t.Fatal("omitted events erased subscriptions", err)
+	}
+	input.Bots[0].Events = []string{}
+	merged, err = MergeSettings(input, current)
+	if err != nil || merged.Bots[0].Events == nil || merged.AcceptsBot(merged.Bots[0], "pro_start") || merged.AcceptsBot(merged.Bots[0], "restock") {
+		t.Fatal("empty selection must not fall back to legacy events", err)
+	}
+	input.Bots[0].Events = []string{"unknown"}
+	if _, err = MergeSettings(input, current); err == nil {
+		t.Fatal("invalid subscription accepted")
+	}
+}

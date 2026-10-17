@@ -63,3 +63,42 @@ func TestNotificationDeliverySwitchesAndFailedResults(t *testing.T) {
 		t.Fatal("master switch ignored")
 	}
 }
+
+func TestNotificationDeliveryRoutesToSelectedBots(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg := notify.Settings{Enabled: true, Bots: []notify.Bot{
+		{ID: "stock", Events: []string{"restock"}},
+		{ID: "pro", Events: []string{"pro_start", "pro_pushed", "pro_failed"}},
+		{ID: "merge", Events: []string{"merge_start", "merge_result"}},
+		{ID: "card", Events: []string{"ejh_open"}},
+		{ID: "empty", Events: []string{}},
+		{ID: "disabled", Events: []string{"pro_start"}},
+	}}
+	for i := range cfg.Bots {
+		b := &cfg.Bots[i]
+		b.Name, b.Enabled = b.ID, b.ID != "disabled"
+		b.Webhook = "https://open.feishu.cn/open-apis/bot/v2/hook/" + b.ID
+	}
+	if _, err = st.SaveNotificationSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	var recipients []string
+	s := &Server{store: st, notifications: notificationRuntime{client: &http.Client{Transport: notificationTransport(func(r *http.Request) (*http.Response, error) {
+		recipients = append(recipients, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":0}`)), Header: make(http.Header)}, nil
+	})}}}
+	for _, kind := range []string{"restock", "pro_start", "pro_pushed", "pro_failed", "merge_start", "merge_result", "ejh_open", "unknown"} {
+		s.deliverNotification(context.Background(), notificationEvent{Kind: kind, At: time.Now()})
+	}
+	if strings.Join(recipients, ",") != "stock,pro,pro,pro,merge,merge,card" {
+		t.Fatal("notifications sent to wrong robots", recipients)
+	}
+	logs, err := st.NotificationLogs()
+	if err != nil || len(logs) != 7 {
+		t.Fatal("delivery log must only contain selected recipients", logs, err)
+	}
+}

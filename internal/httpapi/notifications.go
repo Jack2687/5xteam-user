@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"chapt-space-user/internal/ejh"
 	"chapt-space-user/internal/model"
 	"chapt-space-user/internal/notify"
 	"chapt-space-user/internal/store"
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -66,7 +68,7 @@ func (s *Server) deliverNotification(ctx context.Context, event notificationEven
 		return
 	}
 	for _, bot := range settings.Bots {
-		if !bot.Enabled {
+		if !settings.AcceptsBot(bot, event.Kind) {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -85,6 +87,25 @@ func (s *Server) deliverNotification(ctx context.Context, event notificationEven
 			slog.Error("save notification result failed")
 		}
 	}
+}
+
+func (s *Server) notifyProAutomation(p model.MailAccountProfile, stage, status string) {
+	text := "账号：" + p.Email + "\n套餐：" + p.ProAuto.PlanCode
+	if stage == "push" && status == "completed" {
+		s.queueNotification("pro_pushed", "Pro 全自动推送完成", text+"\n已开通并完成推送，可在 Pro 管理查看")
+		return
+	}
+	label := map[string]string{"login": "登录", "recharge": "开通", "oauth": "获取 RT/AT", "push": "推送"}[stage]
+	text += "\n失败位置：" + label
+	title := "Pro 全自动失败"
+	if stage == "recharge" && p.ProAuto.OrderID != "" {
+		if order, _, err := s.store.GPTPayOrder(p.ProAuto.OrderID); err == nil && order.Status != "failed" && order.Status != "success" {
+			title = "Pro 开通结果待确认"
+			text += "\n原订单已保留，请先核实付款结果"
+		}
+	}
+	// Error details can contain session credentials or upstream responses.
+	s.queueNotification("pro_failed", title, text+"\n请在 Pro 管理查看失败详情和重试状态")
 }
 func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.NotificationSettings()
@@ -145,6 +166,52 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 
 type mergeNoticeKey struct{}
 type mergeNoticeState struct{ failed, removed bool }
+
+func (s *Server) notifyMergeStarted(p model.MailAccountProfile) {
+	standard, user := "未查询", "未查询"
+	settings, _, _, err := s.store.ProSettings()
+	if err == nil && proCostBindingMatches(p, settings) && p.CostCheckedAt != nil {
+		standard = notificationUSD(p.CostDownstreamSnapshot)
+		if p.UserCostDownstreamIdentity == p.CostDownstreamIdentity {
+			user = notificationUSD(p.UserCostDownstreamSnapshot)
+		}
+	}
+	text := "账号：" + p.Email + "\n消耗额度（标准）：" + standard + "\n用户费用（已用）：" + user + "\n已进入合并流程，按配置并发执行"
+	s.queueNotification("merge_start", "Pro 触发合并", text)
+}
+
+func notificationUSD(value float64) string {
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return "未查询"
+	}
+	return fmt.Sprintf("$%.4f", value)
+}
+
+func (s *Server) notifyEJHOpened(op ejh.Operation) {
+	if op.Method != "open" {
+		return
+	}
+	source := "手动开卡"
+	if op.Automatic {
+		source = "自动开卡"
+	}
+	title, result := "EJH 开卡待核实", "响应未确认，请在 EJH 操作记录核实，勿重复开卡"
+	switch op.Status {
+	case "completed":
+		title, result = "EJH 开卡成功", "卡片已加入卡片管理"
+	case "failed":
+		title, result = "EJH 开卡失败", "请在 EJH 操作记录查看失败详情"
+	case "import_pending":
+		title, result = "EJH 开卡待导入", "卡台已返回卡片，本地导入未完成；请核实原操作，勿重复开卡"
+	}
+	text := fmt.Sprintf("来源：%s\n开卡金额：%s %s\n操作编号：%s", source, op.Amount, op.Currency, op.ID)
+	if op.CardID != "" {
+		if card, _, err := s.store.GPTPayCard(op.CardID); err == nil && len(card.Last4) == 4 {
+			text += "\n卡片尾号：" + card.Last4
+		}
+	}
+	s.queueNotification("ejh_open", title, text+"\n"+result)
+}
 
 func (s *Server) notifyMergeFailure(ctx context.Context, p model.MailAccountProfile, stage string, retrying, uncertain bool) {
 	if state, ok := ctx.Value(mergeNoticeKey{}).(*mergeNoticeState); ok {
