@@ -24,7 +24,7 @@ func TestProMergeProgressAndKeepsDownstream(t *testing.T) {
 				}
 				defer st.Close()
 				const email = "merge-fixture@example.com"
-				s := &Server{store: st, auditQueue: make(chan model.AutoRotationEvent, 32)}
+				s := &Server{store: st, auditQueue: make(chan model.AutoRotationEvent, 32), notifications: notificationRuntime{queue: make(chan notificationEvent, 32)}}
 				var mu sync.Mutex
 				calls := map[string]int{}
 				failed := false
@@ -144,6 +144,22 @@ func TestProMergeProgressAndKeepsDownstream(t *testing.T) {
 					t.Fatal(err)
 				}
 				got, err := s.performProMerge(context.Background(), email)
+				startNotice := <-s.notifications.queue
+				resultNotice := <-s.notifications.queue
+				if startNotice.Kind != "merge_start" || resultNotice.Kind != "merge_result" {
+					t.Fatal("missing merge notifications", startNotice, resultNotice)
+				}
+				if failure != "" && failure != "team_removed" {
+					if !strings.Contains(resultNotice.Title, "失败") {
+						t.Fatal("failure announced as success", resultNotice)
+					}
+				} else if !strings.Contains(resultNotice.Title, "成功移出") {
+					t.Fatal("removal not announced", resultNotice)
+				}
+				if len(s.notifications.queue) != 0 {
+					t.Fatal("ordinary step progress or duplicate terminal notification sent")
+				}
+
 				if failure != "" && failure != "team_removed" {
 					if err == nil || got.ProWorkflowRunning || stageState(got, failure) != "failed" {
 						t.Fatalf("failed step not visible: %+v %v", got, err)

@@ -2,6 +2,25 @@ package httpapi
 
 import "net/http"
 
+func (s *Server) saveEJHRechargePeriod(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Month *string `json:"month"`
+	}
+	if decodeJSON(w, r, &in, 4<<10) != nil {
+		return
+	}
+	if in.Month == nil {
+		writeAPI(w, 400, nil, "请选择历史充值归属月份")
+		return
+	}
+	out, err := s.store.SaveEJHRechargeHistoryMonth(*in.Month)
+	if err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, out, "")
+}
+
 func (s *Server) saveEJHRechargeLedger(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Amount *string `json:"amount"`

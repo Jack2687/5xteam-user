@@ -145,3 +145,15 @@ console.log('Passed: delete all across search/pages, single deletion, last-page 
  f.unmount()
 }
 console.log('Passed: saved reversal fee rate, draft isolation, refresh retention, save failure and zero rate')
+
+let configuredNow=0
+const configuredGate=createEJHRefreshGate({now:()=>configuredNow,storage:()=>null})
+configuredGate.begin(true,120).finish()
+configuredNow=31000
+assert.equal(configuredGate.begin(true,120).reason,'cooldown','configured interval was ignored')
+const manual=configuredGate.begin(false,120);assert.equal(manual.reason,undefined);manual.finish()
+configuredNow+=120000
+const expired=configuredGate.begin(true,120);assert.equal(expired.reason,undefined);expired.finish()
+configuredNow+=6000
+const shorter=configuredGate.begin(true,5);assert.equal(shorter.reason,undefined);shorter.finish()
+console.log('Passed: configurable refresh interval and immediate manual refresh')

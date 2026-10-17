@@ -112,6 +112,7 @@ export function periodRange(mode,date=beijingDay()) {
 }
 export function financeEvents(data,history={}) {
   const events=openingEntries(data),seen=new Map(),cards=data.cards||[],operations=data.operations||[]
+  const historyMonth=/^20\d{2}-(0[1-9]|1[0-2])$/.test(data.recharge_ledger?.history_month||'')?data.recharge_ledger.history_month:null
   for(const e of summarizeClearingCosts(data.trades||[],cards,operations).entries){
     const t=e.record.trade
     events.push({id:'clearing:'+e.record.card_id+':'+(t.tradeNo||e.record.id),kind:'clearing',at:financeTime(t.createdAt)||financeTime(t.tradeTime),card:cards.find(c=>c.id===e.record.card_id)?.local?.name||t.orderNo,reference:t.tradeNo,amount:e.amount,currency:e.currency,usd:e.usd,usd_precise:e.usd,incomplete:e.incomplete,note:e.pending?'清算待入账，未计成本':e.refund?'清算退款冲减成本':e.estimated?'清算成本 · USD 估算':'清算成本 · 已入账'})
@@ -130,13 +131,13 @@ export function financeEvents(data,history={}) {
   }
   for(const event of history.recharges||[]){
     const after=feeCents(event.after||'0'),before=feeCents(event.before||'0')
-    events.push({id:event.id,kind:'recharge',at:event.baseline?null:financeTime(event.at),reference:event.id,amount:money(after-before),currency:'USD',usd:money(after-before),note:event.baseline?'历史充值基数，未分摊日期':'充值总账变动 '+event.delta+' USD'})
+    events.push({id:event.id,kind:'recharge',at:event.baseline?null:financeTime(event.at),month:event.baseline&&(!data.recharge_ledger?.history_month_recorded_at||financeTime(event.at)<=financeTime(data.recharge_ledger.history_month_recorded_at))?historyMonth:null,reference:event.id,amount:money(after-before),currency:'USD',usd:money(after-before),note:event.baseline?(historyMonth?'历史充值归属 '+historyMonth+'，具体日期未记录':'历史充值基数，未分摊日期'):'充值总账变动 '+event.delta+' USD'})
   }
   const usageDays=[...new Map((history.usage_days||[]).map(row=>[row.id,row])).values()]
   for(const row of usageDays)if(row.amount!==0)events.push({id:row.id,day:row.day,kind:'consumption',at:financeTime(row.day+'T12:00:00+08:00'),email:row.email,reference:row.id,amount:row.amount,currency:'R',note:row.source==='sub2_daily'?'Sub2 实际用户扣费 · 北京时间':'旧采集增量 · 等待按实际消费日期核对'})
   const deposit=feeCents(data.recharge_ledger?.amount)
   const recordedDeposit=events.filter(e=>e.kind==='recharge').reduce((n,e)=>n+(cents(e.usd)||0n),0n)
-  if(deposit!==null&&deposit!==recordedDeposit)events.push({id:'legacy-recharge',kind:'recharge',at:null,amount:money(deposit-recordedDeposit),usd:money(deposit-recordedDeposit),currency:'USD',note:'未记录日期的历史充值手续费'})
+  if(deposit!==null&&deposit!==recordedDeposit)events.push({id:'legacy-recharge',kind:'recharge',at:null,month:historyMonth,amount:money(deposit-recordedDeposit),usd:money(deposit-recordedDeposit),currency:'USD',note:historyMonth?'历史充值归属 '+historyMonth+'，具体日期未记录':'未记录日期的历史充值手续费'})
   const consumption=consumptionSummary(data.cases||[],history.consumption||data.consumption_history||[])
   const recordedR=usageDays.reduce((n,r)=>n+(Number.isFinite(r.amount)?r.amount:0),0)
   if(consumption.total!==null&&consumption.total>recordedR+0.0000001)events.push({id:'legacy-consumption',kind:'consumption',at:null,amount:consumption.total-recordedR,currency:'R',note:'首次采集的历史累计消费，无法还原每天发生额'})
@@ -173,7 +174,7 @@ function summarizeEvents(events) {
 }
 export function financeReport(data,history={},mode='day',date=beijingDay()) {
   const range=periodRange(mode,date),all=financeEvents(data,history),overview=financeOverview({...data,consumption_history:history.consumption||data.consumption_history})
-  const events=all.filter(e=>mode==='all'||e.at!==null&&e.at>=range.start&&e.at<range.end)
+  const events=all.filter(e=>mode==='all'||e.month&&mode==='month'&&e.month===date.slice(0,7)||e.at!==null&&e.at>=range.start&&e.at<range.end)
   const summary=summarizeEvents(events)
   if(mode==='all'){
     summary.r=overview.consumption.total
@@ -184,7 +185,7 @@ export function financeReport(data,history={},mode='day',date=beijingDay()) {
   }
   const groups=new Map()
   for(const e of events){
-    const key=e.at===null?'未分期历史':mode==='all'?beijingDay(e.at).slice(0,7):beijingDay(e.at)
+    const key=financeEventPeriod(e,mode)
     if(!groups.has(key))groups.set(key,[])
     groups.get(key).push(e)
   }
@@ -198,12 +199,18 @@ export function financeReport(data,history={},mode='day',date=beijingDay()) {
   const baseline=all.filter(e=>e.kind==='consumption'&&e.at===null).reduce((n,r)=>n+Number(r.amount),0)
   const dailyPending=(history.consumption||[]).filter(r=>!r.daily_checked_at||r.daily_error||r.source_at&&financeTime(r.source_at)>financeTime(r.daily_source_at)).length
   const dailyErrors=(history.consumption||[]).filter(r=>r.daily_error).length
-  const periodIncomplete=mode!=='all'&&(baseline>0.000001||dailyPending>0||(history.usage_days||[]).some(r=>r.source!=='sub2_daily'))
+  const monthlyUndated=all.filter(e=>e.month&&(mode==='all'||Number.isFinite(range.start)&&Number.isFinite(range.end)&&e.month>=beijingDay(range.start).slice(0,7)&&e.month<=beijingDay(range.end-1).slice(0,7))).length
+  const periodIncomplete=mode!=='all'&&(baseline>0.000001||dailyPending>0||(history.usage_days||[]).some(r=>r.source!=='sub2_daily')||(['day','week'].includes(mode)&&monthlyUndated>0))
   if(periodIncomplete)for(const row of [summary,...rows])row.earnings={...row.earnings,profitR:null,incomplete:true}
   const snapshots=(history.snapshots||[]).filter(s=>{const at=financeTime(s.at);return at!==null&&at>=range.start&&at<range.end}).sort((a,b)=>financeTime(a.at)-financeTime(b.at))
   const first=snapshots[0],last=snapshots.at(-1)
   const firstLoss=first?financeOverview({...first,operations:data.operations||[]}).loss:null,lastLoss=last?financeOverview({...last,operations:data.operations||[]}).loss:null
   const lossChange=first&&last&&financeTime(first.at)!==financeTime(last.at)&&firstLoss!==null&&lastLoss!==null?money(cents(lastLoss)-cents(firstLoss)):null
-  return {range,summary,events,rows,overview,baseline,dailyPending,dailyErrors,periodIncomplete,undated:all.filter(e=>e.at===null&&e.kind!=='consumption').length,lossChange,firstAt:first?.at,lastAt:last?.at,
+  return {range,summary,events,rows,overview,baseline,dailyPending,dailyErrors,periodIncomplete,monthlyUndated,undated:all.filter(e=>e.at===null&&!e.month&&e.kind!=='consumption').length,lossChange,firstAt:first?.at,lastAt:last?.at,
     coverage:(history.usage_days||[]).map(r=>r.day).sort()[0]||null}
+}
+
+export function financeEventPeriod(event,mode) {
+  if(event.month)return mode==='all'?event.month:event.month+'（日期未记录）'
+  return event.at===null?'未分期历史':mode==='all'?beijingDay(event.at).slice(0,7):beijingDay(event.at)
 }

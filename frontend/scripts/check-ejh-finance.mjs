@@ -86,3 +86,21 @@ for(const mode of ['day','week','month','all']){
 }
 assert.equal(financeReport(data,{...daily,usage_days:[...daily.usage_days,daily.usage_days[0]]},'week','2026-10-16').summary.r,120,'duplicate daily snapshots must not inflate revenue')
 assert.equal(total.earnings.costUSD,'36.56')
+
+// User-confirmed historical month changes attribution only, never total costs.
+const monthData={...data,recharge_ledger:{amount:'3000.00',history_month:'2026-10'}}
+const baselineRecharge={recharges:[{id:'baseline-recharge',at:'2026-11-01T08:00:00+08:00',before:'',after:'3000.00',delta:'3000.00',baseline:true}]}
+const monthAll=financeReport(monthData,baselineRecharge,'all','2026-10-17')
+assert.equal(monthAll.rows.find(r=>r.day==='2026-10').rechargeUSD,'30.00')
+assert.ok(!monthAll.rows.find(r=>r.day==='未分期历史')||monthAll.rows.find(r=>r.day==='未分期历史').rechargeUSD==='0.00')
+assert.equal(financeReport(monthData,baselineRecharge,'month','2026-10-17').summary.rechargeUSD,'30.00')
+assert.equal(financeReport(monthData,baselineRecharge,'month','2026-11-17').summary.rechargeUSD,'0.00')
+for(const mode of ['day','week']){
+ const report=financeReport(monthData,baselineRecharge,mode,'2026-10-17')
+ assert.equal(report.summary.rechargeUSD,'0.00','unknown day must not be made up')
+ assert.equal(report.monthlyUndated,1)
+ assert.equal(report.summary.earnings.profitR,null,'unallocated monthly cost cannot imply complete daily profit')
+}
+assert.equal(financeReport(monthData,{},'month','2026-10-17').summary.rechargeUSD,'30.00','legacy ledger without recharge events must use confirmed month too')
+assert.equal(monthAll.summary.earnings.costR,financeReport(data,baselineRecharge,'all').summary.earnings.costR)
+console.log('Passed: historical recharge month, no invented dates, unchanged total cost')

@@ -13,8 +13,10 @@ import (
 )
 
 type EJHRechargeLedger struct {
-	Amount    string     `json:"amount"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	HistoryMonthRecordedAt *time.Time `json:"history_month_recorded_at,omitempty"`
+	HistoryMonth           string     `json:"history_month,omitempty"`
+	Amount                 string     `json:"amount"`
+	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
 }
 
 var ejhLedgerAmount = regexp.MustCompile(`^\d{1,12}(\.\d{1,2})?$`)
@@ -57,6 +59,8 @@ func (s *Store) SaveEJHRechargeLedger(amount string) (EJHRechargeLedger, error) 
 	if previous.Amount == amount {
 		return previous, nil
 	}
+	out.HistoryMonth = previous.HistoryMonth
+	out.HistoryMonthRecordedAt = previous.HistoryMonthRecordedAt
 	if err = s.ejhPutTx(tx, "recharge_ledger", "manual-usd", out); err != nil {
 		return out, err
 	}
@@ -69,6 +73,36 @@ func (s *Store) SaveEJHRechargeLedger(amount string) (EJHRechargeLedger, error) 
 	}
 	event := EJHRechargeEvent{ID: EJHID("recharge", now.String()), At: now, Before: previous.Amount, After: amount, Delta: new(big.Rat).Sub(after, before).FloatString(2), Baseline: previous.Amount == ""}
 	if err = s.ejhPutTx(tx, "finance_recharge", event.ID, event); err != nil {
+		return out, err
+	}
+	return out, tx.Commit()
+}
+
+// Assign only the undated historical recharge to a known month. The balance,
+// dated recharge events and their audit timestamps are never rewritten.
+func (s *Store) SaveEJHRechargeHistoryMonth(month string) (EJHRechargeLedger, error) {
+	month = strings.TrimSpace(month)
+	if month != "" {
+		parsed, err := time.Parse("2006-01", month)
+		if err != nil || parsed.Year() < 2000 || parsed.Year() > 2100 {
+			return EJHRechargeLedger{}, fmt.Errorf("请输入有效的充值归属月份")
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return EJHRechargeLedger{}, err
+	}
+	defer tx.Rollback()
+	var out EJHRechargeLedger
+	if err = s.ejhGetTx(tx, "recharge_ledger", "manual-usd", &out); err != nil {
+		return out, err
+	}
+	out.HistoryMonth = month
+	now := time.Now()
+	out.HistoryMonthRecordedAt = &now
+	if err = s.ejhPutTx(tx, "recharge_ledger", "manual-usd", out); err != nil {
 		return out, err
 	}
 	return out, tx.Commit()

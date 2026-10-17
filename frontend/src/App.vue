@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
-  ArrowLeftRight, Bot, ChevronDown, Crown, History, Inbox, LogIn, Menu, Moon, Network, Settings,
+  ArrowLeftRight, Bell, Bot, ChevronDown, Crown, History, Inbox, LogIn, Menu, Moon, Network, Settings,
   Smartphone, Sun, UserRoundCog, UsersRound, Waypoints, X, LogOut, KeyRound, ChartNoAxesCombined,
 } from 'lucide-vue-next'
 import { api } from './api'
@@ -18,6 +18,7 @@ import EJHFinanceView from './components/EJHFinanceView.vue'
 import EJHReconciliationView from './components/EJHReconciliationView.vue'
 import ProxiesView from './components/ProxiesView.vue'
 import SettingsView from './components/SettingsView.vue'
+import NotificationsView from './components/NotificationsView.vue'
 import StatusPill from './components/StatusPill.vue'
 import WorkflowView from './components/WorkflowView.vue'
 import LoginView from './components/LoginView.vue'
@@ -37,6 +38,7 @@ const nav = [
   { id: 'openai', label: 'OpenAI 账号', icon: Bot, group: '账号' },
   { id: 'proxies', label: '代理管理', icon: Network, group: '系统' },
   { id: 'settings', label: '接口设置', icon: Settings, group: '系统' },
+  { id: 'notifications', label: '通知', icon: Bell, group: '系统' },
 ]
 const current = ref(localStorage.getItem('space-console-tab') || 'full')
 const mobileOpen = ref(false)
@@ -179,6 +181,7 @@ onMounted(checkAuth)
       <AdminAccountsView v-if="settings && current === 'admins'" :accounts="adminAccounts" :proxies="proxies" :default-page-size="settings.default_page_size || 10" @reload="reloadAdmins" />
       <OpenAIAccountsView v-if="settings && current === 'openai'" :accounts="openAIAccounts" :default-page-size="settings.default_page_size || 10" @reload="reloadOpenAI" />
       <ProxiesView v-if="settings && current === 'proxies'" :proxies="proxies" :selected-u-r-l="settings.proxy_url || ''" :default-page-size="settings.default_page_size || 10" @reload="reloadProxies" @select="selectProxy" />
+      <NotificationsView v-if="current === 'notifications'" />
       <SettingsView v-if="current === 'settings'" :settings="settings" :proxies="proxies" @saved="settings = $event" />
     </main>
     <div v-if="passwordDialog" class="modal-backdrop" @click.self="passwordDialog = false"><section class="modal-panel"><div class="modal-heading"><div><span class="overline">ACCOUNT SECURITY</span><h2>修改密码</h2></div><button class="icon-button" type="button" title="关闭" @click="passwordDialog = false"><X :size="17" /></button></div><form class="modal-form" @submit.prevent="changePassword"><label class="field"><span>当前密码</span><input v-model="passwordForm.current_password" type="password" required /></label><label class="field"><span>新密码</span><input v-model="passwordForm.new_password" type="password" minlength="6" required /></label><label class="field"><span>确认新密码</span><input v-model="passwordForm.confirm_password" type="password" minlength="6" required /></label><div v-if="passwordMessage" class="login-error">{{ passwordMessage }}</div><div class="modal-actions"><button class="btn" type="button" @click="passwordDialog = false">取消</button><button class="btn primary" type="submit" :disabled="passwordBusy">{{ passwordBusy ? '保存中…' : '确认修改' }}</button></div></form></section></div>

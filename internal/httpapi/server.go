@@ -25,6 +25,7 @@ import (
 )
 
 type Server struct {
+	notifications             notificationRuntime
 	proQuality                proQualityRuntime
 	proFallback               proFallbackRuntime
 	proRestock                proRestockRuntime
@@ -159,6 +160,7 @@ func New(dataStore *store.Store, jobs *workflow.Manager) (*Server, error) {
 	for _, account := range dataStore.FreeAccounts() {
 		server.accountCycles.Store(account.ID, account.CycleID)
 	}
+	server.startNotifications()
 	go server.auditWriter()
 	server.startProAutomationMonitor()
 	server.startProQualityMonitor()
@@ -191,6 +193,7 @@ func (s *Server) Close() {
 		s.stopGPTPayOrderMonitor()
 		s.stopProAutomations()
 		s.stopProMergeJobs()
+		s.stopNotifications()
 		close(s.auditStop)
 		s.stopMailInfoJobs()
 		s.auditWG.Wait()
@@ -200,6 +203,9 @@ func (s *Server) Close() {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.ejhRoutes(mux)
+	mux.HandleFunc("GET /api/notifications", s.getNotifications)
+	mux.HandleFunc("PUT /api/notifications", s.saveNotifications)
+	mux.HandleFunc("POST /api/notifications/test", s.testNotification)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) { writeAPI(w, 200, map[string]string{"status": "ok"}, "") })
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPI(w, 200, map[string]string{"status": "ready"}, "")

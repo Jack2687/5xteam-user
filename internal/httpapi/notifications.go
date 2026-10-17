@@ -1,0 +1,178 @@
+package httpapi
+
+import (
+	"chapt-space-user/internal/model"
+	"chapt-space-user/internal/notify"
+	"chapt-space-user/internal/store"
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+)
+
+type notificationEvent struct {
+	Kind, Title, Text string
+	At                time.Time
+}
+type notificationRuntime struct {
+	queue  chan notificationEvent
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	client *http.Client
+}
+
+func (s *Server) startNotifications() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.notifications.cancel = cancel
+	s.notifications.queue = make(chan notificationEvent, 256)
+	s.notifications.wg.Add(1)
+	go func() {
+		defer s.notifications.wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event := <-s.notifications.queue:
+				s.deliverNotification(ctx, event)
+			}
+		}
+	}()
+}
+func (s *Server) stopNotifications() {
+	if s.notifications.cancel != nil {
+		s.notifications.cancel()
+	}
+	s.notifications.wg.Wait()
+}
+func (s *Server) queueNotification(kind, title, text string) {
+	if s.notifications.queue == nil {
+		return
+	}
+	select {
+	case s.notifications.queue <- notificationEvent{Kind: kind, Title: title, Text: text, At: time.Now()}:
+	default:
+		slog.Warn("notification queue full", "event", kind)
+	}
+}
+func (s *Server) deliverNotification(ctx context.Context, event notificationEvent) {
+	settings, err := s.store.NotificationSettings()
+	if err != nil {
+		slog.Error("read notification settings failed")
+		return
+	}
+	if !settings.Accepts(event.Kind) {
+		return
+	}
+	for _, bot := range settings.Bots {
+		if !bot.Enabled {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		text := "Space · " + event.Title + "\n" + event.Text + "\n时间：" + event.At.In(time.FixedZone("Asia/Shanghai", 8*3600)).Format("2006-01-02 15:04:05")
+		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := notify.Send(requestCtx, s.notifications.client, bot, text)
+		cancel()
+		entry := store.NotificationLog{At: time.Now(), Bot: bot.Name, Kind: event.Kind, Title: event.Title, Status: "sent"}
+		if err != nil {
+			entry.Status = "failed"
+			entry.Error = err.Error()
+		}
+		if err := s.store.RecordNotification(entry); err != nil {
+			slog.Error("save notification result failed")
+		}
+	}
+}
+func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.NotificationSettings()
+	if err != nil {
+		writeAPI(w, 500, nil, "读取通知配置失败")
+		return
+	}
+	logs, err := s.store.NotificationLogs()
+	if err != nil {
+		writeAPI(w, 500, nil, "读取通知记录失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"settings": cfg.Public(), "logs": logs}, "")
+}
+func (s *Server) saveNotifications(w http.ResponseWriter, r *http.Request) {
+	var in notify.Settings
+	if decodeJSON(w, r, &in, 64<<10) != nil {
+		return
+	}
+	out, err := s.store.SaveNotificationSettings(in)
+	if err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, out, "")
+}
+func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
+	var in notify.Bot
+	if decodeJSON(w, r, &in, 8<<10) != nil {
+		return
+	}
+	cfg, err := s.store.NotificationSettings()
+	if err != nil {
+		writeAPI(w, 500, nil, "读取通知配置失败")
+		return
+	}
+	merged, err := notify.MergeSettings(notify.Settings{Bots: []notify.Bot{in}}, cfg)
+	if err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
+	bot := merged.Bots[0]
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	err = notify.Send(ctx, s.notifications.client, bot, "Space · 测试通知\n飞书机器人连接成功。")
+	entry := store.NotificationLog{At: time.Now(), Bot: bot.Name, Kind: "test", Title: "测试通知", Status: "sent"}
+	if err != nil {
+		entry.Status = "failed"
+		entry.Error = err.Error()
+	}
+	_ = s.store.RecordNotification(entry)
+	if err != nil {
+		writeAPI(w, 502, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, map[string]bool{"sent": true}, "")
+}
+
+type mergeNoticeKey struct{}
+type mergeNoticeState struct{ failed, removed bool }
+
+func (s *Server) notifyMergeFailure(ctx context.Context, p model.MailAccountProfile, stage string, retrying, uncertain bool) {
+	if state, ok := ctx.Value(mergeNoticeKey{}).(*mergeNoticeState); ok {
+		state.failed = true
+	}
+	label := proStageLabel(stage)
+	if label == "" {
+		label = "流程准备或下游处理"
+	}
+	text := fmt.Sprintf("账号：%s\n失败位置：%s\n请在 Pro 管理查看失败详情", p.Email, label)
+	if retrying {
+		text += "\n将按配置自动重试"
+	} else {
+		text += "\n本次执行已停止"
+	}
+	title := "Pro 合并失败"
+	if uncertain {
+		title = "Pro 合并结果待确认"
+		text += "\n请求响应未确认，请先核实远端结果，避免重复合并"
+	}
+	s.queueNotification("merge_result", title, text)
+}
+func (s *Server) notifyMergeRemoved(ctx context.Context, p model.MailAccountProfile) {
+	if state, ok := ctx.Value(mergeNoticeKey{}).(*mergeNoticeState); ok {
+		if state.removed {
+			return
+		}
+		state.removed = true
+	}
+	s.queueNotification("merge_result", "Pro 合并成功移出", "账号："+p.Email+"\n空间合并完成，已成功移出母号")
+}

@@ -1148,6 +1148,17 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	if profile.ManagementScope != "pro" {
 		return profile, errors.New("账号不在 Pro 管理中")
 	}
+	notice := &mergeNoticeState{}
+	ctx = context.WithValue(ctx, mergeNoticeKey{}, notice)
+	s.queueNotification("merge_start", "Pro 触发合并", "账号："+profile.Email+"\n已进入合并流程，按配置并发执行")
+	defer func() {
+		if retErr != nil && !notice.failed {
+			s.notifyMergeFailure(ctx, profile, "", false, errors.Is(retErr, errProTransferUncertain))
+		}
+		if retErr == nil && !notice.removed {
+			s.notifyMergeRemoved(ctx, firstProProfile(out, profile))
+		}
+	}()
 	if err = s.checkProQualityMerge(ctx, profile, false); err != nil {
 		return profile, err
 	}

@@ -19,6 +19,7 @@ type Settings struct {
 	SingleActiveAccount bool       `json:"single_active_account"`
 	SyncEnabled         bool       `json:"sync_enabled"`
 	SyncIntervalSeconds int        `json:"sync_interval_seconds"`
+	PageRefreshSeconds  int        `json:"page_refresh_seconds"`
 	AlertHours          int        `json:"alert_hours"`
 	ReversalFeePercent  float64    `json:"reversal_fee_percent"`
 	Templates           []Template `json:"templates"`
@@ -106,7 +107,7 @@ func (t Trade) Kind() string {
 	return "other"
 }
 func DefaultSettings() Settings {
-	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SingleActiveAccount: true, SyncIntervalSeconds: 300, AlertHours: 24, ReversalFeePercent: 6, Templates: []Template{}}
+	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SingleActiveAccount: true, SyncIntervalSeconds: 300, PageRefreshSeconds: 30, AlertHours: 24, ReversalFeePercent: 6, Templates: []Template{}}
 }
 
 var decimal = regexp.MustCompile(`^\d{1,12}(\.\d{1,6})?$`)
@@ -135,6 +136,12 @@ func Positive(v string) error {
 	return nil
 }
 func Normalize(v Settings) (Settings, error) {
+	if v.PageRefreshSeconds == 0 {
+		v.PageRefreshSeconds = 30
+	}
+	if v.PageRefreshSeconds < 5 || v.PageRefreshSeconds > 86400 {
+		return v, fmt.Errorf("页面刷新间隔须为 5～86400 秒")
+	}
 	v.URL = strings.TrimRight(strings.TrimSpace(v.URL), "/")
 	if v.URL == "" {
 		v.URL = DefaultSettings().URL

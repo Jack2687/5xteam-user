@@ -236,6 +236,7 @@ func (s *Server) runProMergeStep(ctx context.Context, p model.MailAccountProfile
 			if errors.Is(err, errProTransferUncertain) {
 				status, message = "unknown", "合并响应未确认，停止自动重试，需核实远端结果"
 			}
+			s.notifyMergeFailure(ctx, p, stage, attempt <= settings.RetryCount && ctx.Err() == nil && !errors.Is(err, errProTransferUncertain), errors.Is(err, errProTransferUncertain))
 			s.auditProEvent(p, stage, status, settings.Provider, message, map[string]any{"execution_id": executionID, "attempt": attempt, "error": err.Error(), "will_retry": attempt <= settings.RetryCount && ctx.Err() == nil && !errors.Is(err, errProTransferUncertain), "retry_interval_seconds": settings.RetryIntervalSeconds})
 		}
 		return err
@@ -263,6 +264,14 @@ func (s *Server) runProMergeStep(ctx context.Context, p model.MailAccountProfile
 	})
 	if saveErr != nil {
 		return errors.Join(err, saveErr)
+	}
+	if err == nil {
+		if state, ok := ctx.Value(mergeNoticeKey{}).(*mergeNoticeState); ok {
+			state.failed = false
+		}
+		if stage == "remove" {
+			s.notifyMergeRemoved(ctx, p)
+		}
 	}
 	return err
 }

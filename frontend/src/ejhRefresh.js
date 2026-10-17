@@ -1,13 +1,14 @@
 // Shared across page mounts. Only a timestamp is persisted, never card data.
 export function createEJHRefreshGate({ now = Date.now, storage = () => globalThis.sessionStorage } = {}) {
-  const key = 'ejh:last-page-refresh:v1', cooldown = 30000
+  const key = 'ejh:last-page-refresh:v1'
   let lastAttempt = null, active = null
   function stamp() {
     lastAttempt = now()
     try { storage()?.setItem(key, String(lastAttempt)) } catch {}
   }
   return {
-    begin(automatic = false) {
+    begin(automatic = false, intervalSeconds = 30) {
+      const cooldown = ejhPageRefreshSeconds(intervalSeconds) * 1000
       if (active) return { reason: 'running', done: active.done }
       try {
         const raw = storage()?.getItem(key)
@@ -28,3 +29,8 @@ export function createEJHRefreshGate({ now = Date.now, storage = () => globalThi
   }
 }
 export const ejhRefreshGate = createEJHRefreshGate()
+
+export function ejhPageRefreshSeconds(value) {
+  const seconds = Number(value)
+  return Number.isInteger(seconds) && seconds >= 5 && seconds <= 86400 ? seconds : 30
+}

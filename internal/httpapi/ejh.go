@@ -45,6 +45,7 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 }
 func (s *Server) ejhRoutes(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/ejh/recharge-ledger", s.saveEJHRechargeLedger)
+	m.HandleFunc("PUT /api/ejh/recharge-period", s.saveEJHRechargePeriod)
 	m.HandleFunc("DELETE /api/ejh/cases/unopened", s.deleteEJHUnopenedCases)
 	m.HandleFunc("DELETE /api/ejh/cases/{id}", s.deleteEJHUnopenedCases)
 	m.HandleFunc("PUT /api/ejh/cases/{id}/state", s.setEJHCaseState)
@@ -86,6 +87,7 @@ func (s *Server) saveEJHSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	in.SingleActiveAccount = current.SingleActiveAccount
 	in.ReversalFeePercent = current.ReversalFeePercent
+	in.PageRefreshSeconds = current.PageRefreshSeconds
 	if decodeJSON(w, r, &in, 256<<10) != nil {
 		return
 	}
@@ -277,7 +279,7 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applyEJHFinancialConsumption(cases, usage)
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "reversal_fee_percent": settings.ReversalFeePercent, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "reversal_fee_percent": settings.ReversalFeePercent, "page_refresh_seconds": settings.PageRefreshSeconds, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {
 	if len(n) > 4 {

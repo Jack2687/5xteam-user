@@ -5,7 +5,7 @@ import { api } from '../api'
 import { usdToR } from '../ejh-profit'
 import { reconciliationStatus, reconciliationCards } from '../ejh-reconciliation-view'
 import { isClosedCard } from '../card-status'
-import { ejhRefreshGate } from '../ejhRefresh'
+import { ejhRefreshGate, ejhPageRefreshSeconds } from '../ejhRefresh'
 import { formatTime } from '../utils'
 import Pagination from './Pagination.vue'
 
@@ -15,6 +15,7 @@ const data = ref(null), loading = ref(false), refreshing = ref(false), error = r
 const settings = ref(null), progress = ref({ done: 0, total: 0, label: '' }), now = ref(Date.now())
 const page = ref(1), pageSize = ref(props.defaultPageSize || 10)
 let disposed = false, timer
+const refreshSeconds = computed(() => ejhPageRefreshSeconds(data.value?.page_refresh_seconds))
 const report = computed(() => reconciliationStatus(data.value || {}, now.value, (settings.value?.sync_interval_seconds || 300) * 2))
 const value = computed(() => report.value.value)
 const rows = computed(() => reconciliationCards(data.value || {}))
@@ -44,10 +45,11 @@ async function load() {
   if (!disposed) { data.value = result; now.value = Date.now() }
 }
 async function readSaved() {
-  if (loading.value || refreshing.value || disposed) return
+  if (disposed) return
+  if (loading.value || refreshing.value) { clearTimeout(timer); timer=setTimeout(readSaved,refreshSeconds.value*1000); return }
   loading.value = true
   try { await load(); error.value = '' } catch (e) { if (!disposed) error.value = e.message }
-  finally { if (!disposed) loading.value = false }
+  finally { if (!disposed) { loading.value = false; clearTimeout(timer); timer = setTimeout(readSaved, refreshSeconds.value * 1000) } }
 }
 async function refresh() {
   if (refreshing.value || loading.value || disposed) return
@@ -85,7 +87,7 @@ onMounted(async () => {
   await readSaved()
   try { const cfg = await api('/api/ejh/settings'); if (!disposed) settings.value = cfg }
   catch (e) { if (!disposed) error.value = e.message }
-  if (!disposed) timer = setInterval(readSaved, 30000)
+
 })
 onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
 </script>
@@ -111,7 +113,7 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
       <section class="supplement"><Scale :size="18"/><div><strong>实际损耗 {{value.loss??'—'}} USD <span> / {{value.lossR??'—'}} R</span></strong><p>实际到账 − 账户余额 − 卡片余额 − 在途本金。已含上述部分成本，不再重复扣减。</p></div><button class="text-link" @click="emit('navigate','ejh-finance')">查看成本与利润 <ChevronRight :size="14"/></button></section>
       <details class="panel explanation"><summary>撤销金额差异 <b>{{value.reconciliation.shortfallUSD.amount??'0.00'}} USD</b> · 不计成本</summary><p>原付款与撤销回款的差额，按销卡退回原金额的口径展示。</p><p>未销卡 {{value.reconciliation.pendingUSD.amount??'0.00'}} USD（{{usdToR(value.reconciliation.pendingUSD.amount??'0.00')}} R）；已销卡历史 {{value.reconciliation.completedUSD.amount??'0.00'}} USD（{{usdToR(value.reconciliation.completedUSD.amount??'0.00')}} R）。</p><p>其中 {{value.closurePending??'—'}} USD 尚未计入在途；扣除此项后，其余待核对 {{value.unexplained??'—'}} USD。已计在途的金额不会再扣一次。</p></details>
       <details class="panel card-details"><summary>逐卡余额与在途 <span>{{rows.length}} 张</span></summary><div class="table-wrap"><table><thead><tr><th>卡片</th><th>卡内余额</th><th>余额 USD</th><th>在途 USD</th><th>合计 USD</th><th>余额查询时间</th></tr></thead><tbody><tr v-for="row in visible" :key="row.id"><td>{{row.name}}<small v-if="row.processing">销卡处理中</small></td><td>{{row.original??'—'}} {{row.currency}}</td><td>{{row.balance??'—'}}</td><td>{{row.pending??'—'}}</td><td><b>{{row.total??'—'}}</b></td><td>{{formatTime(row.at)}}<small v-if="row.error" class="error">查询失败，保留旧数据</small></td></tr><tr v-if="!visible.length"><td colspan="6" class="empty">暂无未销卡卡片</td></tr></tbody></table></div><Pagination :page="page" :page-size="pageSize" :total="rows.length" @update:page="page=$event" @update:page-size="pageSize=$event"/></details>
-      <footer class="footnote">按累计数据核对 · 1 USD = 6.7 R · 卡币按开卡结算比例折算，撤销费按配置比例估算。<br>数据读取每 30 秒更新；“刷新并核对”会查询卡台最新余额及交易。消费收益不参与充值资金对账。</footer>
+      <footer class="footnote">按累计数据核对 · 1 USD = 6.7 R · 卡币按开卡结算比例折算，撤销费按配置比例估算。<br>数据读取每 {{refreshSeconds}} 秒更新；“刷新并核对”会查询卡台最新余额及交易。消费收益不参与充值资金对账。</footer>
     </template>
   </div>
 </template>

@@ -49,6 +49,8 @@ func TestProRestockEmptyStartupDispatchAcrossTicks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	s.stopNotifications()
+	s.notifications.queue = make(chan notificationEvent, 10)
 	// Busy work slots leave the whole startup batch durably reserved.
 	s.proMergeMu.Lock()
 	s.proAutoRunning = 1
@@ -68,6 +70,12 @@ func TestProRestockEmptyStartupDispatchAcrossTicks(t *testing.T) {
 	tasks, _ = st.ProRestockTasks()
 	if len(tasks) != 2 || s.proRestock.decision.EmptyGroupNeed != 0 {
 		t.Fatalf("duplicate or cancelled reservation: %+v", tasks)
+	}
+	if len(s.notifications.queue) != 1 {
+		t.Fatalf("repeated checks sent %d restock notifications", len(s.notifications.queue))
+	}
+	if event := <-s.notifications.queue; event.Kind != "restock" {
+		t.Fatal(event)
 	}
 	// Simulate one original task arriving before the other obtains a slot.
 	first := tasks[0]
