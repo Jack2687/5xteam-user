@@ -102,6 +102,9 @@ func (s *Server) autoProUpdate(email, stage, status, message string) error {
 		p.ProAuto.Stage = stage
 		p.ProAuto.Steps[stage] = status
 		p.ProAuto.UpdatedAt = time.Now()
+		if status == "failed" || status == "interrupted" || stage == "login" && status == "running" {
+			p.ProAuto.RetryAt = nil
+		}
 		if p.ProAuto.StageTimes == nil {
 			p.ProAuto.StageTimes = map[string]time.Time{}
 		}
@@ -460,19 +463,7 @@ func (s *Server) runProAutomation(ctx context.Context, email string, unlock, can
 		defer release()
 	}
 	if err == nil && !resume {
-		err = s.autoProUpdate(email, "login", "running", "开始 Pro 全自动流程，建立连续登录会话")
-		if err == nil {
-			sessionCtx, stop := context.WithTimeout(ctx, time.Duration(cfg.SessionTimeoutMinutes)*time.Minute)
-			rpc := func(method string, args map[string]any) (any, error) {
-				return s.proAutoRPC(sessionCtx, email, cfg, key, card, secret, method, args)
-			}
-			if s.proAutoHooks != nil && s.proAutoHooks.Session != nil {
-				err = s.proAutoHooks.Session(sessionCtx, email, rpc)
-			} else {
-				err = s.runProContinuousSession(sessionCtx, email, rpc)
-			}
-			stop()
-		}
+		err = s.runProProvisioning(ctx, email, cfg, key, card, secret)
 	}
 	if err == nil {
 		p, _, e := s.store.MailAccountCredential(email)
@@ -586,7 +577,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 		if err = gptpay.ValidatePlanSession(cfg, session); err != nil {
 			return nil, err
 		}
-		order := gptpay.Order{Provider: cfg.Provider, Country: cfg.Country, CreditQuantity: cfg.CreditQuantity, ID: "pro-auto-" + p.ProAuto.ID, Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: cfg.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+		order := gptpay.Order{Provider: cfg.Provider, Country: cfg.Country, CreditQuantity: cfg.CreditQuantity, ID: p.ProAuto.PaymentOrderID(), Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: cfg.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 		snap := gptpay.NewSnapshot(cfg, key, secret, session)
 		// Reserve the payment atomically before attaching its stable ID. A crash
 		// between these writes still leaves an active order, preventing repayment.

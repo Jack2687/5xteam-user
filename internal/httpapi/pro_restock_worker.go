@@ -50,12 +50,12 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			}
 			continue
 		}
-		if profile.ProAuto.OrderID != "" {
+		if profile.ProAuto.ID != "" {
 			t.OrderID = profile.ProAuto.OrderID
 		}
 		t.CardID, t.AccountID = profile.ProAuto.CardID, profile.Sub2AccountID
 		if t.OrderID == "" && profile.ProAuto.ID != "" {
-			order, _, lookupErr := s.store.GPTPayOrder("pro-auto-" + profile.ProAuto.ID)
+			order, _, lookupErr := s.store.GPTPayOrder(profile.ProAuto.PaymentOrderID())
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 				return nil, 0, lookupErr
 			}
@@ -156,7 +156,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			if profile.PushStatus != "completed" && !s.proAutomationRunning(t.Email) && profile.ProAuto.Status != "waiting_quota" {
 				t.Status = "attention"
 				t.ETA = nil
-				t.Message = "流程已停止，保留原订单与在途，请在 Pro 管理中核验或续跑"
+				t.Message = firstNonEmpty(profile.ProAuto.DisplayError(), "流程已停止，保留原订单与在途，请在 Pro 管理中核验或续跑")
 			}
 			if t.OrderID != "" {
 				order, _, err := s.store.GPTPayOrder(t.OrderID)
@@ -235,7 +235,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		orderID := profile.ProAuto.OrderID
 		if orderID == "" {
 			// Recover the durable payment written just before its profile link.
-			orderID = "pro-auto-" + profile.ProAuto.ID
+			orderID = profile.ProAuto.PaymentOrderID()
 		}
 		order, _, orderErr := s.store.GPTPayOrder(orderID)
 		if orderErr != nil && !errors.Is(orderErr, sql.ErrNoRows) {

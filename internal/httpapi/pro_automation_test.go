@@ -24,6 +24,8 @@ func proAutoToken(email, version string) string {
 func configureProAutoFixture(t *testing.T, s *Server) {
 	t.Helper()
 	v := model.DefaultProSettings()
+	// Single-attempt fixtures opt out; retry tests configure their own limits.
+	v.RetryCount = 0
 	v.Sub2.URL = "http://sub2.invalid"
 	v.Sub2.Email = "admin@example.com"
 	v.Sub2.GroupIDs = []int64{1}

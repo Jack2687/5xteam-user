@@ -43,7 +43,7 @@ func (s *Server) restockExitSettled(p model.MailAccountProfile, orderID string) 
 	}
 	linked := orderID != ""
 	if orderID == "" && p.ProAuto.ID != "" {
-		orderID = "pro-auto-" + p.ProAuto.ID
+		orderID = p.ProAuto.PaymentOrderID()
 	}
 	if orderID == "" {
 		return true, nil // Historical/manual delivery without a payment link.

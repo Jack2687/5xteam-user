@@ -45,6 +45,7 @@ defineExpose({open})
 <template><Teleport to="body"><div v-if="opened" class="modal-backdrop" @click.self="close"><section class="modal pro-auto-dialog" role="dialog" aria-modal="true" aria-label="全自动开通 Pro">
 <div class="modal-heading"><h2>全自动开通 Pro</h2><button class="icon-button" title="关闭全自动窗口" :disabled="busy" @click="close"><X :size="17" /></button></div>
 <p>{{ email }}</p><ProAutoStages :state="state.stage_progress || state" />
+<p v-if="state.retry_attempts" role="status">原账号重试：第 {{ state.retry_attempts }} 次<span v-if="state.status==='running'&&state.retry_at"> · 下次执行：{{ formatTime(state.retry_at) }}</span></p>
 <p v-if="state.status==='completed'" class="done">全自动流程已完成，已移出空间。</p>
 <p v-if="state.status==='waiting_quota'">等待额度达到 {{ state.quota_used_threshold }}%，下次检测：{{ formatTime(state.next_check_at) }}</p>
 <p v-if="state.status==='awaiting_push'">RT/AT 已保存，请推送当前下游，成功后自动恢复定时额度检测；也可点击“继续后续流程”。</p>

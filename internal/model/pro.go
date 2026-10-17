@@ -1,8 +1,13 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type ProAutoState struct {
+	RetryAttempts        int                  `json:"retry_attempts,omitempty"`
+	RetryAt              *time.Time           `json:"retry_at,omitempty"`
 	StopVersion          uint64               `json:"stop_version,omitempty"`
 	StopRequested        bool                 `json:"stop_requested,omitempty"`
 	RestockRecoveries    int                  `json:"restock_recoveries,omitempty"`
@@ -26,6 +31,19 @@ type ProAutoState struct {
 	StartedAt            time.Time            `json:"started_at,omitempty"`
 	UpdatedAt            time.Time            `json:"updated_at,omitempty"`
 	NextCheckAt          *time.Time           `json:"next_check_at,omitempty"`
+}
+
+// Each confirmed unpaid retry gets a new payment key; the workflow and
+// restock task keep their identity. Recovery must use this key after a crash.
+func (s ProAutoState) PaymentOrderID() string {
+	if s.ID == "" {
+		return ""
+	}
+	id := "pro-auto-" + s.ID
+	if s.RetryAttempts > 0 {
+		id += fmt.Sprintf("-retry-%d", s.RetryAttempts)
+	}
+	return id
 }
 
 // ProSettings is intentionally independent from Team rotation push settings.
