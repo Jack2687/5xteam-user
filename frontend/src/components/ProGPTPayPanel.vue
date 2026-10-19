@@ -246,13 +246,15 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
             <div class="settings-fields">        <label class="field"><span>银行卡默认最大开通数</span><input v-model.number="settings.card_account_limit" type="number" min="1" max="10000" required/><small>未单独设置的卡沿用此上限，默认 3 个。成功开通与在途占位共同计数，同一卡号共用上限。</small></label>
 </div>
             <div class="config-divider"><h4>自动补卡</h4><p>按所选卡台优先使用最早开出的可用卡，无可用卡时补卡。各卡台单独保存模板和预算。</p></div>
-            <label class="field"><span>卡台选择</span><select v-model="automation.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select></label>
-            <div v-if="automation.card_provider==='ejh'" class="settings-fields">        <label class="toggle-row wide"><div><strong>无可用卡时自动从 EJH 开卡</strong><small>优先使用现有可用卡；新卡加入银行卡信息。结果未知时停止等待核实，不重复扣款。</small></div><input v-model="automation.ejh_auto_open" type="checkbox"/><i></i></label>
+            <label class="field"><span>默认卡台</span><select v-model="automation.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select><small>手动开通可临时切换；自动补货按禁补时段规则选择。</small></label>
+            <div class="config-divider"><h4>EJH 补卡设置</h4></div>
+            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>无可用卡时自动从 EJH 开卡</strong><small>优先使用现有可用卡；新卡加入银行卡信息。结果未知时停止等待核实，不重复扣款。</small></div><input v-model="automation.ejh_auto_open" type="checkbox"/><i></i></label>
         <label class="field"><span>EJH 开卡模板</span><select v-model="automation.ejh_template_id" :required="automation.ejh_auto_open"><option value="">请先到 EJH 卡台保存模板</option><option v-for="t in ejhTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.cardAmount}} {{t.cardCurrency}}</option></select></label>
         <label class="field"><span>自动开卡每日数量上限</span><input v-model.number="automation.ejh_daily_open_limit" type="number" min="1" max="1000" :required="automation.ejh_auto_open"/></label>
         <label class="field wide"><span>自动开卡每日刷卡额度预算（模板币种）</span><input v-model="automation.ejh_daily_amount_limit" :required="automation.ejh_auto_open" placeholder="例如 100"/><small>累计新卡额度，不含手续费和汇率差，不是实际扣款上限；按北京时间每日计算。</small></label>
 </div>
-            <div v-else class="settings-fields">
+            <div class="config-divider"><h4>环球补卡设置</h4><p>手动选环球或时段允许环球时，使用这里的模板和预算。</p></div>
+            <div class="settings-fields">
               <label class="toggle-row wide"><div><strong>无可用卡时自动从环球开卡</strong><small>优先使用环球可用卡；原开卡结果待核实时停止补卡，查询原卡继续导入。</small></div><input v-model="automation.nexovcc_auto_open" type="checkbox"/><i></i></label>
               <label class="field"><span>环球开卡模板</span><select v-model="automation.nexovcc_template_id" :required="automation.nexovcc_auto_open"><option value="">请先到环球卡台保存模板</option><option v-for="t in nexovccTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.amount}} USD</option></select></label>
               <label class="field"><span>自动开卡每日数量上限</span><input v-model.number="automation.nexovcc_daily_open_limit" type="number" min="1" max="1000" :required="automation.nexovcc_auto_open"/></label>
