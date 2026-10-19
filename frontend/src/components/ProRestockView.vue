@@ -6,6 +6,7 @@ import {createLatestRequest} from '../latestRequest'
 import Pagination from './Pagination.vue'
 import ProForecastDetails from './ProForecastDetails.vue'
 import ProRestockDecisionDetails from './ProRestockDecisionDetails.vue'
+import ProRestockTimetable from './ProRestockTimetable.vue'
 import ProForceMergeStatus from './ProForceMergeStatus.vue'
 import ProExitStatus from './ProExitStatus.vue'
 import ProFallbackPanel from './ProFallbackPanel.vue'
@@ -166,7 +167,7 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
  <template v-else>
  <ProTakeoverPanel :data="state.takeover" :push-settings="state.inherited?.sub2" :monitor-group="state.config?.group_id" compact/>
  <div class="runbar"><span><b>{{!state.config.enabled?'新增已手动暂停':noRestockActive?'每日禁补时段 · 暂停新增':monitorUnavailable?'采集异常 · 新增暂停 / 自动重试中':'后台监控已启用'}}</b> · {{state.config.mode==='auto'?'自动执行':'观察模式'}} · 配置 v{{state.config.version}}</span><span>监控组 #{{state.config.group_id||'未选择'}} · 快照 {{fmt(snap.at)}}</span></div>
- <div v-if="state.config.no_restock_enabled" class="notice" :class="{warn:noRestockActive}" role="status"><b>{{state.card_schedule?.summary||'时段外 · 使用'+cardProviderName(state.card_provider)}}（北京时间）</b><p>{{noRestockActive?state.no_restock_reason:state.card_schedule?.active?'仅所选卡台按正常补货条件执行；已开始的流程继续。':'按 Pro 管理的默认卡台和补货规则执行。'}}</p></div>
+ <ProRestockTimetable :timetable="state.purchase_timetable" :config="state.config" :now="clock+clockOffset"/>
  <p v-if="inherited.scheduled_enabled" class="notice warn">原定时任务仍已启用，会按原固定数量策略开通。同池同时使用时，新补货不能阻止原任务补号。</p>
  <div id="pro-fallback-config-slot" v-show="tab==='fallback'"></div>
  <section v-show="tab==='dashboard'">

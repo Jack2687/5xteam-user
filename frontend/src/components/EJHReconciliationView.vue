@@ -23,7 +23,7 @@ const visible = computed(() => rows.value.slice((page.value - 1) * pageSize.valu
 const blocks = computed(() => [
   { label: '充值总额', amount: value.value.gross, note: '累计手动充值总账' },
   { label: '余额及在途', amount: value.value.assets, note: '账户 + 卡片 + 待退本金', sign: '−' },
-  { label: '四项成本', amount: value.value.earnings.costUSD, note: '开卡 / 充值 / 撤销 / 清算', sign: '−' },
+  { label: '总成本', amount: value.value.earnings.costUSD, note: '开卡 / 充值 / 撤销 / 清算 / 退款费', sign: '−' },
   { label: '待核对差额', amount: value.value.gap, note: '保留差额，不计作成本', sign: '=' },
 ])
 const assets = computed(() => [
@@ -32,6 +32,7 @@ const assets = computed(() => [
   { label: '已付款在途', amount: value.value.inFlight.paymentUSD.missing ? null : value.value.inFlight.paymentUSD.amount ?? '0.00', note: '尚未退回的卡内付款本金' },
 ])
 const costs = computed(() => [
+  { label: '清算退款手续费', amount: value.value.refundFees.amount, note: '按核对登记，已计入总成本' },
   { label: '开卡费', amount: value.value.openingFee, note: `${value.value.openingCount} 张 × 0.50 USD` },
   { label: '充值手续费', amount: value.value.depositFee, note: '充值总额 × 1%' },
   { label: '授权撤销费', amount: value.value.reversal.usd.amount ?? (value.value.reversal.count ? null : '0.00'), note: `按 ${data.value?.reversal_fee_percent ?? 6}% 估算` },
