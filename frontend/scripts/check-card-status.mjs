@@ -44,3 +44,12 @@ for (const [status, label] of [['reserved','开通前预留'],['processing','开
 }
 assert.equal(cardOccupancy({...active,occupants:[{status:'success'},{status:'manual_review'}]}).label,'支付待核实')
 console.log('Passed: prepayment reservations, unresolved/deleted occupancy, issuer precedence and parallel capacity')
+
+for (const source of ['ejh', 'nexovcc']) {
+ const disabled = {...active, source, issuer_disabled: true}
+ assert.equal(cardUsage(disabled, now).label, '卡台已停用', 'Merchant switch overrides a stale available flag')
+ assert.equal(cardUsage({local: disabled}, now).label, '卡台已停用')
+ assert.equal(cardUsage({...disabled, issuer_status: source === 'ejh' ? '2' : '4'}, now).label, '已销卡')
+ assert.equal(cardUsage({...disabled, issuer_disabled: false}, now).label, '可用于开通')
+}
+console.log('Passed: disabled issuer blocks Pro use while preserving physical closure status')

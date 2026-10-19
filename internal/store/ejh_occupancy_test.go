@@ -210,6 +210,10 @@ func TestEJHOccupancySwitchAndOrdinaryCards(t *testing.T) {
 		t.Fatal("default policy", cfg, err)
 	}
 	card := ejhFixtureCard(t, s)
+	cfg, _, err = s.EJHSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg.SingleActiveAccount = false
 	if _, err = s.SaveEJHSettings(cfg, ""); err != nil {
 		t.Fatal(err)

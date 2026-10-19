@@ -12,7 +12,7 @@ for (const file of ['ProRechargeDialog.vue', 'ProAutoDialog.vue']) {
  for (const provider of ['ejh','nexovcc']) for (const auto of [false,true]) for (const available of [false,true]) {
   const calls=[]
   const settings=file==='ProAutoDialog.vue'?ref({}):reactive({})
-  const ctx=vm.createContext({computed,props:{defaultPageSize:50},blockedCards:ref([]),occupancyMessage:ref(''),settings,cardID:ref(''),cards:ref([]),total:ref(0),page:ref(1),pageSize:ref(10),busy:ref(false),email:ref(''),order:ref(null),error:ref(''),opened:ref(false),state:ref({}),requestID:'',timer:0,generation:0,clearTimeout(){},schedule(){},emit(){},path:()=>'/auto-pro',payRequestID:()=> 'local-request',api:async(path,options)=>{
+  const ctx=vm.createContext({computed,props:{defaultPageSize:50},blockedCards:ref([]),occupancyMessage:ref(''),settings,cardID:ref(''),cards:ref([]),total:ref(0),page:ref(1),pageSize:ref(10),busy:ref(false),preparingCard:ref(false),canStart:ref(true),email:ref(''),order:ref(null),error:ref(''),opened:ref(false),state:ref({}),requestID:'',timer:0,generation:0,clearTimeout(){},schedule(){},emit(){},path:()=>'/auto-pro',payRequestID:()=> 'local-request',api:async(path,options)=>{
    calls.push({path,options})
    if(options) return {pro_auto:{status:'running'}}
    if(path==='/api/pro-settings')return {card_provider:provider,ejh_auto_open:provider==='ejh'?auto:!auto,nexovcc_auto_open:provider==='nexovcc'?auto:!auto}

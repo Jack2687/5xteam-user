@@ -12,6 +12,7 @@ import (
 
 func ejhFixtureCard(t *testing.T, s *Store) gptpay.Card {
 	t.Helper()
+	ensureIssuerFixtureEnabled(t, s, "ejh")
 	c, e := s.ImportEJHCard(ejh.Card{OrderNo: "fixture-card", Number: "4242424242424242", Validity: "1299", CVV: "123", Status: "1", CardCurrency: "USD"}, true)
 	if e != nil {
 		t.Fatal(e)
@@ -232,6 +233,7 @@ func TestEJHMalformedRefreshDisablesPhysicalCard(t *testing.T) {
 func TestEJHDefaultLimitAndPhysicalCardStatus(t *testing.T) {
 	s := transferStore(t)
 	cfg := ejh.DefaultSettings()
+	cfg.Enabled, cfg.AppKey = true, "fixture-app"
 	cfg.DefaultMaxAccounts = 1
 	if _, e := s.SaveEJHSettings(cfg, "fixture-secret"); e != nil {
 		t.Fatal(e)

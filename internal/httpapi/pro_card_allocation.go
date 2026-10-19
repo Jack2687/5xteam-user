@@ -100,6 +100,9 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 		if !store.RestockCardMatches(card, taskProvider, strictProvider) {
 			return card, secret, fmt.Errorf("银行卡不属于本次开通配置的卡台，请刷新后重新选择")
 		}
+		if card.IssuerDisabled {
+			return card, secret, fmt.Errorf("该银行卡所属卡台已停用，请开启卡台后再开通 Pro")
+		}
 		if err = gptpay.ValidateCard(secret, time.Now()); err != nil {
 			return card, secret, err
 		}

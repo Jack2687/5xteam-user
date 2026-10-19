@@ -15,6 +15,7 @@ func dailyTestTime(value string) time.Time {
 
 func TestDailyEJHMergeSnapshotOnceAndLifecycle(t *testing.T) {
 	s := transferStore(t)
+	ensureIssuerFixtureEnabled(t, s, "ejh")
 	settings, _, _ := s.EJHSettings()
 	settings.SingleActiveAccount, settings.DefaultMaxAccounts = false, 100
 	if _, err := s.SaveEJHSettings(settings, ""); err != nil {

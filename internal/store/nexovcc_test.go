@@ -14,6 +14,7 @@ import (
 
 func nexStoreCard(t *testing.T, s *Store) nexovcc.Card {
 	t.Helper()
+	ensureIssuerFixtureEnabled(t, s, "nexovcc")
 	c, e := s.SaveNexovccCard(nexovcc.Card{Serial: "fixture-global-1", Status: "1", Balance: "10.00"}, &nexovcc.PrivateCard{Number: "4242424242424242", CVV: "123", Month: 12, Year: 2099})
 	if e != nil {
 		t.Fatal(e)
@@ -122,6 +123,7 @@ func TestNexovccUnknownCannotBeReleasedAndCancellationBlocksPayment(t *testing.T
 	}
 	// Even turning off single-active never permits funds operations during payment.
 	cfg := nexovcc.Defaults()
+	cfg.Enabled = true
 	cfg.SingleActiveAccount = false
 	cfg.DefaultMaxAccounts = 10
 	if _, e := s.SaveNexovccSettings(cfg, nexovcc.Credentials{}, false); e != nil {

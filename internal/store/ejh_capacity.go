@@ -11,6 +11,25 @@ import (
 )
 
 func (s *Store) issuerForPhysicalCard(q proCapacityQuery, key string) (*gptpay.Card, error) {
+	card, err := s.issuerSnapshotForPhysicalCard(q, key)
+	if err != nil || card == nil {
+		return card, err
+	}
+	// Resolve the current merchant switch from the physical binding, including
+	// duplicate/manual aliases. A card classification alone is not a binding.
+	table := "ejh_settings"
+	if card.Source == "nexovcc" {
+		table = "nexovcc_settings"
+	}
+	var enabled bool
+	if err = q.QueryRow(`SELECT COALESCE((SELECT json_extract(profile,'$.enabled') FROM ` + table + ` WHERE id=1),0)`).Scan(&enabled); err != nil {
+		return nil, err
+	}
+	card.IssuerDisabled = !enabled
+	return card, nil
+}
+
+func (s *Store) issuerSnapshotForPhysicalCard(q proCapacityQuery, key string) (*gptpay.Card, error) {
 	var sealed string
 	e := q.QueryRow(`SELECT r.sealed FROM ejh_card_links l JOIN ejh_records r ON r.kind='card' AND r.id=l.card_id WHERE l.card_key=?`, key).Scan(&sealed)
 	if errors.Is(e, sql.ErrNoRows) {
@@ -64,6 +83,13 @@ func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 	if e != nil {
 		return e
 	}
+	if c != nil && c.IssuerDisabled {
+		name := "EJH"
+		if c.Source == "nexovcc" {
+			name = "环球"
+		}
+		return fmt.Errorf("%s 卡台已停用，不能用于新的 Pro 开通", name)
+	}
 	if c != nil && !issuerCardUsable(*c) {
 		return fmt.Errorf("卡台卡片未激活、冻结、过期或状态不可用")
 	}
@@ -71,6 +97,9 @@ func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 }
 
 func issuerCardUsable(c gptpay.Card) bool {
+	if c.IssuerDisabled {
+		return false
+	}
 	if c.Source == "nexovcc" {
 		return !c.IssuerLocked && c.IssuerStatus == "1"
 	}

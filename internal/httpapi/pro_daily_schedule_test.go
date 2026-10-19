@@ -130,6 +130,7 @@ func TestDailyEJHMergeTail(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			enableEJHPaymentFixture(t, st)
 			card, err := st.ImportEJHCard(ejh.Card{OrderNo: "daily-card", Number: "4242424242424242", Validity: "1299", CVV: "012", Status: "1", CardCurrency: "USD"}, true)
 			if err != nil {
 				t.Fatal(err)

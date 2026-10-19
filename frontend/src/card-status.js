@@ -46,6 +46,7 @@ export function cardUsage(card, now = new Date()) {
       if (timestamp <= now.getTime()) return blocked('已过期')
     }
   }
+  if (local.issuer_disabled) return blocked('卡台已停用', '开启对应卡台后才能用于新的 Pro 开通', 'pending')
   if (local.exp_year && local.exp_month && new Date(local.exp_year, local.exp_month, 1) <= now) return blocked('已过期')
   if (!local.enabled) return blocked('已禁用', '本地开关已关闭', 'pending')
   if (local.active_accounts > 0 && (local.single_active_account || local.remaining_accounts <= 0)) {

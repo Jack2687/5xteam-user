@@ -46,6 +46,7 @@ func TestForceRestockCollectorUsesSavedPolicyAndUpstreamExpiry(t *testing.T) {
 	if _, err := st.SaveProSettings(p, "fixture", ""); err != nil {
 		t.Fatal(err)
 	}
+	enableEJHPaymentFixture(t, st)
 	card, err := st.ImportEJHCard(ejh.Card{OrderNo: "force-fixture", Number: "5555555555554444", Validity: "1299", CVV: "123", Status: "1", CardCurrency: "USD"}, true)
 	if err != nil {
 		t.Fatal(err)

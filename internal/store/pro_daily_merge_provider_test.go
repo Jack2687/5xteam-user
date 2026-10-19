@@ -10,6 +10,8 @@ import (
 
 func TestDailyEJHMergeDuringNexovccWindow(t *testing.T) {
 	s := transferStore(t)
+	ensureIssuerFixtureEnabled(t, s, "ejh")
+	ensureIssuerFixtureEnabled(t, s, "nexovcc")
 	settings, _, _ := s.EJHSettings()
 	settings.SingleActiveAccount = false
 	settings.DefaultMaxAccounts = 100

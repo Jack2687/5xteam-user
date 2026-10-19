@@ -290,7 +290,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 
     <template v-else-if="mode === 'cards'">
       <section class="panel">
-        <div class="panel-title"><div><span>PAYMENT CARDS</span><h2>银行卡信息</h2><p>卡片须启用、未过期且有剩余名额；已绑定卡台的卡还须对应卡台状态可用。</p></div><button class="btn primary" :disabled="busy" @click="edit()">添加银行卡</button></div>
+        <div class="panel-title"><div><span>PAYMENT CARDS</span><h2>银行卡信息</h2><p>卡片须启用、未过期且有剩余名额；已绑定卡台的卡还须卡台已启用且卡片状态可用。</p></div><button class="btn primary" :disabled="busy" @click="edit()">添加银行卡</button></div>
         <div class="card-filter" role="group" aria-label="银行卡筛选"><button v-for="[value,label] in [['available','可开通'],['all','全部']]" :key="value" type="button" :disabled="busy" :class="{active:cardFilter===value}" :aria-pressed="cardFilter===value" @click="changeCardFilter(value)">{{label}}</button><span>{{busy?'正在读取…':`共 ${total} 张`}}</span></div>
         <div class="table-shell"><table><thead><tr><th>名称</th><th>类型</th><th>银行卡</th><th>已开通账号</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>
           <tr v-if="!rows.length"><td colspan="7" class="empty-cell">{{busy?'正在读取银行卡…':cardFilter==='available'?'暂无可开通银行卡，可切换“全部”查看':'暂无银行卡'}}</td></tr>

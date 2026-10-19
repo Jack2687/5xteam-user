@@ -137,7 +137,9 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 	}
 	card.IssuerCancelStatus = ""
 	card.IssuerFrozen = false
+	card.IssuerDisabled = false
 	if issuer != nil {
+		card.IssuerDisabled = issuer.IssuerDisabled
 		card.IssuerCancelStatus = issuer.IssuerCancelStatus
 		card.IssuerFrozen = issuer.IssuerFrozen
 		card.Source, card.IssuerOrderNo, card.IssuerStatus, card.IssuerLocked, card.IssuerEnd = issuer.Source, issuer.IssuerOrderNo, issuer.IssuerStatus, issuer.IssuerLocked, issuer.IssuerEnd
