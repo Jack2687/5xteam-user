@@ -293,17 +293,18 @@ func (c *Client) ReadFinance(ctx context.Context, progress func(string)) (Financ
 // Rebates reduce the original fee instead of becoming additional income.
 func IsFee(kind int) bool {
 	switch kind {
-	case 3003, 2003, 2007, 2008, 2009, 4005, 4006, 8888, 5001, 5003, 5004, 5008, 5009, 5010:
+	case 3003, 3004, 3005, 2003, 2007, 2008, 2009, 4005, 4006, 8888, 5001, 5003, 5004, 5008, 5009, 5010:
 		return true
 	}
 	return false
 }
 func OpeningFee(kind int) bool { return kind == 3003 || kind == 5001 }
+func ServiceFee(kind int) bool { return kind == 3004 || kind == 3005 }
 func Groups(f Finance) []TradeGroup {
 	buckets := map[string][]Trade{}
 	feesByTrade := map[string][]Fund{}
 	for _, fee := range f.Funds {
-		if IsFee(fee.Kind) && !OpeningFee(fee.Kind) && fee.Link != "" {
+		if IsFee(fee.Kind) && !OpeningFee(fee.Kind) && !ServiceFee(fee.Kind) && fee.Link != "" {
 			key := fee.Serial + "|" + fee.Link
 			feesByTrade[key] = append(feesByTrade[key], fee)
 		}

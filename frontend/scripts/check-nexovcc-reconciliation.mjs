@@ -13,6 +13,13 @@ const check=(d=data)=>reconciliation(d,now)
 assert.equal(check().gap,0)
 assert.equal(check().state,'balanced') // frozen balance and unmatched accounts must not duplicate financial amounts
 assert.equal(check().totals.cost,635)
+const service=structuredClone(data)
+service.finance.funds.push({kind:3004,currency:'USD',serial_no:'fixture-card-1',amount:'-0.20'})
+service.balance.amount='373.76'
+assert.equal(check(service).gap,0)
+assert.equal(check(service).state,'balanced')
+assert.equal(check(service).totals.cost,655)
+assert.equal(cardFunding(service,service.cards[0]).funded,12000)
 assert.equal(cardFunding(data,data.cards[0]).funded,12000)
 assert.equal(cardFunding(data,data.cards[0]).difference,null) // an open card's principal is not a loss
 const added=structuredClone(data)

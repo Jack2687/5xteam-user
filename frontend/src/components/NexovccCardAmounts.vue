@@ -8,6 +8,7 @@ const usd=v=>props.totals.ready?money(v):'—'
 const r=v=>props.totals.ready?rmb(v):'—'
 const fees=computed(()=>[
  {label:'开卡费',value:props.totals.opening,kind:'3003'},
+ {label:'卡服务费',value:props.totals.service,kind:'card-service'},
  {label:'授权撤销费',value:props.totals.reversal,kind:'2003'},
  {label:'交易手续费',value:props.totals.transaction,kind:'2007'},
  {label:'其他费用',value:props.totals.otherFees,kind:'card-other'},
@@ -20,6 +21,7 @@ const fees=computed(()=>[
   <div class="money-row"><span>消费收益</span><button @click="$emit('details',{type:'accounts'})"><strong>{{totals.unknownRevenue?'—':money(totals.revenue)}} R</strong></button></div>
   <div class="money-row"><span>卡片成本</span><button @click="$emit('details',{type:'funds',feesOnly:true})"><strong>{{r(totals.cost)}} R</strong><small>{{usd(totals.cost)}} USD</small></button></div>
   <div class="cost-note"><span>开卡 {{r(totals.opening)}} R</span><span>撤销 {{r(totals.reversal)}} R</span><span>交易及其他 {{r(totals.transaction+totals.otherFees)}} R</span><span>损耗及清算 {{r(totals.cardLoss+totals.settlement)}} R</span></div>
+  <div v-if="totals.service" class="money-row"><span>卡服务费</span><button @click="$emit('details',{type:'funds',kind:'card-service'})"><strong>{{r(totals.service)}} R</strong><small>{{usd(totals.service)}} USD</small></button></div>
   <div class="money-row profit"><span>卡片结余{{totals.pending?'（暂计）':''}}</span><strong :class="{negative:!incomplete&&totals.profit<0}">{{incomplete?'—':money(totals.profit)}} R</strong></div>
   <small>充值手续费在总账扣除</small>
   <small v-if="incomplete" class="warning">{{!totals.ready?'流水尚未同步':totals.unknownRevenue?'消费尚未查询完整':totals.unmatched||totals.unmatchedCases?'付款与账号待匹配':'部分费用待核实'}}，暂不计算结余</small>

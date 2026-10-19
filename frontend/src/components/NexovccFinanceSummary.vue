@@ -17,6 +17,7 @@ const r=v=>props.masked?'---':t.value.ready?rmb(v):'—'
   <div class="cost-row">
    <button v-if="!serial" @click="$emit('details',{type:'recharges'})"><span>成功充值 / 实际到账</span><b>{{usd(t.gross)}} / {{usd(t.received)}} USD</b><small>充值费 {{usd(t.rechargeFee)}} USD / {{r(t.rechargeFee)}} R · 1%</small></button>
    <button @click="$emit('details',{type:'funds',kind:'3003'})"><span>开卡费</span><b>{{usd(t.opening)}} USD</b><small>{{r(t.opening)}} R</small></button>
+   <button @click="$emit('details',{type:'funds',kind:'card-service'})"><span>卡服务费</span><b>{{usd(t.service)}} USD</b><small>{{r(t.service)}} R</small></button>
    <button @click="$emit('details',{type:'funds',kind:'2003'})"><span>授权撤销费</span><b>{{usd(t.reversal)}} USD</b><small>{{r(t.reversal)}} R</small></button>
    <button @click="$emit('details',{type:'funds',kind:'2007'})"><span>交易费 / 其他费用</span><b>{{usd(t.transaction)}} / {{usd(t.otherFees)}} USD</b><small>合计 {{r(t.transaction+t.otherFees)}} R</small></button>
    <button @click="$emit('details',{type:'trades'})"><span>卡内损耗 / 清算支出</span><b>{{usd(t.cardLoss)}} / {{usd(t.settlement)}} USD</b><small>{{r(t.cardLoss+t.settlement)}} R · 已结算</small></button>

@@ -69,6 +69,27 @@ func TestFinanceHARReversalAndFees(t *testing.T) {
 	}
 }
 
+func TestFinanceCardServiceFees(t *testing.T) {
+	f := fixtureFinance(t)
+	g := Groups(f)[0]
+	for _, kind := range []int{3004, 3005} {
+		f.Funds = append(f.Funds, Fund{Kind: kind, Serial: g.Serial, Link: g.TradeIDs[0], Currency: "USD", Amount: "-0.20"})
+	}
+	var fees int64
+	for _, r := range f.Funds {
+		if IsFee(r.Kind) {
+			n, _ := SignedCents(r.Amount)
+			fees -= n
+		}
+	}
+	if fees != 170 {
+		t.Fatalf("card service debits missing from fees: %d", fees)
+	}
+	if got := Groups(f)[0]; got.Cost != g.Cost || got.Fees != g.Fees {
+		t.Fatal("card service fees must not be allocated to a payment", got)
+	}
+}
+
 func TestFinancePartialAmbiguousAndSettlement(t *testing.T) {
 	original := fixtureFinance(t)
 	for _, tc := range []struct {

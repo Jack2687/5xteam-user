@@ -13,7 +13,7 @@ export function caseDetails(row, finance = {}) {
  const amounts = caseAmounts(row), group = row.match?.group
  const ids = new Set(group?.trade_ids || [])
  const trades = (finance.trades || []).filter(t => t.serial_no === group?.serial_no && ids.has(t.id))
- const funds = (finance.funds || []).filter(f => f.serial_no === group?.serial_no && ids.has(f.link) && feeKinds.includes(f.kind) && ![3003,5001].includes(f.kind))
+ const funds = (finance.funds || []).filter(f => f.serial_no === group?.serial_no && ids.has(f.link) && feeKinds.includes(f.kind) && ![3003,3004,3005,5001].includes(f.kind))
  const feeTotal = funds.reduce((s,f) => s-cents(f.amount),0)
  const feesReady = !!group?.valid && validTime(finance.at) && feeTotal === amounts.fees && funds.every(f => f.currency === 'USD' && present(f.amount))
  const fee = kinds => feesReady ? funds.filter(f=>kinds.includes(f.kind)).reduce((s,f)=>s-cents(f.amount),0) : null
