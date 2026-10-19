@@ -6,7 +6,7 @@ import '../src/styles.css'
 const now = new Date().toISOString()
 const fixture = window.proQualityFixture = {
   requests: [],
-  policy: { enabled: false, poll_interval_seconds: 60, max_result_age_seconds: 900, question_enabled: true, model_audit_enabled: false, condition_mode: 'any', action: 'merge', normal_group_ids: [], degraded_group_ids: [], auto_restore: true, recovery_limit: 2, concurrency: 4 },
+  policy: { enabled: false, poll_interval_seconds: 60, max_result_age_seconds: 900, error_failure_limit: 2, question_enabled: true, model_audit_enabled: false, condition_mode: 'any', action: 'merge', normal_group_ids: [], degraded_group_ids: [], auto_restore: true, recovery_limit: 2, concurrency: 4 },
   runtime: { running: false, total: 0, done: 0 },
   accounts: ['normal', 'degraded', 'stale', 'error'].map((status, index) => ({
     email: `quality-${index + 1}@example.com`, management_scope: 'pro', oauth_status: 'completed', push_status: 'completed', push_provider: 'sub2',

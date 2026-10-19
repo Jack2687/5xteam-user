@@ -8,12 +8,13 @@ const q = computed(() => props.account.pro_quality || {})
 const labels = { normal: '正常', variant: '正常变体', degraded: '降智', suspect: '疑似异常', unknown: '待确认', stale: '已过期', error: '查询失败' }
 const actions = { merge: '合并', groups: '切组', restore: '恢复分组' }
 const statuses = { pending: '待处理', running: '处理中', completed: '已完成', failed: '失败', cancelled: '已取消' }
-const label = computed(() => labels[q.value.status] || (props.account.push_status !== 'completed' ? '未推送' : props.account.push_provider !== 'sub2' ? '不支持' : '未查询'))
+const label = computed(() => q.value.status === 'degraded' && q.value.error_degraded ? '失败达限' : labels[q.value.status] || (props.account.push_status !== 'completed' ? '未推送' : props.account.push_provider !== 'sub2' ? '不支持' : '未查询'))
 const tone = computed(() => ({ normal: 'success', degraded: 'danger', error: 'danger', suspect: 'pending' }[q.value.status] || 'neutral'))
 </script>
 <template>
   <div class="pro-quality-cell">
     <StatusPill :tone="tone">{{ label }}</StatusPill>
+    <small v-if="q.error_failures" class="table-note">连续失败 {{ q.error_failures }}/{{ q.error_failure_limit || 2 }} 次</small>
     <small v-if="q.action && q.action_status" class="quality-action" :class="{ 'danger-text': q.action_status === 'failed' }"><LoaderCircle v-if="['pending','running'].includes(q.action_status)" class="spin" :size="11" />{{ actions[q.action] || q.action }}{{ statuses[q.action_status] || q.action_status }}</small>
     <small v-if="q.routed" class="table-note">当前在降智分组</small>
     <details v-if="q.fetched_at || q.error"><summary>检测详情</summary><div class="quality-detail">

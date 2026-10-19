@@ -10,6 +10,7 @@ type ProQualitySettings struct {
 	Enabled             bool             `json:"enabled"`
 	PollIntervalSeconds int              `json:"poll_interval_seconds"`
 	MaxResultAgeSeconds int              `json:"max_result_age_seconds"`
+	ErrorFailureLimit   int              `json:"error_failure_limit"`
 	QuestionEnabled     bool             `json:"question_enabled"`
 	ModelAuditEnabled   bool             `json:"model_audit_enabled"`
 	ConditionMode       string           `json:"condition_mode"`
@@ -24,7 +25,7 @@ type ProQualitySettings struct {
 }
 
 func DefaultProQualitySettings() ProQualitySettings {
-	return ProQualitySettings{PollIntervalSeconds: 60, MaxResultAgeSeconds: 900, QuestionEnabled: true,
+	return ProQualitySettings{PollIntervalSeconds: 60, MaxResultAgeSeconds: 900, ErrorFailureLimit: 2, QuestionEnabled: true,
 		ConditionMode: "any", Action: "merge", RecoveryLimit: 2, Concurrency: 4,
 		NormalGroupIDs: []int64{}, DegradedGroupIDs: []int64{}}
 }
@@ -43,6 +44,9 @@ func (q ProQualitySettings) DecisionSettings() QualitySettings {
 }
 
 func (q ProQualitySettings) Validate() error {
+	if q.ErrorFailureLimit < 1 || q.ErrorFailureLimit > 20 {
+		return errors.New("连续检测失败次数应为 1～20 次")
+	}
 	if q.Action != "merge" && q.Action != "groups" {
 		return errors.New("降智处理请选择切换分组或直接合并")
 	}
@@ -54,11 +58,15 @@ func (q ProQualitySettings) Validate() error {
 
 type ProQualityState struct {
 	AccountQuality
-	ActionError   string     `json:"action_error,omitempty"`
-	ValidUntil    *time.Time `json:"valid_until,omitempty"`
-	FetchedAt     *time.Time `json:"fetched_at,omitempty"`
-	MergeAttempts int        `json:"merge_attempts"`
-	NextMergeAt   *time.Time `json:"next_merge_at,omitempty"`
+	ErrorFailures     int        `json:"error_failures"`
+	ErrorFailureLimit int        `json:"error_failure_limit"`
+	ErrorSample       string     `json:"error_sample,omitempty"`
+	ErrorDegraded     bool       `json:"error_degraded"`
+	ActionError       string     `json:"action_error,omitempty"`
+	ValidUntil        *time.Time `json:"valid_until,omitempty"`
+	FetchedAt         *time.Time `json:"fetched_at,omitempty"`
+	MergeAttempts     int        `json:"merge_attempts"`
+	NextMergeAt       *time.Time `json:"next_merge_at,omitempty"`
 }
 
 func (p *MailAccountProfile) ReconcileProQualityMerge() {

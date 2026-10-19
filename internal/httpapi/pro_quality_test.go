@@ -26,6 +26,7 @@ type proQualityFixture struct {
 	writes        int
 	ambiguous     bool
 	failGroupRead bool
+	probeAt       *time.Time
 	hook          func()
 	cfg           model.ProSettings
 	policy        model.ProQualitySettings
@@ -59,7 +60,7 @@ func newProQualityFixture(t *testing.T, action string) *proQualityFixture {
 			_ = json.NewDecoder(r.Body).Decode(&input)
 			f.mu.Lock()
 			f.reads = append(f.reads, input.IDs)
-			mode, hook := f.mode, f.hook
+			mode, hook, probeAt := f.mode, f.hook, f.probeAt
 			f.mu.Unlock()
 			if hook != nil {
 				hook()
@@ -79,7 +80,14 @@ func newProQualityFixture(t *testing.T, action string) *proQualityFixture {
 			}
 			for _, id := range input.IDs {
 				now := time.Now().UTC()
+				if probeAt != nil {
+					now = *probeAt
+				}
 				verdict := sub2.RemoteQualityVerdict{Status: "degraded", Degraded: true, Failures: 2, CheckedAt: &now, EvidenceAt: &now, StreakStartedAt: &now}
+				if mode == "probe_error" {
+					verdict.Status, verdict.Error, verdict.Degraded, verdict.Failures = "error", "probe timed out", false, 0
+					verdict.EvidenceAt = nil
+				}
 				if mode == "normal" {
 					verdict.Status, verdict.Degraded, verdict.Failures, verdict.Successes = "normal", false, 0, 2
 				}

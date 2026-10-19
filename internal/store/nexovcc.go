@@ -434,6 +434,21 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, restockIDs ...string
 		if pending > 0 {
 			return fmt.Errorf("卡片仍有开通预留或未决付款，请先核实")
 		}
+		if op.AutoWithdraw {
+			// Re-read the effective per-card limit under the admission lock: an
+			// operator may have raised it after the background candidate scan.
+			limit, err := proCardLimit(tx, key.String)
+			if err != nil {
+				return err
+			}
+			opened, _, err := proCardCounts(tx, key.String, "")
+			if err != nil {
+				return err
+			}
+			if opened < limit {
+				return fmt.Errorf("自动提现须达到该卡开通上限（已开通 %d/%d）", opened, limit)
+			}
+		}
 		if op.CapacityRecycle || op.AutoWithdraw {
 			var unpaid int
 			if e = tx.QueryRow(`SELECT count(*) FROM pro_card_usage u WHERE u.card_key=? AND u.status='success' AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)`, key.String).Scan(&unpaid); e != nil {

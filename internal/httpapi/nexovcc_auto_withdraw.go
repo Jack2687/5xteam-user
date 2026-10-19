@@ -71,7 +71,7 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		if local.IssuerLocked || local.ActiveAccounts > 0 || local.PendingAccounts > 0 {
+		if local.IssuerLocked || local.ActiveAccounts > 0 || local.PendingAccounts > 0 || local.AccountLimit < 1 || local.OpenedAccounts < local.AccountLimit {
 			continue
 		}
 		id := nexovccAutoWithdrawID(card, finance)

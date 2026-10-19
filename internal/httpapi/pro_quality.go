@@ -325,9 +325,11 @@ func (s *Server) runProQualityBatch(ctx context.Context, force bool) error {
 	return nil
 }
 
+var errProQualityClock = errors.New("Sub2 与本机时间相差超过 5 分钟，暂停自动处理")
+
 func proQualityClockError(snapshot sub2.RemoteQualitySnapshot, now time.Time) error {
 	if snapshot.ServerNow.Before(now.Add(-5*time.Minute)) || snapshot.ServerNow.After(now.Add(5*time.Minute)) {
-		return errors.New("Sub2 与本机时间相差超过 5 分钟，暂停自动处理")
+		return errProQualityClock
 	}
 	return nil
 }

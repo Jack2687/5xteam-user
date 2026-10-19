@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,25 +13,39 @@ import (
 )
 
 func proQualityObservation(p model.MailAccountProfile, q model.ProQualitySettings, c model.ProSettings, snapshot sub2.RemoteQualitySnapshot, v sub2.RemoteQualityResult, readErr error) (model.ProQualityState, bool, bool) {
+	return observeProQuality(p, q, c, snapshot, v, readErr, true)
+}
+
+func observeProQuality(p model.MailAccountProfile, q model.ProQualitySettings, c model.ProSettings, snapshot sub2.RemoteQualitySnapshot, v sub2.RemoteQualityResult, readErr error, countFailure bool) (model.ProQualityState, bool, bool) {
 	state := p.ProQuality
 	identity := proQualityIdentity(p, c)
 	if state.Identity != identity {
 		state = model.ProQualityState{}
 	}
-	if state.Revision != q.Revision && !state.ActionStarted {
-		state.MergeAttempts, state.NextMergeAt = 0, nil
+	if state.Revision != q.Revision {
+		state.ErrorFailures, state.ErrorSample = 0, ""
+		if !state.ActionStarted {
+			state.MergeAttempts, state.NextMergeAt = 0, nil
+		}
 	}
 	now := time.Now().UTC()
 	next := now.Add(time.Duration(q.PollIntervalSeconds) * time.Second)
 	state.Revision, state.Identity, state.SourceProvider = q.Revision, identity, "sub2"
 	state.NextAt, state.FetchedAt = &next, &now
 	state.SourceFresh, state.SourceRecovered = false, false
+	state.Degraded, state.ErrorDegraded = false, false
+	state.ErrorFailureLimit = q.ErrorFailureLimit
 	state.ValidUntil = nil
 	if readErr != nil {
+		state.Reason = ""
 		state.Status, state.Error = "error", "Sub2 降智结果读取失败："+readErr.Error()
-		return state, false, false
+		bad := proQualityErrorObservation(&state, p, q, snapshot, v, readErr, countFailure, now)
+		return state, bad, false
 	}
 	bad, recovered := remoteQualityDecisionSince(q.DecisionSettings(), proQualitySince(p), snapshot, v)
+	if state.SourceVersion != "" && !strings.HasPrefix(state.SourceVersion, v.Revision+"|") {
+		state.ErrorFailures, state.ErrorSample = 0, ""
+	}
 	state.SourceVersion, state.SourceFailureLimit = v.Revision+"|"+v.Version, snapshot.Settings.FailureLimit
 	state.SourceModel, state.SourceQuestionAt, state.SourceModelAt = snapshot.Settings.ModelAuditModel, v.Question.EvidenceAt, v.Model.EvidenceAt
 	state.CheckedAt, state.QuestionStatus = v.Question.CheckedAt, v.Question.Status
@@ -71,8 +86,11 @@ func proQualityObservation(p model.MailAccountProfile, q model.ProQualitySetting
 			if !part.selected {
 				continue
 			}
-			if part.v.Error != "" {
+			if part.v.Error != "" || part.v.Status == "error" {
 				state.Status, state.Error = "error", part.v.Error
+				if state.Error == "" {
+					state.Error = "Sub2 检测失败"
+				}
 				break
 			}
 			if part.v.EvidenceAt != nil && snapshot.ServerNow.Sub(*part.v.EvidenceAt) > time.Duration(q.MaxResultAgeSeconds)*time.Second {
@@ -81,6 +99,9 @@ func proQualityObservation(p model.MailAccountProfile, q model.ProQualitySetting
 				state.Status = "suspect"
 			}
 		}
+	}
+	if proQualityErrorObservation(&state, p, q, snapshot, v, nil, countFailure, now) {
+		bad, recovered = true, false
 	}
 	return state, bad, recovered
 }
@@ -125,8 +146,8 @@ func (s *Server) applyProQuality(ctx context.Context, initial model.MailAccountP
 	if err != nil {
 		return
 	}
-	if p.ProQuality.SourceVersion != state.SourceVersion || p.ProQuality.Status != state.Status {
-		s.auditProEvent(updated, "quality_result", state.Status, "sub2", "读取 Sub2 降智结果", map[string]any{"question": v.Question, "model": v.Model, "error": state.Error, "bad": bad, "recovered": recovered})
+	if p.ProQuality.SourceVersion != state.SourceVersion || p.ProQuality.Status != state.Status || p.ProQuality.ErrorFailures != state.ErrorFailures || p.ProQuality.ErrorDegraded != state.ErrorDegraded {
+		s.auditProEvent(updated, "quality_result", state.Status, "sub2", "读取 Sub2 降智结果", map[string]any{"question": v.Question, "model": v.Model, "error": state.Error, "bad": bad, "recovered": recovered, "error_failures": state.ErrorFailures, "error_failure_limit": q.ErrorFailureLimit, "error_degraded": state.ErrorDegraded})
 	}
 	if !proQualityCanAct(updated) || s.proLoginAlreadyRunning(p.Email) || state.ActionStatus != "pending" || !s.proQualityPolicyCurrent(q, c) {
 		return
@@ -144,13 +165,17 @@ func (s *Server) applyProQuality(ctx context.Context, initial model.MailAccountP
 		request := &proQualityMergeRequest{Revision: q.Revision, Identity: state.Identity}
 		if _, err = s.startProMergeJobWithQuality(p.Email, lock.Unlock, request); err == nil {
 			handedOff = true
-			s.auditProEvent(updated, "quality_action", "pending", "sub2", "降智已确认，跳过额度等待并执行空间合并", nil)
+			message := "降智已确认，跳过额度等待并执行空间合并"
+			if state.ErrorDegraded {
+				message = state.Reason + "，跳过额度等待并执行空间合并"
+			}
+			s.auditProEvent(updated, "quality_action", "pending", "sub2", message, nil)
 		} else {
 			s.finishProQualityMerge(p.Email, request, err)
 		}
 		return
 	}
-	if readErr == nil && ((state.Action == "groups" && bad) || (state.Action == "restore" && recovered)) {
+	if (state.Action == "groups" && bad) || (state.Action == "restore" && recovered) {
 		s.applyProQualityGroups(ctx, updated, q, c, password)
 	}
 }
@@ -235,14 +260,25 @@ func (s *Server) checkProQualityMerge(ctx context.Context, p model.MailAccountPr
 	if !begin || p.ProQuality.ActionStarted {
 		return nil
 	}
-	snapshot, err := s.sub2.QualityResults(ctx, c.Sub2, password, []int64{p.Sub2AccountID})
-	if err != nil {
+	snapshot, readErr := s.sub2.QualityResults(ctx, c.Sub2, password, []int64{p.Sub2AccountID})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if readErr == nil {
+		readErr = proQualityClockError(snapshot, time.Now())
+	}
+	var verdict sub2.RemoteQualityResult
+	if readErr == nil {
+		verdict = snapshot.Accounts[0]
+	}
+	// Rechecking a queued action must not count as another scheduled failure.
+	state, bad, _ := observeProQuality(p, q, c, snapshot, verdict, readErr, false)
+	if !s.proQualityPolicyCurrent(q, c) {
+		return errors.New("降智配置已变化，取消本次自动合并")
+	}
+	if _, err = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) { p.ProQuality = state }); err != nil {
 		return err
 	}
-	if err = proQualityClockError(snapshot, time.Now()); err != nil {
-		return err
-	}
-	bad, _ := remoteQualityDecisionSince(q.DecisionSettings(), proQualitySince(p), snapshot, snapshot.Accounts[0])
 	if !bad || !s.proQualityPolicyCurrent(q, c) {
 		return errors.New("最新结果未确认降智或配置已变化，取消本次自动合并")
 	}

@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/nexovcc"
 )
 
 func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 	s, _ := nexFixtureServer(t)
-	pans := []string{"4242424242424242", "5555555555554444", "4000000000000002", "4000000000000010", "4000000000000028"}
+	pans := []string{"4242424242424242", "5555555555554444", "4000000000000002", "4000000000000010", "4000000000000028", "4000000000000036"}
 	cards := []nexovcc.Card{}
 	f := nexovcc.Finance{At: time.Now()}
 	balances := map[string]string{}
@@ -31,6 +32,23 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 		if i == 2 { // Fresh unused card.
 			continue
 		}
+		if i == 5 { // One activation, but a per-card limit of two.
+			local, secret, err := s.store.GPTPayCard(card.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			limit := 2
+			local.MaxAccounts = &limit
+			if _, err = s.store.SaveGPTPayCard(local, secret); err != nil {
+				t.Fatal(err)
+			}
+		}
+		at := time.Now().Add(-3 * time.Minute)
+		order := gptpay.Order{ID: fmt.Sprintf("autowd-order-%d", i), Email: fmt.Sprintf("autowd-%d@example.com", i), CardID: card.ID, Status: "success", CreatedAt: at, SucceededAt: &at}
+		order.Remote.PaymentAmount, order.Remote.PaymentCurrency = "9.00", "USD"
+		if err = s.store.CreateGPTPayOrder(order, gptpay.Snapshot{Input: gptpay.CreateInput{CardSecret: gptpay.CardSecret{Number: pan, CVV: "123", Month: 12, Year: 2099}}}); err != nil {
+			t.Fatal(err)
+		}
 		for j, status := range []string{"PENDING", "REVERSED"} {
 			if i == 4 && j == 1 { // Payment still awaiting refund.
 				continue
@@ -46,6 +64,12 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 	s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
 		serial, _ := r.Body["serial_no"].(string)
 		switch r.Path {
+		case "/api/findLogCardTrades":
+			rows := []any{}
+			for _, tr := range f.Trades {
+				rows = append(rows, map[string]any{"log_no": tr.ID, "serial_no": tr.Serial, "business_token": tr.Authorization, "money_id": 3, "trade_amount": tr.Amount, "merchant_amount": tr.MerchantAmount, "merchant_currency": tr.MerchantCurrency, "status": tr.Status, "created_at": tr.At.Format(time.RFC3339Nano)})
+			}
+			return nexReply(map[string]any{"list": rows, "total": len(rows), "page": 1}), nil
 		case "/api/card/getUserCardDetail":
 			for i, c := range cards {
 				if c.Serial == serial {
@@ -55,7 +79,7 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 		case "/api/card/getUserCardBalance":
 			return nexReply(map[string]any{"balance": balances[serial]}), nil
 		case "/api/card/userCardWithdraw":
-			if (serial != cards[0].Serial && serial != cards[1].Serial) || r.Body["amount"] != "9.00" {
+			if (serial != cards[0].Serial && serial != cards[1].Serial && serial != cards[5].Serial) || r.Body["amount"] != "9.00" {
 				t.Fatal("withdrew protected card or wrong amount", r.Body)
 			}
 			writes = append(writes, time.Now())
@@ -90,6 +114,19 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 	}
 	if err := s.autoWithdrawNexovccLocked(context.Background()); err != nil || len(writes) != 2 {
 		t.Fatal("duplicate withdrawal", err, writes)
+	}
+	// Changing the single-card limit takes effect on the next scan.
+	local, secret, err := s.store.GPTPayCard(cards[5].ID)
+	if err != nil || local.OpenedAccounts != 1 || local.AccountLimit != 2 {
+		t.Fatal(local, err)
+	}
+	one := 1
+	local.MaxAccounts = &one
+	if _, err = s.store.SaveGPTPayCard(local, secret); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.autoWithdrawNexovccLocked(context.Background()); err != nil || len(writes) != 3 {
+		t.Fatal("new per-card limit not applied", err, writes)
 	}
 	before := nexovccAutoWithdrawID(cards[0], f)
 	f.At = time.Now().Add(time.Hour)
