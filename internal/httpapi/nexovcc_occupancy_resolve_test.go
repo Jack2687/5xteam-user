@@ -19,6 +19,7 @@ func TestNexovccOccupancyResolutionAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	enableNexovccPaymentFixture(t, st)
 	card, err := st.SaveNexovccCard(nexovcc.Card{Serial: "fixture", Status: "1", Balance: "10.00"}, &nexovcc.PrivateCard{Number: "4242424242424242", CVV: "123", Month: 12, Year: 2099})
 	if err != nil {
 		t.Fatal(err)

@@ -19,7 +19,17 @@ func enableEJHPaymentFixture(t *testing.T, st *store.Store) {
 		t.Fatal(err)
 	}
 	cfg.Enabled, cfg.AppKey = true, "fixture-app"
+	cfg.URL = "https://127.0.0.1:1"
 	if _, err = st.SaveEJHSettings(cfg, "fixture-secret"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func enableNexovccPaymentFixture(t *testing.T, st *store.Store) {
+	t.Helper()
+	cfg := nexovcc.Defaults()
+	cfg.Enabled = true
+	if _, err := st.SaveNexovccSettings(cfg, nexovcc.Credentials{Login: "fixture", Password: "fixture", FundPassword: "fixture"}, false); err != nil {
 		t.Fatal(err)
 	}
 }

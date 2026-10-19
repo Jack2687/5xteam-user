@@ -18,6 +18,7 @@ func TestEJHChargeAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	enableEJHPaymentFixture(t, st)
 	card, err := st.ImportEJHCard(ejh.Card{OrderNo: "fixture", Number: "4242424242424242", Validity: "1299", CVV: "123", Status: "1"}, false)
 	if err != nil {
 		t.Fatal(err)

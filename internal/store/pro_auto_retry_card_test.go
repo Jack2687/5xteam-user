@@ -19,6 +19,7 @@ func TestProAutoFailedPaymentKeepsCardThroughRetry(t *testing.T) {
 				o := transferOrder(email, "unused", "submitting")
 				var cardID string
 				if provider == "nexovcc" {
+					ensureIssuerFixtureEnabled(t, s, "nexovcc")
 					c, err := s.SaveNexovccCard(nexovcc.Card{Serial: "retry-card", Status: "1", Balance: "10.00"}, &nexovcc.PrivateCard{Number: o.Snapshot.Input.Number, CVV: "123", Month: 12, Year: 2099})
 					if err != nil {
 						t.Fatal(err)

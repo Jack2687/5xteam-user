@@ -37,6 +37,10 @@ func TestProRestockBatchDrainsBeforeNewDemand(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.nexovcc {
+				enableNexovccPaymentFixture(t, st)
+				s.nexovcc.transport = func(context.Context, nexovcc.Request) (nexovcc.Response, error) {
+					return nexovcc.Response{}, errors.New("no issuer network expected in batch fixture")
+				}
 				for i := 0; i < tc.size; i++ {
 					_, err := st.SaveNexovccCard(nexovcc.Card{Serial: fmt.Sprintf("batch-card-%d", i), Status: "1", Balance: "10.00", CreatedAt: time.Now().Add(time.Duration(i-10) * time.Hour)}, &nexovcc.PrivateCard{Number: []string{"5555555555554444", "4000000000000002", "4242424242424242"}[i], CVV: "123", Month: 12, Year: 2099})
 					if err != nil {
