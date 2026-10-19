@@ -20,6 +20,7 @@
     "test:push-groups": "node scripts/check-push-groups.mjs",
     "test:pro-vm": "node scripts/check-pro-vm.mjs",
     "test:pro-cost": "node scripts/check-pro-cost.mjs",
+    "test:pro-takeover": "node scripts/check-pro-takeover.mjs",
     "test:pro-restock": "node scripts/check-pro-restock-requests.mjs",
     "test:pro-fallback": "node scripts/check-pro-fallback.mjs",
     "test:quality-groups": "node scripts/check-quality-groups.mjs",

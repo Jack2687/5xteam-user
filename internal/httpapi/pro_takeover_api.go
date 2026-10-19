@@ -15,6 +15,7 @@ import (
 
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/sub2"
 )
 
 type proTakeoverRuntime struct {
@@ -64,7 +65,6 @@ func (s *Server) takeoverInfo() (takeoverPeerInfo, error) {
 	}
 	groups := c.Groups
 	if c.Role == "receiver" {
-		groups = p.Sub2.GroupIDs
 		if st.Active() {
 			groups = st.Groups
 		}
@@ -129,7 +129,7 @@ func (s *Server) validateTakeoverPeer(c restock.TakeoverConfig, p model.ProSetti
 	if c.Role == "receiver" && p.AutoCardProvider() != "ejh" {
 		return errors.New("接受接管项目的 Pro 默认卡台应为 EJH")
 	}
-	targets, base := p.Sub2.GroupIDs, peer.PushGroups
+	targets, base := c.Groups, peer.PushGroups
 	if c.Role == "provider" {
 		targets, base = peer.Groups, p.Sub2.GroupIDs
 	}
@@ -171,14 +171,6 @@ func (s *Server) registerProTakeover(mux *http.ServeMux) {
 			}
 			input.PeerURL = strings.TrimRight(strings.TrimSpace(input.PeerURL), "/")
 			input.Username = strings.TrimSpace(input.Username)
-			if input.Role == "receiver" {
-				p, _, _, err := s.store.ProSettings()
-				if err != nil {
-					writeAPI(w, 500, nil, "Pro 推送设置读取失败")
-					return
-				}
-				input.Groups = slices.Clone(p.Sub2.GroupIDs)
-			}
 			// Connection test also works before a peer identity has been pinned.
 			test := input.TakeoverConfig
 			test.Enabled = false
@@ -191,6 +183,10 @@ func (s *Server) registerProTakeover(mux *http.ServeMux) {
 				writeAPI(w, 500, nil, e.Error())
 				return
 			}
+			if save && input.Version != old.Version {
+				writeAPI(w, 409, nil, "接管配置已变化，请刷新重试")
+				return
+			}
 			if input.Password != "" {
 				secret = input.Password
 			} else if old.PeerURL != input.PeerURL || old.Username != input.Username {
@@ -198,7 +194,14 @@ func (s *Server) registerProTakeover(mux *http.ServeMux) {
 				return
 			}
 			var peer takeoverPeerInfo
-			if !save || input.Enabled {
+			// Saving local configuration never depends on the other project being
+			// configured or reachable. Only the explicit enable endpoint starts it.
+			connectionChanged := old.PeerURL != input.PeerURL || old.Username != input.Username || old.Role != input.Role
+			input.PeerID = old.PeerID
+			if old.PeerURL != input.PeerURL {
+				input.PeerID = ""
+			}
+			if !save {
 				ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 				defer cancel()
 				if e = takeoverPeerCall(ctx, input.TakeoverConfig, secret, http.MethodGet, nil, &peer); e == nil {
@@ -220,18 +223,15 @@ func (s *Server) registerProTakeover(mux *http.ServeMux) {
 			}
 			s.proTakeover.mu.Lock()
 			defer s.proTakeover.mu.Unlock()
-			if input.Enabled && input.Role == "receiver" {
-				rc, re := s.store.ProRestockConfig()
-				p, _, _, pe := s.store.ProSettings()
-				if re != nil || pe != nil || !slices.Contains(input.Groups, rc.GroupID) {
-					writeAPI(w, 400, nil, "接管分组必须包含本项目监控分组")
+			if old.Enabled && connectionChanged {
+				writeAPI(w, 409, nil, "请先停用接管，再修改角色或连接信息")
+				return
+			}
+			input.Enabled = old.Enabled
+			if input.Enabled {
+				if e = s.validateTakeoverSelection(input.TakeoverConfig); e != nil {
+					writeAPI(w, 400, nil, e.Error())
 					return
-				}
-				for _, g := range input.Groups {
-					if !slices.Contains(p.Sub2.GroupIDs, g) {
-						writeAPI(w, 400, nil, "接管分组必须属于本项目 Pro 推送分组")
-						return
-					}
 				}
 			}
 			c, e := s.store.SaveProTakeoverConfig(input.TakeoverConfig, input.Password)
@@ -245,4 +245,92 @@ func (s *Server) registerProTakeover(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("POST /api/pro-takeover/test", handler(false))
 	mux.HandleFunc("PUT /api/pro-takeover/config", handler(true))
+	mux.HandleFunc("POST /api/pro-takeover/enabled", s.setProTakeoverEnabled)
+}
+
+// Keep the receiver's monitored group covered while allowing any other current
+// Sub2 OpenAI groups to be explicitly selected, independently of normal pushes.
+func (s *Server) validateTakeoverSelection(c restock.TakeoverConfig) error {
+	if c.Role != "receiver" {
+		return nil
+	}
+	rc, e := s.store.ProRestockConfig()
+	if e != nil {
+		return errors.New("补货设置读取失败")
+	}
+	if !slices.Contains(c.Groups, rc.GroupID) {
+		return errors.New("接管分组必须包含本项目监控分组")
+	}
+	return nil
+}
+
+func (s *Server) setProTakeoverEnabled(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Enabled bool `json:"enabled"`
+		Version int  `json:"version"`
+	}
+	if decodeJSON(w, r, &input, 4096) != nil {
+		return
+	}
+	c, password, e := s.store.ProTakeoverConfig()
+	if e != nil {
+		writeAPI(w, 500, nil, "接管配置读取失败")
+		return
+	}
+	if input.Version != c.Version {
+		writeAPI(w, 409, nil, "接管配置已变化，请刷新重试")
+		return
+	}
+	c.Enabled = input.Enabled
+	if input.Enabled {
+		if c.PeerURL == "" || c.Username == "" || password == "" {
+			writeAPI(w, 400, nil, "请先保存对方地址、登录账号和密码")
+			return
+		}
+		if e = s.validateTakeoverSelection(c); e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		var peer takeoverPeerInfo
+		if e = takeoverPeerCall(ctx, c, password, http.MethodGet, nil, &peer); e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+		p, secret, _, pe := s.store.ProSettings()
+		if pe != nil {
+			writeAPI(w, 500, nil, "Pro 推送设置读取失败")
+			return
+		}
+		if e = s.validateTakeoverPeer(c, p, peer); e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+		if c.Role == "receiver" {
+			groups, ge := s.sub2.Groups(ctx, p.Sub2, secret)
+			if ge != nil {
+				writeAPI(w, 400, nil, "读取 Sub2 分组失败，请刷新分组后重试")
+				return
+			}
+			for _, id := range c.Groups {
+				if !slices.ContainsFunc(groups, func(g sub2.Group) bool { return g.ID == id }) {
+					writeAPI(w, 400, nil, fmt.Sprintf("接管分组 #%d 已不存在或不是 OpenAI 分组，请刷新分组重新选择", id))
+					return
+				}
+			}
+		}
+		c.PeerID = peer.ID
+	}
+	// No network request is made while holding the monitor lock. The store's
+	// version check prevents a late response from overwriting newer settings.
+	s.proTakeover.mu.Lock()
+	defer s.proTakeover.mu.Unlock()
+	c, e = s.store.SaveProTakeoverConfig(c, "")
+	if e != nil {
+		writeAPI(w, 409, nil, e.Error())
+		return
+	}
+	s.proTakeover.next = time.Time{}
+	writeAPI(w, 200, c, "")
 }

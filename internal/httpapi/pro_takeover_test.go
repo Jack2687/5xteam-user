@@ -112,7 +112,7 @@ func TestTakeoverTwoProjectsPrepareCoverAndScheduledWithdraw(t *testing.T) {
 	}
 	rp := pp
 	rp.CardProvider = "ejh"
-	rp.Sub2.GroupIDs = []int64{42, 43}
+	rp.Sub2.GroupIDs = []int64{42, 88}
 	if _, e = rs.SaveProSettings(rp, "sub-test", ""); e != nil {
 		t.Fatal(e)
 	}
@@ -163,7 +163,7 @@ func TestTakeoverTwoProjectsPrepareCoverAndScheduledWithdraw(t *testing.T) {
 	tr.PeerURL = donorHTTP.URL
 	tr.Username = "admin"
 	tr.PeerID = ps.TakeoverInstanceID()
-	tr.Groups = []int64{42}
+	tr.Groups = []int64{42, 43}
 	tr, e = rs.SaveProTakeoverConfig(tr, "admin")
 	if e != nil {
 		t.Fatal(e)
@@ -230,6 +230,18 @@ func TestTakeoverTwoProjectsPrepareCoverAndScheduledWithdraw(t *testing.T) {
 	tick()
 	if writes != 1 {
 		t.Fatal("restart replayed membership update")
+	}
+	// Edits affect the next handoff; the current epoch must keep its pinned
+	// group set so its ledger can be withdrawn consistently at the deadline.
+	tr.Groups = []int64{42}
+	tr, e = rs.SaveProTakeoverConfig(tr, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	tick()
+	info, e := receiver.takeoverInfo()
+	if e != nil || !slices.Equal(info.Groups, []int64{42, 43}) {
+		t.Fatal("editing saved choices changed an active handoff", info, e)
 	}
 	snap, e := provider.collectProRestock(context.Background(), pc, pp, "sub-test")
 	if e != nil {
@@ -357,4 +369,173 @@ func TestTakeoverPeerAuthAndRedirectDoNotLeakCredentials(t *testing.T) {
 	if e := takeoverPeerCall(context.Background(), c, "secret", "GET", nil, &out); e == nil || hits != 0 {
 		t.Fatal("redirect followed or accepted", e, hits)
 	}
+}
+
+func TestTakeoverSaveIndependentFromEnableAndGroupSelection(t *testing.T) {
+	s, st, _ := gptPayFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected payment") })
+	s.stopProAutomations()
+	s.stopNexovcc()
+	s.stopProQuality()
+	var groupName atomic.Value
+	groupName.Store("renamed-group")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data any
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			data = map[string]any{"access_token": "test-token"}
+		case "/api/v1/admin/groups/all":
+			data = []any{map[string]any{"id": 42, "name": groupName.Load()}, map[string]any{"id": 43, "name": "additional-group"}}
+		default:
+			t.Error("unexpected Sub2 request", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
+	}))
+	defer upstream.Close()
+	p := model.DefaultProSettings()
+	p.Provider = "sub2"
+	p.CardProvider = "ejh"
+	p.Sub2 = model.Sub2Settings{URL: upstream.URL, Email: "sub@example.test", GroupIDs: []int64{42}}
+	if _, e := st.SaveProSettings(p, "sub-secret", ""); e != nil {
+		t.Fatal(e)
+	}
+	rc := restock.DefaultConfig()
+	rc.GroupID = 42
+	if _, e := st.SaveProRestockConfig(rc); e != nil {
+		t.Fatal(e)
+	}
+	var hits atomic.Int32
+	var peerRole atomic.Value
+	peerRole.Store("receiver")
+	var peerID atomic.Value
+	peerID.Store("another-project")
+	var offline atomic.Bool
+	peerHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if offline.Load() {
+			w.WriteHeader(503)
+			return
+		}
+		user, password, _ := r.BasicAuth()
+		if user != "admin" || password != "peer-secret" {
+			w.WriteHeader(401)
+			return
+		}
+		writeAPI(w, 200, takeoverPeerInfo{ID: peerID.Load().(string), Role: peerRole.Load().(string), Downstream: model.ProDownstream(p), PushGroups: []int64{7}, CardProvider: "nexovcc"}, "")
+	}))
+	defer peerHTTP.Close()
+	mux := http.NewServeMux()
+	s.registerProTakeover(mux)
+	mux.HandleFunc("GET /api/pro-restock/groups", s.getProRestockGroups)
+	call := func(method, path string, body any, status int) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(string(raw))))
+		if w.Code != status {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body.String())
+		}
+		for _, secret := range []string{"peer-secret", "sub-secret", "test-token"} {
+			if strings.Contains(w.Body.String(), secret) {
+				t.Fatal("secret leaked")
+			}
+		}
+		return w
+	}
+	type request struct {
+		restock.TakeoverConfig
+		Password string `json:"password"`
+	}
+	c := restock.DefaultTakeoverConfig()
+	c.Enabled = true
+	c.PeerID = "forged-id"
+	c.PeerURL = peerHTTP.URL
+	c.Username = "admin"
+	c.Groups = []int64{42, 43}
+	offline.Store(true)
+	call("PUT", "/api/pro-takeover/config", request{c, "peer-secret"}, 200)
+	c, password, e := st.ProTakeoverConfig()
+	if e != nil || c.Enabled || c.PeerID != "" || password != "peer-secret" || !slices.Equal(c.Groups, []int64{42, 43}) || hits.Load() != 0 {
+		t.Fatal("save contacted peer, enabled automatically, lost selection or trusted peer identity", c, e, hits.Load())
+	}
+	enabled := func(on bool, status int) *httptest.ResponseRecorder {
+		return call("POST", "/api/pro-takeover/enabled", map[string]any{"enabled": on, "version": c.Version}, status)
+	}
+	enabled(true, 400)
+	offline.Store(false)
+	if w := enabled(true, 400); !strings.Contains(w.Body.String(), "两边应分别") {
+		t.Fatal("same role accepted")
+	}
+	after, _, _ := st.ProTakeoverConfig()
+	if after.Enabled || after.Version != c.Version {
+		t.Fatal("failed enable changed saved draft")
+	}
+	peerRole.Store("provider")
+	call("POST", "/api/pro-takeover/test", request{c, ""}, 200)
+	after, _, _ = st.ProTakeoverConfig()
+	if after.Enabled || after.Version != c.Version {
+		t.Fatal("connection test changed saved configuration")
+	}
+	enabled(true, 200)
+	c, _, _ = st.ProTakeoverConfig()
+	if !c.Enabled || c.PeerID != "another-project" {
+		t.Fatal("not enabled/pinned", c)
+	}
+	info, e := s.takeoverInfo()
+	if e != nil || !slices.Equal(info.Groups, []int64{42, 43}) {
+		t.Fatal("selected groups replaced by normal pushes", info, e)
+	}
+	// Refresh gets current names even if cached push labels have not changed.
+	for _, name := range []string{"renamed-group", "renamed-again"} {
+		groupName.Store(name)
+		if w := call("GET", "/api/pro-restock/groups", nil, 200); !strings.Contains(w.Body.String(), name) {
+			t.Fatal("group name stale")
+		}
+	}
+	// Saving an enabled configuration preserves activation without a peer call.
+	offline.Store(true)
+	beforeHits := hits.Load()
+	c.LeadMinutes = 5
+	call("PUT", "/api/pro-takeover/config", request{c, ""}, 200)
+	c, _, _ = st.ProTakeoverConfig()
+	if !c.Enabled || hits.Load() != beforeHits {
+		t.Fatal("ordinary save changed enable state or contacted peer")
+	}
+	enabled(false, 200)
+	c, _, _ = st.ProTakeoverConfig()
+	if c.Enabled || hits.Load() != beforeHits {
+		t.Fatal("offline disable failed")
+	}
+	// Enabling does not silently accept a removed group or repin another project.
+	offline.Store(false)
+	c.Groups = []int64{42, 999}
+	call("PUT", "/api/pro-takeover/config", request{c, ""}, 200)
+	c, _, _ = st.ProTakeoverConfig()
+	if w := enabled(true, 400); !strings.Contains(w.Body.String(), "#999") {
+		t.Fatal("missing group accepted")
+	}
+	c.Groups = []int64{43}
+	call("PUT", "/api/pro-takeover/config", request{c, ""}, 200)
+	c, _, _ = st.ProTakeoverConfig()
+	if w := enabled(true, 400); !strings.Contains(w.Body.String(), "监控分组") {
+		t.Fatal("uncovered monitor accepted")
+	}
+	c.Groups = []int64{42, 7}
+	call("PUT", "/api/pro-takeover/config", request{c, ""}, 200)
+	c, _, _ = st.ProTakeoverConfig()
+	if w := enabled(true, 400); !strings.Contains(w.Body.String(), "常驻推送分组") {
+		t.Fatal("overlapping selection accepted")
+	}
+	c.Groups = []int64{42}
+	call("PUT", "/api/pro-takeover/config", request{c, ""}, 200)
+	c, _, _ = st.ProTakeoverConfig()
+	peerID.Store("changed-peer")
+	if w := enabled(true, 400); !strings.Contains(w.Body.String(), "身份变化") {
+		t.Fatal("changed identity accepted")
+	}
+	stale := c
+	stale.Version--
+	call("PUT", "/api/pro-takeover/config", request{stale, ""}, 409)
+	call("POST", "/api/pro-takeover/enabled", map[string]any{"version": stale.Version, "enabled": false}, 409)
 }

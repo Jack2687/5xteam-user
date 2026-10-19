@@ -72,12 +72,12 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 		writeAPI(w, 409, nil, "接管角色、对方身份或 Sub2 连接不一致")
 		return
 	}
-	groups := p.Sub2.GroupIDs
+	groups := c.Groups
 	if st.Active() {
 		groups = st.Groups
 	}
 	if c.Enabled && (len(groups) == 0 || !slices.Contains(groups, rc.GroupID)) {
-		writeAPI(w, 409, nil, "Pro 推送分组必须包含本项目监控分组")
+		writeAPI(w, 409, nil, "接管分组必须包含本项目监控分组")
 		return
 	}
 	for _, g := range groups {
