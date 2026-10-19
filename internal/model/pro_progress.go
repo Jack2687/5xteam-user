@@ -37,6 +37,40 @@ func (p MailAccountProfile) ApplyProStageOverrides(v *ProStageDisplay) {
 	}
 }
 
+// Only an explicit operator action may resume stopped work. Use persisted
+// OAuth/push results, never editable display overrides, to skip provisioning.
+func (p MailAccountProfile) CanResumeProQuota() bool {
+	a := p.ProAuto
+	if p.ManagementScope != "pro" || a.ID == "" || a.OrderID == "" || p.ProWorkflowRunning || p.SpaceMergedOnce ||
+		(p.ProMigration != nil && p.ProMigration.Paused) ||
+		p.TransferStatus != "" && p.TransferStatus != "not_started" || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" ||
+		p.ChatGPTStatus == "dead" || p.OAuthStatus != "completed" || !p.AccessTokenPresent || !p.RefreshTokenPresent ||
+		p.OAuthAuthorizedAt == nil || p.OAuthAuthorizedAt.Before(a.StartedAt) || p.PushStatus != "completed" {
+		return false
+	}
+	switch a.Status {
+	case "stopped", "failed", "interrupted", "awaiting_push":
+	default:
+		return false
+	}
+	for _, stage := range p.ProManualStages {
+		if stage.Status == "running" {
+			return false
+		}
+	}
+	if !(p.PushProvider == "sub2" && p.Sub2AccountID > 0 || p.PushProvider == "vm2api" && p.VM2 != nil && p.VM2.ReadyAt != nil && p.VM2.DeletedAt == nil) {
+		return false
+	}
+	pushAt := a.StageTimes["push:completed"]
+	if a.Steps["push"] != "completed" {
+		pushAt = time.Time{}
+	}
+	if manual := p.ProManualStages["push"]; manual.Status == "completed" && !manual.StartedAt.Before(a.StartedAt) && manual.UpdatedAt.After(pushAt) {
+		pushAt = manual.UpdatedAt
+	}
+	return !pushAt.IsZero() && !pushAt.Before(*p.OAuthAuthorizedAt) && !pushAt.Before(a.StartedAt)
+}
+
 // ReconcileProAutoManual repairs an existing paid workflow after successful
 // manual OAuth/push. Display state alone is insufficient: saved credentials,
 // authorization time and the downstream result must agree. Never create an

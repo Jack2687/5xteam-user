@@ -1,28 +1,29 @@
 <script setup>
 import { computed } from 'vue'
 import { financeOverview } from '../ejh-finance'
-const props=defineProps({data:{type:Object,required:true}})
+const props=defineProps({data:{type:Object,required:true},masked:Boolean})
+const display=value=>props.masked?'---':value
 const totals=computed(()=>financeOverview(props.data))
 const earnings=computed(()=>totals.value.earnings)
 </script>
 <template>
  <div class="finance-totals" aria-label="收益与成本汇总">
   <div class="finance-main">
-   <div><span>消费收益</span><strong>{{earnings.consumptionR??'—'}} <em>R</em></strong><small>下游用户消费 · 扣费前收益</small><small v-if="totals.consumption.missing" class="warning">{{totals.consumption.missing}} 个账号未查询，仅含已知数据</small></div>
-   <div><span>总成本 <small v-if="earnings.estimated">估算</small></span><strong>{{earnings.costR??'—'}} <em>R</em></strong><small>{{earnings.costUSD??'—'}} USD</small><small>开卡费 + 充值手续费 + 撤销费 + 清算</small><small v-if="earnings.costIncomplete" class="warning">已知 {{earnings.knownCostR??'—'}} R · {{earnings.knownCostUSD??'—'}} USD · 部分费用待核实</small></div>
-   <div class="profit"><span>净利润 <small v-if="earnings.estimated">估算</small></span><strong :class="{negative:earnings.profitR?.startsWith('-')}">{{earnings.profitR??'—'}} <em>R</em></strong><small>消费收益 − 总成本</small><small v-if="earnings.incomplete" class="warning">数据未完整，暂不计算净利润</small></div>
+   <div><span>消费收益</span><strong>{{display(earnings.consumptionR??'—')}} <em>R</em></strong><small>下游用户消费 · 扣费前收益</small><small v-if="!masked&&(totals.consumption.missing)" class="warning">{{display(totals.consumption.missing)}} 个账号未查询，仅含已知数据</small></div>
+   <div><span>总成本 <small v-if="!masked&&(earnings.estimated)">估算</small></span><strong>{{display(earnings.costR??'—')}} <em>R</em></strong><small>{{display(earnings.costUSD??'—')}} USD</small><small>开卡费 + 充值手续费 + 撤销费 + 清算</small><small v-if="!masked&&(earnings.costIncomplete)" class="warning">已知 {{display(earnings.knownCostR??'—')}} R · {{display(earnings.knownCostUSD??'—')}} USD · 部分费用待核实</small></div>
+   <div class="profit"><span>净利润 <small v-if="!masked&&(earnings.estimated)">估算</small></span><strong :class="{negative:earnings.profitR?.startsWith('-')}">{{display(earnings.profitR??'—')}} <em>R</em></strong><small>消费收益 − 总成本</small><small v-if="!masked&&(earnings.incomplete)" class="warning">数据未完整，暂不计算净利润</small></div>
   </div>
   <div class="finance-fees">
-   <div><span>开卡费</span><strong>{{earnings.openingR}} <em>R</em></strong><small>{{totals.openingFee}} USDT · {{totals.openingCount}} 张 × 0.50（含已销卡）</small></div>
-   <div><span>充值手续费</span><strong>{{earnings.rechargeR??'—'}} <em>R</em></strong><small>{{totals.depositFee??'—'}} USD · 充值总额 × 1%</small></div>
-   <div><span>授权撤销费</span><strong>{{earnings.reversalR??'—'}} <em>R</em><small v-if="totals.reversal.missing||totals.reversal.pending||totals.reversal.usd.missing" class="warning">部分待核实</small></strong><small>{{totals.reversal.usd.amount??(totals.reversal.count?'—':'0.00')}} USD · 费率 {{data.reversal_fee_percent??6}}%</small><small>{{totals.reversal.rows.map(r=>r.amount+' '+r.currency).join(' / ')||'暂无已知撤销费用'}}</small></div>
+   <div><span>开卡费</span><strong>{{display(earnings.openingR)}} <em>R</em></strong><small>{{display(totals.openingFee)}} USDT · {{display(totals.openingCount)}} 张 × 0.50（含已销卡）</small></div>
+   <div><span>充值手续费</span><strong>{{display(earnings.rechargeR??'—')}} <em>R</em></strong><small>{{display(totals.depositFee??'—')}} USD · 充值总额 × 1%</small></div>
+   <div><span>授权撤销费</span><strong>{{display(earnings.reversalR??'—')}} <em>R</em><small v-if="!masked&&(totals.reversal.missing||totals.reversal.pending||totals.reversal.usd.missing)" class="warning">部分待核实</small></strong><small>{{display(totals.reversal.usd.amount??(totals.reversal.count?'—':'0.00'))}} USD · 费率 {{display(data.reversal_fee_percent??6)}}%</small><small>{{display(totals.reversal.rows.map(r=>r.amount+' '+r.currency).join(' / ')||'暂无已知撤销费用')}}</small></div>
   </div>
   <div class="finance-extra">
-   <div><span>清算成本</span><strong>{{earnings.clearingR??'—'}} <em>R</em></strong><small>{{totals.clearing.usd.amount??'—'}} USD · {{totals.clearing.rows.map(r=>r.amount+' '+r.currency).join(' / ')||'0.00'}}</small><small>已入账清算 · 不含待退授权余款</small><small v-if="totals.clearing.missing||totals.clearing.pending" class="warning">部分清算待入账或待核实</small></div>
-   <div><span>销卡补回差额 <small>不计成本</small></span><strong>{{totals.reconciliation.shortfallUSD.missing?'待核实':totals.reconciliation.shortfallUSD.amount??'0.00'}} <em>USD</em></strong><small>{{totals.reconciliation.rows.map(r=>r.amount+' '+r.currency).join(' / ')||'0.00'}} · 撤销付款与回款的原币差额</small><small>未销卡 {{totals.reconciliation.pendingUSD.missing?'待核实':totals.reconciliation.pendingUSD.amount??'0.00'}} USD · 已销卡 {{totals.reconciliation.completedUSD.missing?'待核实':totals.reconciliation.completedUSD.amount??'0.00'}} USD</small><small>按销卡退原本金口径；已销卡部分不重复计入在途</small></div>
+   <div><span>清算成本</span><strong>{{display(earnings.clearingR??'—')}} <em>R</em></strong><small>{{display(totals.clearing.usd.amount??'—')}} USD · {{display(totals.clearing.rows.map(r=>r.amount+' '+r.currency).join(' / ')||'0.00')}}</small><small>已入账清算 · 不含待退授权余款</small><small v-if="!masked&&(totals.clearing.missing||totals.clearing.pending)" class="warning">部分清算待入账或待核实</small></div>
+   <div><span>销卡补回差额 <small>不计成本</small></span><strong>{{display(totals.reconciliation.shortfallUSD.missing?'待核实':totals.reconciliation.shortfallUSD.amount??'0.00')}} <em>USD</em></strong><small>{{display(totals.reconciliation.rows.map(r=>r.amount+' '+r.currency).join(' / ')||'0.00')}} · 撤销付款与回款的原币差额</small><small>未销卡 {{display(totals.reconciliation.pendingUSD.missing?'待核实':totals.reconciliation.pendingUSD.amount??'0.00')}} USD · 已销卡 {{display(totals.reconciliation.completedUSD.missing?'待核实':totals.reconciliation.completedUSD.amount??'0.00')}} USD</small><small>按销卡退原本金口径；已销卡部分不重复计入在途</small></div>
   </div>
-  <div class="finance-cash"><span>实际到账 <b>{{totals.netR??'—'}} R</b> <small>（{{totals.net??'—'}} USD）</small></span><span :title="totals.lossReasons.join('；')">实际损耗（资金核对）<b>{{totals.lossR??'—'}} R</b> <small>（{{totals.loss??'—'}} USD）</small></span><small>1 USD = 6.7 R · 开卡 USDT 按 1:1 USD 记账</small><small v-if="totals.lossReasons.length" class="warning">{{totals.lossReasons.join('；')}}</small><small v-if="totals.stale" class="warning">{{totals.stale}} 张卡使用上次余额</small></div>
-  <details v-if="totals.gap!==null" class="finance-reconcile"><summary>成本之外的资金差额：{{totals.gap}} USD（待核对）</summary><p>差额＝实际损耗 − 开卡费 − 授权撤销费 − 清算成本。含未销卡补回差额与汇率估算差异，不作为确定费用再次扣减利润。</p></details>
+  <div class="finance-cash"><span>实际到账 <b>{{display(totals.netR??'—')}} R</b> <small>（{{display(totals.net??'—')}} USD）</small></span><span :title="totals.lossReasons.join('；')">实际损耗（资金核对）<b>{{display(totals.lossR??'—')}} R</b> <small>（{{display(totals.loss??'—')}} USD）</small></span><small>1 USD = 6.7 R · 开卡 USDT 按 1:1 USD 记账</small><small v-if="!masked&&(totals.lossReasons.length)" class="warning">{{display(totals.lossReasons.join('；'))}}</small><small v-if="!masked&&(totals.stale)" class="warning">{{display(totals.stale)}} 张卡使用上次余额</small></div>
+  <details v-if="!masked&&(totals.gap!==null)" class="finance-reconcile"><summary>成本之外的资金差额：{{display(totals.gap)}} USD（待核对）</summary><p>差额＝实际损耗 − 开卡费 − 授权撤销费 − 清算成本。含未销卡补回差额与汇率估算差异，不作为确定费用再次扣减利润。</p></details>
  </div>
 </template>
 <style scoped>

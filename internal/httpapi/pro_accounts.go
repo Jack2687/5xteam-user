@@ -27,8 +27,9 @@ type proAccountListItem struct {
 	PushElapsedMinutes int64              `json:"push_elapsed_minutes"`
 	ForceMergeDeadline *time.Time         `json:"force_merge_deadline,omitempty"`
 	model.MailAccountProfile
-	ActivationCard *store.ProActivationCard `json:"activation_card,omitempty"`
-	StageProgress  model.ProStageDisplay    `json:"pro_stage_progress"`
+	ActivationCard       *store.ProActivationCard `json:"activation_card,omitempty"`
+	StageProgress        model.ProStageDisplay    `json:"pro_stage_progress"`
+	QuotaResumeAvailable bool                     `json:"quota_resume_available"`
 }
 
 func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]proAccountListItem, error) {
@@ -71,6 +72,9 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 			item.ClearProCostSnapshot()
 		}
 		row := proAccountListItem{MailAccountProfile: item, StageProgress: item.ProStages()}
+		if order, ok := orders[strings.ToLower(item.Email)]; ok {
+			row.QuotaResumeAvailable = item.CanResumeProQuota() && order.ID == item.ProAuto.OrderID && order.Status == "success"
+		}
 		row.FinancialCases = byEmail[strings.ToLower(item.Email)]
 		if row.FinancialCases == nil {
 			row.FinancialCases = []proFinancialCase{}

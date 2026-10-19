@@ -164,8 +164,9 @@ func (s *Server) nexovccClientLocked() (*nexovcc.Client, nexovcc.Settings, error
 	if e != nil {
 		return nil, cfg, e
 	}
-	if !cfg.Enabled || k.Login == "" || k.Password == "" {
-		return nil, cfg, fmt.Errorf("请先保存并启用环球卡台配置")
+	// The switch gates automatic work; manual management still uses saved credentials.
+	if k.Login == "" || k.Password == "" {
+		return nil, cfg, fmt.Errorf("请先保存环球卡台配置")
 	}
 	fingerprint := sha256.Sum256([]byte(fmt.Sprintf("%q/%q/%q/%q", k.Login, k.Password, k.FundPassword, k.TOTPSecret)))
 	if s.nexovcc.client == nil || fingerprint != s.nexovcc.fingerprint {
@@ -554,6 +555,9 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	client, cfg, e := s.nexovccClientLocked()
 	if e != nil {
 		return op, e
+	}
+	if automatic && !cfg.Enabled {
+		return op, fmt.Errorf("环球卡台已停用，不能自动开卡")
 	}
 	var t *nexovcc.Template
 	for i := range cfg.Templates {

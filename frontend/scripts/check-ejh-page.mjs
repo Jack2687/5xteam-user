@@ -19,7 +19,7 @@ const tick = () => new Promise(resolve=>setImmediate(resolve))
 let time=100000
 const saved = new Map(), storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
 const gate=createEJHRefreshGate({now:()=>time,storage:()=>storage})
-function fixture({defaultPageSize=10,failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[]}={}) {
+function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[]}={}) {
  const calls=[],mounts=[],unmounts=[],confirmations=[]
  let release,savedPercent=6,failSave=false
  const blocked=new Promise(resolve=>{release=resolve})
@@ -28,7 +28,7 @@ function fixture({defaultPageSize=10,failSync=false,holdSync=false,confirmDelete
   calls.push({url,options})
   if(url==='/api/ejh/settings'){
    if(options.method==='PUT'){if(failSave)throw Error('save failed');savedPercent=options.body.reversal_fee_percent}
-   return {enabled:true,reversal_fee_percent:savedPercent}
+   return {enabled,reversal_fee_percent:savedPercent}
   }
   if(url==='/api/ejh/dashboard')return {cards:[],cases:savedCases,trades:[],operations:[],audit:[],sync:{},reversal_fee_percent:savedPercent}
   if(options.method==='DELETE')return deleteResult
@@ -157,3 +157,15 @@ const expired=configuredGate.begin(true,120);assert.equal(expired.reason,undefin
 configuredNow+=6000
 const shorter=configuredGate.begin(true,5);assert.equal(shorter.reason,undefined);shorter.finish()
 console.log('Passed: configurable refresh interval and immediate manual refresh')
+
+// A disabled issuer must not refresh on entry or claim a refresh cooldown.
+time+=30000
+f=fixture({enabled:false});await f.initialize()
+assert.equal(f.calls.filter(r=>r.options.method).length,0,'disabled issuer auto queried')
+await f.refreshPage(true)
+assert.equal(f.calls.filter(r=>r.options.method).length,0,'automatic refresh bypassed switch')
+await f.refreshPage()
+assert.equal(f.calls.filter(r=>r.url==='/api/ejh/sync').length,1,'disabled manual sync blocked')
+assert.equal(f.calls.filter(r=>r.url==='/api/ejh/balance').length,1,'disabled manual balance blocked')
+f.unmount()
+console.log('Passed: disabled EJH skips automatic refresh and permits manual refresh')

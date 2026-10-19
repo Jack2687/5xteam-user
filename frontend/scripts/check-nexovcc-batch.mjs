@@ -57,3 +57,30 @@ assert.equal(cardUsage(frozen).label,'已冻结')
 assert.equal(cardUsage({...frozen.local,issuer_status:'4'}).label,'已销卡')
 assert.ok(helpers.cancelReason(frozen,[{card_id:'f',status:'unknown'}]))
 console.log('Passed: single/batch actions, server-side live balance, immediate progress, batch polling, freeze display and uncertainty guard')
+
+{
+ const calls=[],mounts=[],timers=[]
+ const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,localStorage:{getItem:()=>null},
+  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted:fn=>mounts.push(fn),onBeforeUnmount(){},clearTimeout(){},setTimeout:(fn,ms)=>{if(ms===1000)queueMicrotask(fn);else timers.push(fn)},formatTime:v=>v,
+  async api(url,options={}){
+   calls.push({url,options})
+   if(url==='/api/nexovcc/settings')return {enabled:false,page_refresh_seconds:30,templates:[]}
+   if(url==='/api/nexovcc/dashboard')return {cards:[],cases:[],operations:[],products:[],balance:{amount:'123.45'},groups:[],finance:{}}
+   if(url==='/api/nexovcc/job')return {id:'manual-job',status:'completed',message:'查询完成'}
+   if(url==='/api/nexovcc/run')return {id:'manual-job',status:'running'}
+   throw Error(url)
+  }
+ })
+ vm.runInContext(code+';globalThis.view={perform,watchUpdates,savedEnabled};',context)
+ for(const fn of mounts)await fn()
+ assert.equal(context.view.savedEnabled.value,false)
+ assert.equal(calls.some(r=>r.options.method),false,'disabled issuer refreshed on entry')
+ const before=calls.length
+ await context.view.watchUpdates()
+ assert.equal(calls.length,before,'disabled issuer continued periodic polling')
+ await context.view.perform({action:'balance'})
+ assert.equal(calls.filter(r=>r.url==='/api/nexovcc/run').length,1,'manual query blocked')
+ assert.equal(calls.find(r=>r.url==='/api/nexovcc/run').options.body.action,'balance')
+ assert.equal(calls.filter(r=>r.url==='/api/nexovcc/job').length,1,'manual progress not polled')
+ console.log('Passed: disabled Global skips automatic requests; manual query and progress remain available')
+}

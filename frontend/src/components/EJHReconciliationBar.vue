@@ -2,17 +2,18 @@
 import { computed } from 'vue'
 import { reconciliationStatus } from '../ejh-reconciliation-view'
 import { usdToR } from '../ejh-profit'
-const props=defineProps({data:{type:Object,required:true}})
+const props=defineProps({data:{type:Object,required:true},masked:Boolean})
+const display=value=>props.masked?'---':value
 const report=computed(()=>reconciliationStatus(props.data))
 const value=computed(()=>report.value.value)
-const state=computed(()=>report.value.state)
+const state=computed(()=>props.masked?'unknown':report.value.state)
 </script>
 <template>
  <section class="reconcile-bar" :class="state" aria-label="资金核对">
-  <div class="reconcile-status"><span class="status-dot"></span><div><strong>资金核对 · {{report.label}}</strong><small>按最近查询余额 · 含估算 · ≤ 1 USD 为小额差异</small></div></div>
-  <div class="reconcile-values"><div><span>账面差额</span><b>{{value.gap??'—'}} <em>USD</em></b><small>{{usdToR(value.gap)??'—'}} R</small></div><div><span>其中未销卡待补回</span><b>{{value.closurePending??'—'}} <em>USD</em></b><small>不计成本</small></div><div><span>其余待核对</span><b>{{value.unexplained??'—'}} <em>USD</em></b><small>未认定为损失</small></div></div>
-  <p v-if="value.gap!==null">充值 <b>{{value.gross}}</b> − 余额及在途 <b>{{value.assets}}</b> − 总成本 <b>{{value.earnings.costUSD}}</b> ＝ 差额 <b>{{value.gap}}</b> USD</p>
-  <p v-else>{{value.lossReasons.join('；')||'部分费用待核实，暂不能核对总账。'}}</p>
+  <div class="reconcile-status"><span class="status-dot"></span><div><strong>资金核对 · {{masked?'已关闭':report.label}}</strong><small>按最近查询余额 · 含估算 · ≤ 1 USD 为小额差异</small></div></div>
+  <div class="reconcile-values"><div><span>账面差额</span><b>{{display(value.gap??'—')}} <em>USD</em></b><small>{{display(usdToR(value.gap)??'—')}} R</small></div><div><span>其中未销卡待补回</span><b>{{display(value.closurePending??'—')}} <em>USD</em></b><small>不计成本</small></div><div><span>其余待核对</span><b>{{display(value.unexplained??'—')}} <em>USD</em></b><small>未认定为损失</small></div></div>
+  <p v-if="!masked&&value.gap!==null">充值 <b>{{display(value.gross)}}</b> − 余额及在途 <b>{{display(value.assets)}}</b> − 总成本 <b>{{display(value.earnings.costUSD)}}</b> ＝ 差额 <b>{{display(value.gap)}}</b> USD</p>
+  <p v-else-if="!masked">{{display(value.lossReasons.join('；')||'部分费用待核实，暂不能核对总账。')}}</p>
  </section>
 </template>
 <style scoped>

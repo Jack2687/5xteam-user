@@ -90,7 +90,8 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 		PaymentRetryBlocked   bool                  `json:"payment_retry_blocked"`
 		PaymentRetryHint      string                `json:"payment_retry_hint"`
 		RestockRetryAvailable bool                  `json:"restock_retry_available"`
-	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable}, "")
+		QuotaResumeAvailable  bool                  `json:"quota_resume_available"`
+	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success"}, "")
 }
 
 func (s *Server) autoProUpdate(email, stage, status, message string) error {
@@ -138,6 +139,9 @@ func (s *Server) autoProUpdate(email, stage, status, message string) error {
 func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	var input struct {
+		ResumeQuota    bool    `json:"resume_quota"`
+		ExpectedFlowID string  `json:"expected_flow_id"`
+		StopVersion    *uint64 `json:"expected_stop_version"`
 		RetryCurrent   bool    `json:"retry_current"`
 		CardID         string  `json:"card_id"`
 		PlanCode       string  `json:"plan_code"`
@@ -151,6 +155,19 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	p, _, err := s.store.MailAccountCredential(email)
 	if err != nil || p.ManagementScope != "pro" {
 		writeAPI(w, 404, nil, "Pro 账号不存在")
+		return
+	}
+	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
+	if input.ResumeQuota {
+		if automatic || input.ExpectedFlowID != p.ProAuto.ID || input.StopVersion == nil || *input.StopVersion != p.ProAuto.StopVersion {
+			writeAPI(w, 409, nil, "账号停止状态或流程已变化，请刷新后重试")
+			return
+		}
+		s.resumeProQuota(w, r, p)
+		return
+	}
+	if input.RetryCurrent && !automatic && p.CanResumeProQuota() {
+		s.resumeProQuota(w, r, p)
 		return
 	}
 	s.proAutoMu.Lock()
@@ -171,7 +188,6 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	recoveryFlowID := p.ProAuto.ID
 	stopVersion := p.ProAuto.StopVersion
 	wasStopped := p.ProAuto.StopRequested
-	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
 	if automatic && p.ProAuto.StopRequested {
 		writeAPI(w, 409, nil, "用户已停止该账号流程，未自动启动")
 		return

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"chatgpt-space-merge/internal/ejh"
 	"chatgpt-space-merge/internal/nexovcc"
@@ -23,6 +24,60 @@ func enableEJHPaymentFixture(t *testing.T, st *store.Store) {
 	if _, err = st.SaveEJHSettings(cfg, "fixture-secret"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestDisabledIssuerAllowsManualCardAdministration(t *testing.T) {
+	t.Run("ejh", func(t *testing.T) {
+		s, calls := ejhTestServer(t, 200)
+		cfg, _, err := s.store.EJHSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Enabled = false
+		if _, err = s.store.SaveEJHSettings(cfg, ""); err != nil {
+			t.Fatal(err)
+		}
+		input := ejh.OpenInput{CardType: "1", CardAmount: "10", CardCurrency: "USD", BillCurrency: "USD", UseTime: 1, MCC: "ecom", ActiveDate: time.Now().AddDate(0, 0, 30).Format("2006-01-02")}
+		if _, err = s.ejhOpenLocked(context.Background(), "disabled-auto-request-123", input, true); err == nil {
+			t.Fatal("disabled auto issued card")
+		}
+		if calls.Load() != 0 {
+			t.Fatal("automatic request reached supplier")
+		}
+		op, err := s.ejhOpenLocked(context.Background(), "disabled-manual-request-123", input, false)
+		if err != nil || op.Status != "completed" || calls.Load() != 1 {
+			t.Fatal("manual open blocked", op.Status, err, calls.Load())
+		}
+		card, _, err := s.store.GPTPayCard(op.CardID)
+		if err != nil || card.Available {
+			t.Fatal("manual administration made disabled issuer available for Pro", err)
+		}
+	})
+	t.Run("nexovcc", func(t *testing.T) {
+		s, f := nexFixtureServer(t)
+		cfg, _, err := s.store.NexovccSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Enabled = false
+		if _, err = s.store.SaveNexovccSettings(cfg, nexovcc.Credentials{}, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.openNexovccLocked(context.Background(), "disabled-auto-request-123", "template", true); err == nil || f.opens.Load() != 0 {
+			t.Fatal("disabled auto issued card", err)
+		}
+		op, err := s.openNexovccLocked(context.Background(), "disabled-manual-request-123", "template", false)
+		if err != nil || op.Status != "succeeded" || f.opens.Load() != 1 {
+			t.Fatal("disabled manual open blocked", op.Status, err)
+		}
+		if err = s.syncNexovccLocked(context.Background()); err != nil {
+			t.Fatal("disabled manual sync blocked", err)
+		}
+		card, _, err := s.store.GPTPayCard(op.CardID)
+		if err != nil || card.Available {
+			t.Fatal("manual administration made disabled issuer available for Pro", err)
+		}
+	})
 }
 
 func enableNexovccPaymentFixture(t *testing.T, st *store.Store) {

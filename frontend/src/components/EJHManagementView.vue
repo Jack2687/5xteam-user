@@ -35,6 +35,7 @@ function setCardView(value){cardView.value=value;saveCardView(window.localStorag
 const tab=ref('cards'),busy=ref(false),ready=ref(false),message=reactive({text:'',type:''})
 const settings=reactive({enabled:false,url:'https://www.ejhcard.com',app_key:'',app_secret:'',default_max_accounts:3,single_active_account:true,sync_interval_seconds:300,page_refresh_seconds:30,alert_hours:24,reversal_fee_percent:6,templates:[]})
 const savedRefreshSeconds=ref(30)
+const savedEnabled=ref(false)
 const data=ref({cards:[],cases:[],trades:[],operations:[],audit:[],balance:null,sync:{},reversal_fee_percent:6})
 const accountReturnStates={opened:returnStates.opened,waiting:returnStates.waiting,returned:returnStates.returned}
 const caseCategory=ref('normal')
@@ -136,10 +137,10 @@ async function action(fn,label='正在处理，请稍候'){
  finally{clearInterval(timer);busy.value=false;progress.value.finished=true;if(progress.value.phase==='正在请求服务器')progress.value.phase=message.text||'操作完成'}
 }
 async function load(){const result=await api('/api/ejh/dashboard');if(!disposed){data.value=result;selectedCards.value=selectedCards.value.filter(id=>result.cards.some(c=>c.id===id&&!cancelReason(c)));if(progress.value?.cancellation){refreshCancellationProgress(progress.value,result.operations);show(progress.value.phase,progress.value.failed?'error':progress.value.processing||progress.value.unknown?'info':'success')}if(openUncertain.value&&result.operations?.some(o=>o.id===openForm.request_id&&['completed','resolved','failed'].includes(o.status))){openForm.request_id='';openUncertain.value=false}}}
-async function save(){await action(async()=>{const result=await api('/api/ejh/settings',{method:'PUT',body:settings});Object.assign(settings,result,{app_secret:''});savedRefreshSeconds.value=result.page_refresh_seconds||30;data.value.reversal_fee_percent=result.reversal_fee_percent;show('EJH 配置已保存')})}
+async function save(){await action(async()=>{const result=await api('/api/ejh/settings',{method:'PUT',body:settings});Object.assign(settings,result,{app_secret:''});savedEnabled.value=result.enabled===true;savedRefreshSeconds.value=result.page_refresh_seconds||30;data.value.reversal_fee_percent=result.reversal_fee_percent;show('EJH 配置已保存')})}
 async function test(){await action(async()=>{await api('/api/ejh/test',{method:'POST',body:{}});await load();show('连接成功，余额已更新（使用已保存配置）')})}
 async function refreshAllBalances(includeSync = false, automatic = false) {
- if(busy.value || disposed)return
+ if(busy.value || disposed || (automatic && !savedEnabled.value))return
  const lease=ejhRefreshGate.begin(automatic,savedRefreshSeconds.value)
  if(lease.reason){
   if(lease.reason==='running'){
@@ -180,9 +181,9 @@ async function refreshAllBalances(includeSync = false, automatic = false) {
  },'刷新数据')
  } finally { lease.finish() }
 }
-async function refreshPage(automatic = false) { if(settings.enabled && !disposed) await refreshAllBalances(true, automatic === true) }
+async function refreshPage(automatic = false) { if(!disposed && (automatic!==true || savedEnabled.value)) await refreshAllBalances(true, automatic === true) }
 async function initialize() {
- await action(async()=>{const cfg=await api('/api/ejh/settings');if(disposed)return;Object.assign(settings,cfg);savedRefreshSeconds.value=cfg.page_refresh_seconds||30;await load();ready.value=true})
+ await action(async()=>{const cfg=await api('/api/ejh/settings');if(disposed)return;Object.assign(settings,cfg);savedEnabled.value=cfg.enabled===true;savedRefreshSeconds.value=cfg.page_refresh_seconds||30;await load();ready.value=true})
  if(ready.value && !disposed) await refreshPage(true)
 }
 function addTemplate(){settings.templates.push({id:crypto.randomUUID(),name:'新模板',valid_days:30,cardType:'',cardAmount:'',cardCurrency:'USD',billCurrency:'USD',useTime:1,companyRate:'0.01',activeDate:'',supportedMccGroup:'ecom',extInfoyx:'',OrderTitle:'',OrderGuestName:'',OrderActiveDate:'',OrderExpiryDate:'',amount:''})}
@@ -287,7 +288,7 @@ function overdue(c){return c.state==='waiting'&&c.requested_at&&Date.now()-Date.
 onMounted(()=>window.addEventListener('keydown',keydown))
 onMounted(initialize)
 let savedDataTimer
-onMounted(()=>{savedDataTimer=setInterval(()=>{if(ready.value&&!busy.value&&!disposed)load().catch(e=>show(e.message,'error'))},5000)})
+onMounted(()=>{savedDataTimer=setInterval(()=>{if(ready.value&&savedEnabled.value&&!busy.value&&!disposed)load().catch(e=>show(e.message,'error'))},5000)})
 onBeforeUnmount(()=>clearInterval(savedDataTimer))
 onBeforeUnmount(()=>{window.removeEventListener('keydown',keydown);disposed=true;settings.app_secret='';detail.value=null})
 </script>
@@ -296,7 +297,7 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',keydown);disposed=true
   <header class="ejh-heading"><div><span class="overline">CARD OPERATIONS</span><h1>EJH 卡台</h1><p>卡片、开通账号与回款记录，一个地方查看。</p></div><div class="ejh-toolbar"><button class="btn ghost" :class="{selected:tab==='settings'}" @click="changeTab('settings')"><Settings2 :size="16"/>配置与模板</button><button class="btn primary" @click="changeTab('open')"><Plus :size="16"/>新建卡片</button></div></header>
   <MessageBar v-if="message.text" :message="message"/><EJHProgress v-if="progress" :progress="progress" @stop="progress.stopRequested=true" @dismiss="progress=null"/>
   <div class="ejh-stats"><button v-for="(label,key) in returnStates" :key="key" :class="['ejh-stat',key,{selected:tab==='cases'&&(key==='unopened'?caseCategory==='unopened':caseCategory==='normal'&&status===key)}]" @click="showCaseState(key)"><span class="ejh-stat-icon"><component :is="statIcons[key]" :size="21"/></span><span class="ejh-stat-value"><ReturnStatusBadge :state="key"/><strong>{{counts[key]||0}}<em>条订单</em></strong></span><ArrowUpRight :size="16"/></button></div>
-  <EJHBalanceOverview :data="data" :busy="busy" :ready="ready" :enabled="settings.enabled" :progress="balanceProgress" :failures="balanceFailures" @refresh="refreshPage" @ledger-updated="data.recharge_ledger=$event"/>
+  <EJHBalanceOverview :data="data" :busy="busy" :ready="ready" :enabled="savedEnabled" :progress="balanceProgress" :failures="balanceFailures" @refresh="refreshPage" @ledger-updated="data.recharge_ledger=$event"/>
   <div class="ejh-statusbar"><span class="ejh-connection"><i :class="{enabled:settings.enabled}"></i>{{settings.enabled?'接口已启用':'接口未启用'}}</span><span class="ejh-last-sync">最近更新 {{formatTime(data.sync?.last_success)}}</span><span>{{settings.enabled?'后台每 '+settings.sync_interval_seconds+' 秒自动对账':'接口未启用，显示保存数据'}} · 销卡退回确认后停止查询</span></div><p v-if="data.sync?.error" class="danger-text">最近更新有异常：{{data.sync.error}}。成功项目已保存，失败项目保留旧数据，将按配置间隔重试。</p>
   <nav class="ejh-tabs" aria-label="EJH 管理分区"><button v-for="[id,label] in tableTabs" :key="id" :aria-current="tab===id?'page':undefined" :class="{active:tab===id}" @click="changeTab(id)">{{label}}<span v-if="id==='cards'">{{data.cards.length}}</span></button></nav>
   <form v-if="tab==='settings'" class="panel ejh-settings" @submit.prevent="save" @invalid.capture="revealInvalid">

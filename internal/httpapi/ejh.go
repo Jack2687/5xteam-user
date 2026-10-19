@@ -38,8 +38,9 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 	if e != nil {
 		return c, k, e
 	}
-	if !c.Enabled || !c.SecretPresent {
-		return c, k, fmt.Errorf("请先在 EJH 卡台保存并启用接口配置")
+	// Manual card administration remains available while automation is disabled.
+	if !c.SecretPresent {
+		return c, k, fmt.Errorf("请先在 EJH 卡台保存接口配置")
 	}
 	return c, k, nil
 }
@@ -291,6 +292,9 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 	c, k, e := s.ejhConfig()
 	if e != nil {
 		return ejh.Operation{}, e
+	}
+	if automatic && !c.Enabled {
+		return ejh.Operation{}, fmt.Errorf("EJH 卡台已停用，不能自动开卡")
 	}
 	if e = ejh.ValidateOpen(input, time.Now()); e != nil {
 		return ejh.Operation{}, e
@@ -690,6 +694,9 @@ func (s *Server) validateEJHAutomation(v model.ProSettings) error {
 		cfg, _, e := s.ejhConfig()
 		if e != nil {
 			return e
+		}
+		if !cfg.Enabled {
+			return fmt.Errorf("请先启用 EJH 卡台")
 		}
 		for _, t := range cfg.Templates {
 			if t.ID == v.EJHTemplateID {
