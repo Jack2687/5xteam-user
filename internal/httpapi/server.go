@@ -29,6 +29,7 @@ type Server struct {
 	proQuality                proQualityRuntime
 	proFallback               proFallbackRuntime
 	proRestock                proRestockRuntime
+	proTakeover               proTakeoverRuntime
 	ejh                       ejhRuntime
 	nexovcc                   nexovccRuntime
 	downstreamMu              sync.Mutex

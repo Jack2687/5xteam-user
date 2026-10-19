@@ -59,6 +59,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if path == "/api/pro-takeover/peer" {
+			username, password, ok := r.BasicAuth()
+			if !ok || !s.store.CheckUserPassword(username, password) {
+				writeAPI(w, http.StatusUnauthorized, nil, "对方 Space 登录认证失败")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		if path == "/api/integrations/turb/register" {
 			username, password, ok := r.BasicAuth()
 			if !ok || !s.store.CheckUserPassword(username, password) {

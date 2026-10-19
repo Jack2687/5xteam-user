@@ -124,7 +124,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			t.Stages["push:completed"] = pushedAt
 		}
 		if a, ok := byID[t.AccountID]; ok {
-			verified = a.Ready && restockSnapshotFresh(c, snap, now) && snap.RefreshedAfter(pushedAt) && t.Binding == snap.Binding && t.GroupID == snap.GroupID
+			verified = a.Ready && !a.TakeoverPending && restockSnapshotFresh(c, snap, now) && snap.RefreshedAfter(pushedAt) && t.Binding == snap.Binding && t.GroupID == snap.GroupID
 		}
 		if (t.Binding != snap.Binding || t.GroupID != snap.GroupID) && profile.PushStatus == "completed" {
 			pinned, secret, _, pe := s.proAccountPushSettings(profile)
@@ -372,7 +372,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	}
 	if !snap.Valid || !snap.LoadValid {
 		last, le := s.store.ProRestockSnapshot()
-		if le == nil && last.Binding == restockBinding(p) && last.GroupID == c.GroupID && last.Valid && last.LoadValid {
+		if le == nil && last.Binding == restockBinding(p) && last.GroupID == c.GroupID && last.TakeoverToken == snap.TakeoverToken && last.Valid && last.LoadValid {
 			last.Valid, last.LoadValid, last.Error = false, false, snap.Error
 			snap = last
 		}
@@ -394,7 +394,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	}
 	batchWaiting := restock.WaitForBatch(snap, tasks) != nil
 	s.proRestock.mu.Lock()
-	if batchWaiting || c.Version != s.proRestock.lastVersion || snap.Binding != s.proRestock.lastSnapshot.Binding || !snap.Valid || !snap.LoadValid {
+	if batchWaiting || c.Version != s.proRestock.lastVersion || snap.Binding != s.proRestock.lastSnapshot.Binding || snap.TakeoverToken != s.proRestock.lastSnapshot.TakeoverToken || !snap.Valid || !snap.LoadValid {
 		s.proRestock.confirmation = 0
 		s.proRestock.exitConfirmation = 0
 	}
@@ -424,11 +424,31 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if e != nil {
 		return e
 	}
-	d := restock.Evaluate(c, snap, tasks, limits, confirm, p.Sub2.AccountConcurrency, lead, now)
+	s.observeTakeoverRecovery(c, snap, tasks)
+	tc, _, te := s.store.ProTakeoverConfig()
+	ts, tse := s.store.ProTakeoverState()
+	takeoverBlock := ts.Block(tc, now)
+	if te != nil || tse != nil {
+		takeoverBlock = "接管状态读取失败，暂停新增"
+	}
+	if snap.TakeoverToken != ts.Token(tc) {
+		takeoverBlock = "接管阶段已变化，等待新快照"
+	}
+	evalConfig := c
+	if tc.Role == "provider" && ts.Taking() {
+		evalConfig.Reserve = max(c.Reserve, tc.SupportMinAccounts)
+	}
+	if tc.Role == "receiver" && ts.Phase == "recovering" {
+		evalConfig.Reserve = max(c.Reserve, tc.ReturnMinAccounts)
+	}
+	d := restock.Evaluate(evalConfig, snap, tasks, limits, confirm, p.Sub2.AccountConcurrency, lead, now)
+	if takeoverBlock != "" {
+		d.Suggested, d.Reason = 0, takeoverBlock
+	}
 	d.CardProvider, d.CardSchedule = c.EffectiveCardProvider(now, p.AutoCardProvider()), c.CardSchedule(now)
 	d.ID = randomRegistrationID()
 	for i, t := range tasks {
-		if t.Status == "reserved" && d.NoRestockActive {
+		if t.Status == "reserved" && (d.NoRestockActive || takeoverBlock != "" || t.TakeoverToken != snap.TakeoverToken) {
 			if err := s.store.CancelProRestock(t, "进入每日禁补时段，撤销未启动预留；结束后按新快照重新评估"); err != nil {
 				return err
 			}
@@ -472,7 +492,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	}
 	// Every reserved member belongs to an already committed batch. Continue
 	// that batch independently of fluctuating demand or missing money samples.
-	if purchaseErr == nil && c.Enabled && c.Mode == "auto" && !d.NoRestockActive && d.DemandKnown && limits.Failures < c.FailureLimit && ctx.Err() == nil {
+	if purchaseErr == nil && takeoverBlock == "" && c.Enabled && c.Mode == "auto" && !d.NoRestockActive && d.DemandKnown && limits.Failures < c.FailureLimit && ctx.Err() == nil {
 		s.dispatchProRestock(ctx, c, p, snap)
 	}
 	s.proRestock.mu.Lock()

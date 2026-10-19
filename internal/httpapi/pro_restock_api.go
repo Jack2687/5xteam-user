@@ -11,6 +11,7 @@ import (
 
 func (s *Server) registerProRestock(mux *http.ServeMux) {
 	s.registerProFallback(mux)
+	s.registerProTakeover(mux)
 	mux.HandleFunc("GET /api/pro-restock/records/{id}/tasks", func(w http.ResponseWriter, r *http.Request) {
 		items, err := s.store.ProRestockDecisionTasks(r.PathValue("id"))
 		if err != nil {
@@ -109,7 +110,9 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, map[string]any{"config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": c.EffectiveCardProvider(now, p.AutoCardProvider()), "daily_ejh_merge_run": dailyRun}, "")
+	tc, _, _ := s.store.ProTakeoverConfig()
+	ts, _ := s.store.ProTakeoverState()
+	writeAPI(w, 200, map[string]any{"takeover": map[string]any{"config": tc, "state": ts}, "config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": c.EffectiveCardProvider(now, p.AutoCardProvider()), "daily_ejh_merge_run": dailyRun}, "")
 }
 func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	c := restock.DefaultConfig()

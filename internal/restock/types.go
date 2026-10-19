@@ -147,6 +147,8 @@ func (w Window) Fresh(now time.Time, maxAge time.Duration) bool {
 }
 
 type Account struct {
+	TakeoverPending     bool          `json:"takeover_pending,omitempty"`
+	SupplyExcluded      bool          `json:"supply_excluded,omitempty"`
 	QuotaMergeThreshold *float64      `json:"quota_merge_threshold,omitempty"`
 	ExitDeadline        *time.Time    `json:"exit_deadline,omitempty"`
 	Leaving             bool          `json:"leaving"`
@@ -170,6 +172,8 @@ type Account struct {
 	Windows             []Window      `json:"windows"`
 }
 type Snapshot struct {
+	TakeoverToken       string      `json:"takeover_token,omitempty"`
+	MonitorGroups       []int64     `json:"monitor_groups,omitempty"`
 	CollectionStartedAt time.Time   `json:"collection_started_at,omitempty"`
 	ExitConfirmations   int         `json:"exit_confirmations"`
 	ExitDemand          *ExitDemand `json:"exit_demand,omitempty"`
@@ -185,6 +189,7 @@ type Snapshot struct {
 	Accounts            []Account   `json:"accounts"`
 }
 type Task struct {
+	TakeoverToken      string               `json:"takeover_token,omitempty"`
 	CardProvider       string               `json:"card_provider,omitempty"`
 	StrictCardProvider bool                 `json:"strict_card_provider,omitempty"`
 	Capacity           int                  `json:"capacity,omitempty"`

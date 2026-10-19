@@ -35,7 +35,7 @@ func Pressure(c Config, s Snapshot) bool {
 func availableAccount(a Account, now time.Time) bool {
 	// The snapshot already contains only members of the selected monitoring group.
 	// Membership in another push group does not remove this account's capacity.
-	return a.Ready && (a.ExpiresAt == nil || a.ExpiresAt.After(now))
+	return a.Ready && !a.SupplyExcluded && (a.ExpiresAt == nil || a.ExpiresAt.After(now))
 }
 func pressureAt(c Config, s Snapshot, now time.Time) bool {
 	if !s.Valid || !s.LoadValid {
@@ -45,11 +45,13 @@ func pressureAt(c Config, s Snapshot, now time.Time) bool {
 	for _, a := range s.Accounts {
 		if availableAccount(a, now) {
 			capacity += a.Capacity
+		}
+		if availableAccount(a, now) || (a.SupplyExcluded && a.Ready) {
 			used += a.Used
 		}
 		queue += a.Waiting
 	}
-	return queue > 0 || (capacity > 0 && used > 0 && used >= c.ConcurrencyTrigger(capacity))
+	return queue > 0 || (used > 0 && used >= c.ConcurrencyTrigger(capacity))
 }
 
 func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, newSlots int, lead float64, now time.Time) (d Decision) {
@@ -81,6 +83,8 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		if availableAccount(a, now) {
 			d.Usable++
 			d.ReportedCapacity += a.Capacity
+		}
+		if availableAccount(a, now) || (a.SupplyExcluded && a.Ready) {
 			d.Used += a.Used
 		}
 		d.Waiting += a.Waiting
@@ -249,7 +253,7 @@ func first(a, b string) string {
 	return b
 }
 func usableAt(a Account, t, now time.Time, maxAge time.Duration) bool {
-	if !a.Ready || (a.ExpiresAt != nil && !a.ExpiresAt.After(t)) {
+	if a.SupplyExcluded || !a.Ready || (a.ExpiresAt != nil && !a.ExpiresAt.After(t)) {
 		return false
 	}
 	for _, w := range a.Windows {

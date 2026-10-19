@@ -180,10 +180,14 @@ func ForecastMoney(c Config, s Snapshot, now time.Time) MoneyForecast {
 	total, remaining, rate, covered := 0., 0., 0., 0
 	missing, sampling, stale := false, false, false
 	for _, a := range s.Accounts {
-		if !availableAccount(a, now) {
+		if !availableAccount(a, now) && !(a.SupplyExcluded && a.Ready) {
 			continue
 		}
 		r := accountMoneyRow(a, now, f.WindowMinutes)
+		if a.SupplyExcluded && r.RemainingUSD != nil {
+			r.RemainingUSD = moneyPtr(0)
+			r.TotalUSD = moneyPtr(0)
+		}
 		f.Rows = append(f.Rows, r)
 		if r.Reason != "" {
 			if r.Reason == "数据过期" {

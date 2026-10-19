@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +67,7 @@ func validateRestockTarget(c restock.Config, p model.ProSettings) error {
 }
 func (s *Server) startProRestockMonitor(ctx context.Context) {
 	s.startProFallbackMonitor(ctx)
+	s.startProTakeoverMonitor(ctx)
 	if saved, err := s.store.ProRestockSnapshot(); err == nil && saved.Valid && saved.LoadValid {
 		s.proRestock.lastSnapshot = saved
 		s.proRestock.quotaBinding = saved.Binding
@@ -101,22 +103,42 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	if e != nil {
 		return snap, e
 	}
-	found := false
-	for _, g := range groups {
-		if g.ID == c.GroupID {
-			found = true
+	tc, _, e := s.store.ProTakeoverConfig()
+	if e != nil {
+		return snap, e
+	}
+	ts, e := s.store.ProTakeoverState()
+	if e != nil {
+		return snap, e
+	}
+	snap.TakeoverToken = ts.Token(tc)
+	snap.MonitorGroups = restock.TakeoverGroups(c.GroupID, tc, ts)
+	for _, id := range snap.MonitorGroups {
+		found := false
+		for _, g := range groups {
+			if g.ID == id {
+				found = true
+			}
+		}
+		if !found {
+			return snap, errors.New("监控或接管分组不存在或无法访问")
 		}
 	}
-	if !found {
-		return snap, errors.New("监控分组不存在或无法访问")
-	}
-	accounts, e := s.sub2.MonitorAccounts(ctx, p.Sub2, password, c.GroupID)
+	accounts, loads, e := s.sub2.MonitorGroups(ctx, p.Sub2, password, snap.MonitorGroups)
 	if e != nil {
 		return snap, e
 	}
-	loads, e := s.sub2.MonitorConcurrency(ctx, p.Sub2, password, c.GroupID)
-	if e != nil {
-		return snap, e
+	own := map[int64]model.MailAccountProfile{}
+	scoped := ts.Active() && (tc.Role == "receiver" || ts.Taking())
+	if scoped {
+		issuer := "ejh"
+		if tc.Role == "provider" {
+			issuer = "nexovcc"
+		}
+		own, e = s.takeoverOwnedProfiles(p, issuer)
+		if e != nil {
+			return snap, e
+		}
 	}
 	pay, _, payErr := s.store.GPTPaySettings()
 	if payErr != nil {
@@ -192,7 +214,7 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 		members = append(members, fmt.Sprintf("%d:%s:%t", a.ID, a.Credentials.Plan, a.Ready(now, p.Sub2.Models)))
 	}
 	sort.Strings(members)
-	moneyScope := fmt.Sprintf("%s:%d:%v", snap.Binding, c.GroupID, members)
+	moneyScope := fmt.Sprintf("%s:%v:%t:%s:%v", snap.Binding, snap.MonitorGroups, scoped, tc.Role, members)
 	if moneyScope != s.proRestock.moneyScope {
 		s.proRestock.moneyScope = moneyScope
 		s.proRestock.money = map[int64]*restock.AccountMoney{}
@@ -202,6 +224,17 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	for _, a := range accounts {
 		v := restock.Account{Fault: a.Status == "error" || (a.OverloadUntil != nil && a.OverloadUntil.After(now)) || (a.TempUntil != nil && a.TempUntil.After(now)), ID: a.ID, Name: a.Name, Plan: a.Credentials.Plan, Ready: a.Ready(now, p.Sub2.Models), Shared: len(a.GroupIDs) > 1, Capacity: a.Concurrency, Windows: append([]restock.Window{}, s.proRestock.quota[a.ID]...)}
 		v.Money = s.proRestock.money[a.ID]
+		if scoped {
+			_, local := own[a.ID]
+			complete := true
+			for _, g := range snap.MonitorGroups {
+				if !slices.Contains(a.GroupIDs, g) {
+					complete = false
+				}
+			}
+			v.SupplyExcluded = !local || !complete
+			v.TakeoverPending = local && !complete
+		}
 		if a.ExpiresAt != nil {
 			t := time.Unix(*a.ExpiresAt, 0)
 			v.ExpiresAt = &t

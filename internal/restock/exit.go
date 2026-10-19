@@ -71,8 +71,10 @@ type ExitForecast struct {
 func exitLoad(s Snapshot, now time.Time) (used, capacity, waiting int) {
 	for _, a := range s.Accounts {
 		if availableAccount(a, now) {
-			used += a.Used
 			capacity += a.Capacity
+		}
+		if availableAccount(a, now) || (a.SupplyExcluded && a.Ready) {
+			used += a.Used
 		}
 		waiting += a.Waiting
 	}

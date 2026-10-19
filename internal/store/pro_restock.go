@@ -19,6 +19,9 @@ func (s *Store) initializeProRestock() error {
  CREATE TABLE IF NOT EXISTS pro_restock_snapshot(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_daily_ejh_merge_runs(day TEXT PRIMARY KEY,payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_restock_clock(id INTEGER PRIMARY KEY CHECK(id=1),last_batch TEXT,reset_at TEXT);
+ CREATE TABLE IF NOT EXISTS pro_takeover_config(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL,encrypted_password TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS pro_takeover_state(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS pro_takeover_bindings(target_id TEXT NOT NULL,account_id INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(target_id,account_id));
  CREATE TABLE IF NOT EXISTS pro_fallback_config(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL,target_id TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_fallback_bindings(target_id TEXT NOT NULL,account_id INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(target_id,account_id));`)
 	return err
@@ -110,6 +113,9 @@ func (s *Store) ClaimProRestockDispatch(t restock.Task) error {
 		return err
 	}
 	now := time.Now()
+	if err := takeoverPurchaseGate(tx, t.TakeoverToken, now); err != nil {
+		return err
+	}
 	if reason := c.NoRestockReason(now); reason != "" {
 		return errors.New(reason)
 	}
@@ -191,6 +197,9 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	}
 	if !c.Enabled || c.Mode != "auto" || c.Version != d.Version {
 		return nil, errors.New("配置版本或运行模式已变化")
+	}
+	if err := takeoverPurchaseGate(tx, d.Snapshot.TakeoverToken, time.Now()); err != nil {
+		return nil, err
 	}
 	// Recheck wall time after acquiring the transaction; the evaluation may
 	// have completed just before the no-restock interval started.
@@ -285,6 +294,7 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	out := []restock.Task{}
 	for i, email := range emails {
 		t := restock.Task{ID: fmt.Sprintf("%s-%d", d.ID, i+1), Plan: d.Snapshot.NewPlan, DecisionID: d.ID, Email: email, Version: c.Version, GroupID: c.GroupID, Binding: d.Snapshot.Binding, Status: "reserved", Stage: "queued", Cost: c.UnitCost, CreatedAt: d.At, UpdatedAt: d.At, Stages: map[string]time.Time{"reserved": d.At}}
+		t.TakeoverToken = d.Snapshot.TakeoverToken
 		t.EmptyGroupStartup = d.EmptyGroupOnly()
 		t.CardProvider, t.StrictCardProvider = provider, strict
 		t.ForceMergeTracked = true

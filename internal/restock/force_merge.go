@@ -37,7 +37,7 @@ func ForceMergeSummary(c Config, s Snapshot, tasks []Task, now time.Time) ForceM
 	total := 0.0
 	candidates := []Account{}
 	for _, a := range s.Accounts {
-		if !a.Ready || (!a.EJH && a.CardProvider != "nexovcc") {
+		if a.SupplyExcluded || !a.Ready || (!a.EJH && a.CardProvider != "nexovcc") {
 			continue
 		}
 		if a.PushTimeoutEnabled != nil && !*a.PushTimeoutEnabled {
