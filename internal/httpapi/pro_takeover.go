@@ -72,7 +72,15 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 		writeAPI(w, 409, nil, "接管角色、对方身份或 Sub2 连接不一致")
 		return
 	}
-	for _, g := range c.Groups {
+	groups := p.Sub2.GroupIDs
+	if st.Active() {
+		groups = st.Groups
+	}
+	if c.Enabled && (len(groups) == 0 || !slices.Contains(groups, rc.GroupID)) {
+		writeAPI(w, 409, nil, "Pro 推送分组必须包含本项目监控分组")
+		return
+	}
+	for _, g := range groups {
 		if slices.Contains(request.PushGroups, g) {
 			writeAPI(w, 409, nil, "接管分组与对方常驻分组重复")
 			return
@@ -86,8 +94,9 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 	}
 	start, end, wanted := rc.TakeoverWindow(now, c.LeadMinutes)
 	wanted = wanted && c.Enabled && rc.Enabled && rc.Mode == "auto" && p.AutoCardProvider() == "ejh" && request.Willing
+	st.ReleaseAtEnd(now)
 	if !st.Active() && wanted {
-		st = restock.TakeoverState{Epoch: randomRegistrationID(), Phase: "preparing", PeerID: request.ID, Groups: slices.Clone(c.Groups), Start: start, End: end}
+		st = restock.TakeoverState{Epoch: randomRegistrationID(), Phase: "preparing", PeerID: request.ID, Groups: slices.Clone(groups), Start: start, End: end}
 	}
 	if st.Active() {
 		// Old epoch acknowledgements cannot release a new handoff.
@@ -98,7 +107,7 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 			st.PeerPending = request.Pending
 			st.Covered = request.Covered
 		}
-		if wanted {
+		if wanted && !st.ScheduledRelease {
 			st.Start, st.End = start, end
 			st.Phase = "preparing"
 			if !now.Before(start) {
@@ -111,12 +120,17 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 			} else if pending > 0 {
 				st.LeaseUntil = now
 			}
+		} else if st.Taking() && c.Enabled && request.Willing && rc.Enabled && rc.Mode == "auto" {
+			// The selected interval was removed/shortened. Stop covering it on
+			// the next heartbeat, just like its ordinary end.
+			st.Phase, st.ScheduledRelease, st.CoverageReady = "released", true, false
+			st.LeaseUntil = now
 		} else if st.Taking() {
 			st.Phase = "recovering"
 			st.RecoveryAt = now
 			st.ReadyCount = 0
 		}
-		if st.Phase == "released" && current && !request.Released {
+		if st.Phase == "released" && !st.ScheduledRelease && current && !request.Released {
 			snapshot, err := s.store.ProRestockSnapshot()
 			ready, _, _, _ := restock.TakeoverRecoveryReady(rc, c, snapshot, pending, st.RecoveryAt, now)
 			if err != nil || !ready || request.Pending > 0 {
@@ -125,7 +139,7 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 				st.RecoveryAt = now
 			}
 		}
-		if st.Phase == "released" && current && request.Released && request.Pending == 0 {
+		if st.Phase == "released" && current && request.Released && (st.ScheduledRelease || request.Pending == 0) {
 			st = restock.TakeoverState{Phase: "idle", ContactAt: now}
 		}
 		st.Error = ""
@@ -171,23 +185,37 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 		return
 	}
 	defer s.proTakeover.mu.Unlock()
-	if time.Now().Before(s.proTakeover.next) {
-		return
-	}
 	c, password, e := s.store.ProTakeoverConfig()
 	if e != nil {
 		return
 	}
-	defer func() { s.proTakeover.next = time.Now().Add(time.Duration(c.CheckSeconds) * time.Second) }()
 	st, e := s.store.ProTakeoverState()
-	if e != nil || c.Role != "provider" || (!c.Enabled && !st.Active()) {
+	if e != nil || (!c.Enabled && !st.Active()) {
 		return
 	}
+	ended := st.ReleaseAtEnd(s.takeoverNow())
+	if ended {
+		if e = s.store.SaveProTakeoverState(st); e != nil {
+			return
+		}
+	}
+	if c.Role != "provider" || (!ended && time.Now().Before(s.proTakeover.next)) {
+		return
+	}
+	defer func() { s.proTakeover.next = time.Now().Add(time.Duration(c.CheckSeconds) * time.Second) }()
 	fail := func(message string) { st.Error = message; _ = s.store.SaveProTakeoverState(st) }
 	p, secret, _, e := s.store.ProSettings()
 	if e != nil {
 		fail("Pro 设置读取失败")
 		return
+	}
+	// The known deadline remains authoritative if the peer is offline. No
+	// unrelated purchase batch needs to finish before removing recorded groups.
+	if st.ScheduledRelease {
+		if e = s.reconcileTakeoverGroups(ctx, p, secret, st, true); e != nil {
+			fail(e.Error())
+			return
+		}
 	}
 	rc, e := s.store.ProRestockConfig()
 	if e != nil {
@@ -204,6 +232,7 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 		fail("临时分组记录读取失败")
 		return
 	}
+	st.Covered = len(bindings)
 	request := takeoverHeartbeat{ID: s.store.TakeoverInstanceID(), Epoch: st.Epoch, Willing: c.Enabled && rc.Enabled && rc.Mode == "auto" && p.AutoCardProvider() == "nexovcc", Pending: pending, Covered: len(bindings), Released: len(bindings) == 0, Downstream: model.ProDownstream(p), PushGroups: p.Sub2.GroupIDs}
 	var peer takeoverPeerInfo
 	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -223,6 +252,7 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 	st.PeerPending = peer.State.Pending
 	st.ContactAt = s.takeoverNow()
 	st.Error = ""
+	st.ReleaseAtEnd(s.takeoverNow())
 	if len(bindings) > 0 && !st.Active() {
 		st = old
 		fail("对方未保留接管记录，保留现有临时分组并暂停新增，请核对对方数据")
@@ -239,7 +269,7 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 		}
 		st.CoverageReady = true
 		_ = s.store.SaveProTakeoverState(st)
-	} else if st.Phase == "released" && pending == 0 {
+	} else if st.Phase == "released" && (st.ScheduledRelease || pending == 0) {
 		if e = s.reconcileTakeoverGroups(ctx, p, secret, st, true); e != nil {
 			fail(e.Error())
 			return
@@ -321,6 +351,70 @@ func (s *Server) takeoverOwnedProfiles(p model.ProSettings, provider string) (ma
 		delete(out, id)
 	}
 	return out, nil
+}
+
+// Called under the account lock after persisting a successful Sub2 push.
+// Persist only the missing temporary memberships before sending the update,
+// so a process restart or an ambiguous response can be retried safely.
+func (s *Server) attachProPushTakeover(ctx context.Context, p model.ProSettings, password string, profile model.MailAccountProfile) error {
+	if profile.SpaceMergedOnce || restockAccountExiting(profile) || profile.ProQuality.Routed {
+		return nil
+	}
+	s.proTakeover.mu.Lock()
+	defer s.proTakeover.mu.Unlock()
+	c, _, err := s.store.ProTakeoverConfig()
+	if err != nil || !c.Enabled || c.Role != "provider" {
+		return err
+	}
+	st, err := s.store.ProTakeoverState()
+	if err != nil || !st.Taking() || st.EndReached(s.takeoverNow()) || !s.takeoverNow().Before(st.LeaseUntil) {
+		return err
+	}
+	current, _, _, err := s.store.ProSettings()
+	if err != nil || !model.ProDownstream(current).Matches(model.ProDownstream(p)) {
+		return err
+	}
+	cards, err := s.store.ProActivationCards([]string{profile.Email})
+	if err != nil || cards[strings.ToLower(strings.TrimSpace(profile.Email))].NexovccCardID == "" {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	groups, err := s.sub2.AccountGroups(ctx, p.Sub2, password, profile.Sub2AccountID)
+	if err != nil {
+		return err
+	}
+	bindings, err := s.store.ProTakeoverBindings()
+	if err != nil {
+		return err
+	}
+	target, err := s.store.SaveDownstreamTarget(model.DownstreamTarget{Scope: "pro-takeover", Provider: "sub2", Sub2: p.Sub2, Secret: password})
+	if err != nil {
+		return err
+	}
+	b := store.TakeoverBinding{AccountID: profile.Sub2AccountID, TargetID: target, Epoch: st.Epoch}
+	for _, existing := range bindings {
+		if existing.AccountID == b.AccountID && existing.TargetID == target {
+			b = existing
+			break
+		}
+	}
+	wanted := slices.Clone(groups)
+	for _, g := range st.Groups {
+		if !slices.Contains(wanted, g) {
+			wanted = append(wanted, g)
+			if !slices.Contains(b.Added, g) {
+				b.Added = append(b.Added, g)
+			}
+		}
+	}
+	if slices.Equal(groups, wanted) || st.EndReached(s.takeoverNow()) || !s.takeoverNow().Before(st.LeaseUntil) {
+		return nil
+	}
+	if err = s.store.SaveProTakeoverBinding(b); err != nil {
+		return err
+	}
+	return s.sub2.SetAccountGroups(ctx, p.Sub2, password, profile.Sub2AccountID, wanted)
 }
 
 func (s *Server) reconcileTakeoverGroups(ctx context.Context, p model.ProSettings, password string, st restock.TakeoverState, remove bool) error {

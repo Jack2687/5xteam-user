@@ -62,7 +62,14 @@ func (s *Server) takeoverInfo() (takeoverPeerInfo, error) {
 	if e != nil {
 		return v, e
 	}
-	return takeoverPeerInfo{ID: s.store.TakeoverInstanceID(), Role: c.Role, Enabled: c.Enabled, Downstream: model.ProDownstream(p), PushGroups: p.Sub2.GroupIDs, MonitorGroup: rc.GroupID, Groups: c.Groups, CardProvider: p.AutoCardProvider(), State: st}, nil
+	groups := c.Groups
+	if c.Role == "receiver" {
+		groups = p.Sub2.GroupIDs
+		if st.Active() {
+			groups = st.Groups
+		}
+	}
+	return takeoverPeerInfo{ID: s.store.TakeoverInstanceID(), Role: c.Role, Enabled: c.Enabled, Downstream: model.ProDownstream(p), PushGroups: p.Sub2.GroupIDs, MonitorGroup: rc.GroupID, Groups: groups, CardProvider: p.AutoCardProvider(), State: st}, nil
 }
 
 // Dedicated authenticated endpoint, using the same Space login/password.
@@ -122,7 +129,7 @@ func (s *Server) validateTakeoverPeer(c restock.TakeoverConfig, p model.ProSetti
 	if c.Role == "receiver" && p.AutoCardProvider() != "ejh" {
 		return errors.New("接受接管项目的 Pro 默认卡台应为 EJH")
 	}
-	targets, base := c.Groups, peer.PushGroups
+	targets, base := p.Sub2.GroupIDs, peer.PushGroups
 	if c.Role == "provider" {
 		targets, base = peer.Groups, p.Sub2.GroupIDs
 	}
@@ -164,6 +171,14 @@ func (s *Server) registerProTakeover(mux *http.ServeMux) {
 			}
 			input.PeerURL = strings.TrimRight(strings.TrimSpace(input.PeerURL), "/")
 			input.Username = strings.TrimSpace(input.Username)
+			if input.Role == "receiver" {
+				p, _, _, err := s.store.ProSettings()
+				if err != nil {
+					writeAPI(w, 500, nil, "Pro 推送设置读取失败")
+					return
+				}
+				input.Groups = slices.Clone(p.Sub2.GroupIDs)
+			}
 			// Connection test also works before a peer identity has been pinned.
 			test := input.TakeoverConfig
 			test.Enabled = false

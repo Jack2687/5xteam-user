@@ -28,7 +28,7 @@ type TakeoverConfig struct {
 }
 
 func DefaultTakeoverConfig() TakeoverConfig {
-	return TakeoverConfig{Version: 1, Role: "receiver", LeadMinutes: 10, CheckSeconds: 10, SupportMinAccounts: 1, ReturnMinAccounts: 1, ReturnConfirmations: 3, Groups: []int64{}}
+	return TakeoverConfig{Version: 1, Role: "receiver", LeadMinutes: 0, CheckSeconds: 10, SupportMinAccounts: 1, ReturnMinAccounts: 1, ReturnConfirmations: 3, Groups: []int64{}}
 }
 func (c TakeoverConfig) Validate() error {
 	if c.Role != "receiver" && c.Role != "provider" {
@@ -62,32 +62,48 @@ func (c TakeoverConfig) Validate() error {
 	return nil
 }
 
-// The receiver owns the handoff epoch and bounded grant. Expiration never
-// removes group membership; withdrawal needs an explicit fresh release.
+// The receiver owns the handoff epoch, bounded purchase grant and scheduled
+// end. Grant expiration pauses purchases; the window end withdraws groups.
 type TakeoverState struct {
-	Epoch           string    `json:"epoch"`
-	Phase           string    `json:"phase"`
-	PeerID          string    `json:"peer_id"`
-	Groups          []int64   `json:"groups"`
-	Start           time.Time `json:"start"`
-	End             time.Time `json:"end"`
-	LeaseUntil      time.Time `json:"lease_until"`
-	ContactAt       time.Time `json:"contact_at"`
-	RecoveryAt      time.Time `json:"recovery_at"`
-	LastReadySample time.Time `json:"last_ready_sample"`
-	ReadyCount      int       `json:"ready_count"`
-	OwnReady        int       `json:"own_ready"`
-	OwnCapacity     float64   `json:"own_capacity"`
-	Demand          int       `json:"demand"`
-	Pending         int       `json:"pending"`
-	PeerPending     int       `json:"peer_pending"`
-	CoverageReady   bool      `json:"coverage_ready"`
-	Covered         int       `json:"covered"`
-	Error           string    `json:"error"`
+	Epoch            string    `json:"epoch"`
+	Phase            string    `json:"phase"`
+	PeerID           string    `json:"peer_id"`
+	Groups           []int64   `json:"groups"`
+	Start            time.Time `json:"start"`
+	End              time.Time `json:"end"`
+	LeaseUntil       time.Time `json:"lease_until"`
+	ContactAt        time.Time `json:"contact_at"`
+	RecoveryAt       time.Time `json:"recovery_at"`
+	LastReadySample  time.Time `json:"last_ready_sample"`
+	ReadyCount       int       `json:"ready_count"`
+	OwnReady         int       `json:"own_ready"`
+	OwnCapacity      float64   `json:"own_capacity"`
+	Demand           int       `json:"demand"`
+	Pending          int       `json:"pending"`
+	PeerPending      int       `json:"peer_pending"`
+	CoverageReady    bool      `json:"coverage_ready"`
+	ScheduledRelease bool      `json:"scheduled_release"`
+	Covered          int       `json:"covered"`
+	Error            string    `json:"error"`
 }
 
 func (s TakeoverState) Active() bool { return s.Epoch != "" && s.Phase != "idle" }
 func (s TakeoverState) Taking() bool { return s.Phase == "preparing" || s.Phase == "active" }
+func (s TakeoverState) EndReached(now time.Time) bool {
+	return s.Active() && !s.End.IsZero() && !now.Before(s.End)
+}
+
+// The persisted end is an explicit timed withdrawal instruction. It does not
+// depend on receiver capacity, pending purchases, or a live peer connection.
+func (s *TakeoverState) ReleaseAtEnd(now time.Time) bool {
+	if !s.EndReached(now) || s.ScheduledRelease {
+		return false
+	}
+	s.Phase, s.ScheduledRelease, s.CoverageReady = "released", true, false
+	s.LeaseUntil = s.End
+	s.ReadyCount = 0
+	return true
+}
 func (s TakeoverState) Token(c TakeoverConfig) string {
 	if !s.Active() {
 		return ""
@@ -97,6 +113,9 @@ func (s TakeoverState) Token(c TakeoverConfig) string {
 func (s TakeoverState) Block(c TakeoverConfig, now time.Time) string {
 	if !s.Active() {
 		return ""
+	}
+	if s.Taking() && s.EndReached(now) {
+		return "接管时段已结束，等待切回各自分组的新快照"
 	}
 	if c.Role == "receiver" {
 		if s.Taking() {
@@ -111,20 +130,47 @@ func (s TakeoverState) Block(c TakeoverConfig, now time.Time) string {
 	return ""
 }
 
-// Find the continuous FULL prohibition containing now or beginning within
-// lead. Minute enumeration naturally handles overlap and midnight. Allowed
-// issuer exceptions are not full prohibition and do not trigger a handoff.
+// Only explicitly selected full-prohibition windows request a handoff.
+// An overlapping unselected full prohibition takes precedence; preparation
+// must not leak into an unselected prohibition or an allowed-issuer window.
+func (c Config) takeoverMinute(at time.Time) (selected, excluded bool) {
+	local := at.In(scheduleLocation)
+	minute := local.Hour()*60 + local.Minute()
+	for _, w := range c.dailyWindows() {
+		if !windowContains(w, minute) {
+			continue
+		}
+		if w.AllowedProvider == "" {
+			if !w.TakeoverEnabled {
+				return false, true
+			}
+			selected = true
+		} else {
+			excluded = true
+		}
+	}
+	return selected, excluded && !selected
+}
+
 func (c Config) TakeoverWindow(now time.Time, lead int) (start, end time.Time, ok bool) {
 	if !c.NoRestockEnabled || c.validateNoRestockWindows() != nil {
 		return
 	}
 	minute := now.In(scheduleLocation).Truncate(time.Minute)
 	at := minute
-	if !c.CardSchedule(at).Blocked {
+	selected, excluded := c.takeoverMinute(at)
+	if excluded {
+		return
+	}
+	if !selected {
 		found := false
 		for i := 1; i <= lead; i++ {
 			t := minute.Add(time.Duration(i) * time.Minute)
-			if c.CardSchedule(t).Blocked {
+			selected, excluded := c.takeoverMinute(t)
+			if excluded {
+				return start, end, false
+			}
+			if selected {
 				at = t
 				found = true
 				break
@@ -135,11 +181,17 @@ func (c Config) TakeoverWindow(now time.Time, lead int) (start, end time.Time, o
 		}
 	}
 	start = at
-	for i := 0; i < 1440 && c.CardSchedule(start.Add(-time.Minute)).Blocked; i++ {
+	for i := 0; i < 1440; i++ {
+		if selected, _ := c.takeoverMinute(start.Add(-time.Minute)); !selected {
+			break
+		}
 		start = start.Add(-time.Minute)
 	}
 	end = at.Add(time.Minute)
-	for i := 0; i < 1440 && c.CardSchedule(end).Blocked; i++ {
+	for i := 0; i < 1440; i++ {
+		if selected, _ := c.takeoverMinute(end); !selected {
+			break
+		}
 		end = end.Add(time.Minute)
 	}
 	return start, end, true
@@ -169,7 +221,7 @@ func TakeoverRecoveryReady(c Config, t TakeoverConfig, s Snapshot, pending int, 
 
 func TakeoverGroups(base int64, c TakeoverConfig, s TakeoverState) []int64 {
 	groups := []int64{base}
-	if s.Active() && ((c.Role == "provider" && s.Taking()) || c.Role == "receiver") {
+	if s.Active() && !s.ScheduledRelease && ((c.Role == "provider" && s.Taking()) || c.Role == "receiver") {
 		for _, g := range s.Groups {
 			if !slices.Contains(groups, g) {
 				groups = append(groups, g)

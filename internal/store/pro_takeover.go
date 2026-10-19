@@ -66,8 +66,8 @@ func (s *Store) SaveProTakeoverConfig(c restock.TakeoverConfig, password string)
 	}
 	// Changing a connection during an unfinished handoff would orphan its
 	// memberships. Disabling is a drain request, never an immediate removal.
-	if state.Active() && (c.Role != old.Role || c.PeerID != old.PeerID || c.PeerURL != old.PeerURL || mustJSON(c.Groups) != mustJSON(old.Groups)) {
-		return c, errors.New("正在接管或交还，请等待临时分组撤回完成后再修改角色、对方或分组")
+	if state.Active() && (c.Role != old.Role || c.PeerID != old.PeerID || c.PeerURL != old.PeerURL) {
+		return c, errors.New("正在接管或交还，请等待临时分组撤回完成后再修改角色或对方")
 	}
 	if password != "" {
 		encrypted, e = s.encrypt(password)

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,11 +20,12 @@ import (
 	"chatgpt-space-merge/internal/restock"
 )
 
-func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
+func TestTakeoverTwoProjectsPrepareCoverAndScheduledWithdraw(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-10-19T16:49:00+08:00")
 	var mu sync.Mutex
 	memberships := map[int64][]int64{101: {7, 99}, 201: {42}}
-	writes := 0
+	writes, creates := 0, 0
+	var rejectNewGroups bool
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -35,8 +37,18 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 		case "/api/v1/auth/login":
 			write(map[string]any{"access_token": "test"})
 		case "/api/v1/admin/groups/all":
-			write([]any{map[string]any{"id": 7, "name": "own"}, map[string]any{"id": 42, "name": "target"}, map[string]any{"id": 99, "name": "unrelated"}})
+			write([]any{map[string]any{"id": 7, "name": "own"}, map[string]any{"id": 42, "name": "target"}, map[string]any{"id": 99, "name": "unrelated"}, map[string]any{"id": 43, "name": "second-target"}})
 		case "/api/v1/admin/accounts":
+			if r.Method == http.MethodPost {
+				var input struct {
+					Groups []int64 `json:"group_ids"`
+				}
+				json.NewDecoder(r.Body).Decode(&input)
+				creates++
+				memberships[102] = input.Groups
+				write(account(102))
+				return
+			}
 			group, _ := strconv.ParseInt(r.URL.Query().Get("group"), 10, 64)
 			rows := []any{}
 			for id, ids := range memberships {
@@ -61,6 +73,10 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 				return
 			}
 			if r.Method == http.MethodPut {
+				if id == 102 && rejectNewGroups {
+					w.WriteHeader(502)
+					return
+				}
 				var v struct {
 					Groups []int64 `json:"group_ids"`
 				}
@@ -89,14 +105,14 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 	pp := model.DefaultProSettings()
 	pp.Provider = "sub2"
 	pp.CardProvider = "nexovcc"
-	pp.Sub2 = model.Sub2Settings{URL: upstream.URL, Email: "test@example.test", GroupIDs: []int64{7}, AccountConcurrency: 80}
+	pp.Sub2 = model.Sub2Settings{URL: upstream.URL, Email: "test@example.test", GroupIDs: []int64{7, 9}, AccountConcurrency: 80}
 	pp, e := ps.SaveProSettings(pp, "sub-test", "")
 	if e != nil {
 		t.Fatal(e)
 	}
 	rp := pp
 	rp.CardProvider = "ejh"
-	rp.Sub2.GroupIDs = []int64{42}
+	rp.Sub2.GroupIDs = []int64{42, 43}
 	if _, e = rs.SaveProSettings(rp, "sub-test", ""); e != nil {
 		t.Fatal(e)
 	}
@@ -113,7 +129,7 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 	rc.Version = 1
 	rc.GroupID = 42
 	rc.NoRestockEnabled = true
-	rc.NoRestockWindows = []restock.DailyWindow{{Start: "17:00", End: "20:00"}}
+	rc.NoRestockWindows = []restock.DailyWindow{{Start: "17:00", End: "20:00", TakeoverEnabled: true}}
 	rc.DailyEJHMergeEnabled = true
 	rc.DailyEJHMergeTime = "17:30"
 	rc, e = rs.SaveProRestockConfig(rc)
@@ -122,7 +138,14 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 	}
 	donorHTTP := httptest.NewServer(provider.Handler())
 	defer donorHTTP.Close()
-	receiverHTTP := httptest.NewServer(receiver.Handler())
+	var peerOffline atomic.Bool
+	receiverHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if peerOffline.Load() {
+			w.WriteHeader(503)
+			return
+		}
+		receiver.Handler().ServeHTTP(w, r)
+	}))
 	defer receiverHTTP.Close()
 	tc := restock.DefaultTakeoverConfig()
 	tc.Enabled = true
@@ -136,6 +159,7 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 	}
 	tr := restock.DefaultTakeoverConfig()
 	tr.Enabled = true
+	tr.LeadMinutes = 10
 	tr.PeerURL = donorHTTP.URL
 	tr.Username = "admin"
 	tr.PeerID = ps.TakeoverInstanceID()
@@ -192,7 +216,7 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 		t.Fatal("no preparatory grant", st)
 	}
 	mu.Lock()
-	ok := slices.Equal(memberships[101], []int64{7, 99, 42})
+	ok := slices.Equal(memberships[101], []int64{7, 99, 42, 43})
 	mu.Unlock()
 	if !ok {
 		t.Fatal("temporary group not attached")
@@ -211,7 +235,7 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(snap.Accounts) != 2 || !slices.Equal(snap.MonitorGroups, []int64{7, 42}) {
+	if len(snap.Accounts) != 2 || !slices.Equal(snap.MonitorGroups, []int64{7, 42, 43}) {
 		t.Fatal("union did not deduplicate", snap)
 	}
 	for _, a := range snap.Accounts {
@@ -228,47 +252,80 @@ func TestTakeoverTwoProjectsPrepareCoverRecoverAndWithdraw(t *testing.T) {
 	if st.Phase != "active" || st.Block(tr, now) == "" {
 		t.Fatal("receiver not paused")
 	}
-	now, _ = time.Parse(time.RFC3339, "2026-10-19T20:00:00+08:00")
+	// A fresh Global account retains every configured push group and gets all
+	// receiver push groups in the push operation itself. A failed membership
+	// request is retried by monitoring, never by creating another account.
+	freshEmail := "new-global@example.test"
+	_, credentials, _ := ps.MailAccountCredential(email)
+	credentials.Email = freshEmail
+	if _, e = ps.SaveMailAccount(model.MailAccountProfile{Email: freshEmail}, credentials); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = ps.UpdateMailAccountManagementScope(freshEmail, "pro"); e != nil {
+		t.Fatal(e)
+	}
+	freshOrder := order
+	freshOrder.ID, freshOrder.Email = "fresh-paid", freshEmail
+	freshCard, err := ps.SaveNexovccCard(nexovcc.Card{Serial: "takeover-new", Status: "1", Balance: "10"}, &nexovcc.PrivateCard{Number: "5555555555554444", CVV: "123", Month: 12, Year: 2099})
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshOrder.CardID = freshCard.ID
+	freshSnapshot := snapshot
+	freshSnapshot.Input.Number = "5555555555554444"
+	if e = ps.CreateGPTPayOrder(freshOrder, freshSnapshot); e != nil {
+		t.Fatal(e)
+	}
+	mu.Lock()
+	rejectNewGroups = true
+	mu.Unlock()
+	pushed, err := provider.performProPush(context.Background(), freshEmail)
+	if err != nil || pushed.PushStatus != "completed" || pushed.Sub2AccountID != 102 {
+		t.Fatal("successful creation was lost", err, pushed)
+	}
+	mu.Lock()
+	if !slices.Equal(memberships[102], []int64{7, 9}) || creates != 1 {
+		t.Fatal("original multi-group push changed", memberships[102], creates)
+	}
+	rejectNewGroups = false
+	mu.Unlock()
+	// Explicitly exercise the synchronous push hook before another timer.
+	if e = provider.attachProPushTakeover(context.Background(), pp, "sub-test", pushed); e != nil {
+		t.Fatal(e)
+	}
+	mu.Lock()
+	if !slices.Equal(memberships[102], []int64{7, 9, 42, 43}) || creates != 1 {
+		t.Fatal("new account did not cover all groups", memberships[102], creates)
+	}
+	mu.Unlock()
 	tick()
-	st, _ = rs.ProTakeoverState()
-	if st.Phase != "recovering" {
-		t.Fatal("no handback", st)
-	}
-	if writes != 1 {
-		t.Fatal("withdrew before own supply ready")
-	}
-	provider.proRestock.tasks = []restock.Task{{Email: "donor-running", Status: "external"}}
-	tick()
-	st, _ = rs.ProTakeoverState()
-	if st.Block(tr, now) == "" {
-		t.Fatal("receiver ignored donor in-flight batch")
-	}
-	provider.proRestock.tasks = nil
-	tick()
-	for i := 0; i < tr.ReturnConfirmations; i++ {
-		now = now.Add(time.Second)
-		st, _ = rs.ProTakeoverState()
-		own := restock.Snapshot{At: now, CollectionStartedAt: now, Valid: true, LoadValid: true, TakeoverToken: st.Token(tr), Accounts: []restock.Account{{ID: 201, Ready: true, Capacity: 80, Used: 10}, {ID: 101, Ready: true, SupplyExcluded: true, Capacity: 80, Used: 10}}}
-		receiver.observeTakeoverRecovery(rc, own, nil)
-		if e = rs.SaveProRestockSnapshot(own); e != nil {
-			t.Fatal(e)
-		}
-	}
-	st, _ = rs.ProTakeoverState()
-	if st.Phase != "released" {
-		t.Fatal("ready source not released", st)
-	}
 	// Another operator adds an unrelated group during coverage. Preserve it.
 	mu.Lock()
 	memberships[101] = append(memberships[101], 88)
 	mu.Unlock()
-	tick()
+	// The window ends with a donor purchase in progress and no receiver-ready
+	// confirmation. Neither may postpone the scheduled withdrawal.
+	provider.proRestock.tasks = []restock.Task{{Email: "donor-running", Status: "external"}}
+	now, _ = time.Parse(time.RFC3339, "2026-10-19T20:00:00+08:00")
+	peerOffline.Store(true)
+	provider.proTakeover.next = time.Now().Add(time.Hour)
+	receiver.tickProTakeover(context.Background())
+	st, _ = rs.ProTakeoverState()
+	if st.Phase != "released" || !st.ScheduledRelease || st.Block(tr, now) != "" {
+		t.Fatal("receiver did not resume at the deadline", st)
+	}
+	provider.tickProTakeover(context.Background())
+	st, _ = ps.ProTakeoverState()
+	if !st.ScheduledRelease || st.Error == "" {
+		t.Fatal("offline deadline not processed", st)
+	}
 	mu.Lock()
-	ok = slices.Equal(memberships[101], []int64{7, 99, 88})
+	ok = slices.Equal(memberships[101], []int64{7, 99, 88}) && slices.Equal(memberships[102], []int64{7, 9})
 	mu.Unlock()
 	if !ok {
 		t.Fatal("lost original/unrelated groups")
 	}
+	peerOffline.Store(false)
 	tick()
 	st, _ = ps.ProTakeoverState()
 	if st.Active() {

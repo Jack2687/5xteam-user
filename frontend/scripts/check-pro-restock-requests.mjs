@@ -183,7 +183,7 @@ for (const windows of [[], [{start:'02:00',end:'08:00'},{start:'',end:'12:00'}],
  assert.match(f.scheduleSummary(f.form),/02:00～08:00 完全禁补、23:00～次日 01:00 仅环球/)
  const saving=f.save();await tick()
  const put=f.requests[0]
- assert.equal(JSON.stringify(put.options.body.no_restock_windows),JSON.stringify([{start:'02:00',end:'08:00',allowed_provider:''},{start:'23:00',end:'01:00',allowed_provider:'nexovcc'}]))
+ assert.equal(JSON.stringify(put.options.body.no_restock_windows),JSON.stringify([{start:'02:00',end:'08:00',allowed_provider:'',takeover_enabled:false},{start:'23:00',end:'01:00',allowed_provider:'nexovcc',takeover_enabled:false}]))
  const saved={...put.options.body,version:2};put.resolve(saved);await tick()
  f.requests.findLast(r=>r.url==='/api/pro-restock').resolve({config:saved});await tick()
  f.requests.findLast(r=>r.url.includes('/records')).resolve([]);await saving
@@ -332,7 +332,7 @@ console.log('Passed: capacity percentage validation, save round-trip and live da
  assert.equal(request.options.body.no_restock_fallback,true)
  assert.equal(request.options.body.daily_ejh_merge_enabled,true)
  assert.equal(request.options.body.daily_ejh_merge_time,'17:30')
- assert.deepEqual(JSON.parse(JSON.stringify(request.options.body.no_restock_windows)),[{start:'17:00',end:'20:50',allowed_provider:''}])
+ assert.deepEqual(JSON.parse(JSON.stringify(request.options.body.no_restock_windows)),[{start:'17:00',end:'20:50',allowed_provider:'',takeover_enabled:false}])
  request.resolve({...config,version:2});await tick()
  f.requests.at(-1).resolve({config:{...config,version:2}});await tick()
  f.requests.at(-1).resolve([]);await saving
@@ -357,3 +357,18 @@ for(const windows of [
  f.requests[0].reject(new Error('fixture stop'));await saving;f.unmounted()
 }
 console.log('Passed: issuer exceptions round-trip, overlap validation, and independent daily merge')
+
+// Per-window takeover selection survives edits and only applies to full prohibitions.
+{
+ const f=fixture()
+ f.applyConfig({no_restock_enabled:true,no_restock_windows:[{start:'02:00',end:'08:00'},{start:'17:00',end:'20:00',takeover_enabled:true},{start:'23:00',end:'01:00',allowed_provider:'nexovcc',takeover_enabled:true}]})
+ assert.equal(f.form.no_restock_windows[0].takeover_enabled,false)
+ assert.equal(f.form.no_restock_windows[1].takeover_enabled,true)
+ assert.equal(f.form.no_restock_windows[2].takeover_enabled,false)
+ assert.match(f.scheduleSummary(f.form),/17:00～20:00 完全禁补 · 环球接管/)
+ const saving=f.save();await tick()
+ const put=f.requests[0]
+ assert.deepEqual(JSON.parse(JSON.stringify(put.options.body.no_restock_windows.map(w=>w.takeover_enabled))),[false,true,false])
+ put.reject(new Error('fixture finished'));await saving;f.unmounted()
+}
+console.log('Passed: per-window takeover flags, default opt-out, multi-window payload and issuer exclusion')

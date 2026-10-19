@@ -872,6 +872,11 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 	})
 	if err == nil {
 		s.completeSub2Push(v.Sub2, pushScope)
+		if attachErr := s.attachProPushTakeover(ctx, v, subPassword, out); attachErr != nil {
+			// The account already exists. Never turn a membership retry into
+			// another account creation; the monitor verifies/retries coverage.
+			s.auditProEvent(out, "push", "running", "sub2", "账号已推送，接管分组等待重试", map[string]any{"error": attachErr.Error()})
+		}
 	}
 	return out, err
 }

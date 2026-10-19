@@ -1,14 +1,85 @@
 package restock
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
 
+func TestTakeoverSelectedWindowsOnly(t *testing.T) {
+	c := DefaultConfig()
+	c.NoRestockEnabled = true
+	c.NoRestockWindows = []DailyWindow{
+		{Start: "02:00", End: "08:00"},
+		{Start: "17:00", End: "20:00", TakeoverEnabled: true},
+		{Start: "18:00", End: "18:30"},
+		{Start: "22:00", End: "23:00", AllowedProvider: "nexovcc"},
+		{Start: "23:00", End: "01:00", TakeoverEnabled: true},
+	}
+	for _, tt := range []struct {
+		at   string
+		lead int
+		want bool
+	}{
+		{"03:00", 120, false}, {"07:59", 10, false},
+		{"16:59", 0, false}, {"17:00", 0, true}, {"17:59", 0, true},
+		{"18:00", 10, false}, {"18:29", 10, false}, {"18:30", 0, true},
+		{"19:59", 0, true}, {"20:00", 0, false},
+		{"22:59", 10, false}, {"23:00", 0, true}, {"00:59", 0, true}, {"01:00", 0, false},
+	} {
+		now, _ := time.Parse(time.RFC3339, "2026-10-19T"+tt.at+":00+08:00")
+		_, _, ok := c.TakeoverWindow(now, tt.lead)
+		if ok != tt.want {
+			t.Errorf("%s lead %d: got %v", tt.at, tt.lead, ok)
+		}
+	}
+	// Old JSON and legacy single-window configurations never opt in silently.
+	for _, raw := range []string{
+		`{"no_restock_enabled":true,"no_restock_windows":[{"start":"17:00","end":"20:00"}]}`,
+		`{"no_restock_enabled":true,"no_restock_start":"17:00","no_restock_end":"20:00"}`,
+	} {
+		legacy := DefaultConfig()
+		if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+			t.Fatal(err)
+		}
+		now, _ := time.Parse(time.RFC3339, "2026-10-19T18:00:00+08:00")
+		if _, _, ok := legacy.TakeoverWindow(now, 10); ok {
+			t.Fatal("legacy window opted in")
+		}
+	}
+	c.NoRestockWindows = []DailyWindow{{Start: "17:00", End: "20:00", AllowedProvider: "nexovcc", TakeoverEnabled: true}}
+	if c.validateNoRestockWindows() == nil {
+		t.Fatal("ambiguous same-project exception and peer takeover accepted")
+	}
+}
+
+func TestTakeoverDeadlineIgnoresCapacityAndPending(t *testing.T) {
+	now := time.Now()
+	c := DefaultTakeoverConfig()
+	c.Enabled, c.Role = true, "provider"
+	s := TakeoverState{Epoch: "epoch", Phase: "active", End: now, LeaseUntil: now.Add(time.Hour), ContactAt: now, CoverageReady: true, Pending: 3, PeerPending: 2}
+	if s.Block(c, now) == "" {
+		t.Fatal("old grant allowed purchases after window end")
+	}
+	if !s.ReleaseAtEnd(now) || !s.ScheduledRelease || s.Phase != "released" {
+		t.Fatal("did not release at exact boundary")
+	}
+	if s.Block(c, now) != "" {
+		t.Fatal("provider own-group purchases stayed blocked")
+	}
+	c.Role = "receiver"
+	if s.Block(c, now) != "" {
+		t.Fatal("receiver recovery waited for capacity or peer batch")
+	}
+	if s.ReleaseAtEnd(now.Add(time.Minute)) {
+		t.Fatal("replayed deadline transition")
+	}
+}
+
 func TestTakeoverWindowsOverlapMidnightAndExceptions(t *testing.T) {
 	c := DefaultConfig()
 	c.NoRestockEnabled = true
-	c.NoRestockWindows = []DailyWindow{{Start: "17:00", End: "20:00"}, {Start: "19:00", End: "21:00"}, {Start: "23:00", End: "01:00"}, {Start: "06:00", End: "08:00", AllowedProvider: "nexovcc"}}
+	c.NoRestockWindows = []DailyWindow{{Start: "17:00", End: "20:00", TakeoverEnabled: true}, {Start: "19:00", End: "21:00", TakeoverEnabled: true}, {Start: "23:00", End: "01:00", TakeoverEnabled: true}, {Start: "06:00", End: "08:00", AllowedProvider: "nexovcc"}}
 	for _, tt := range []struct {
 		at, start, end string
 		ok             bool

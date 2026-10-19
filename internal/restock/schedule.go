@@ -25,6 +25,7 @@ type DailyWindow struct {
 	Start           string `json:"start"`
 	End             string `json:"end"`
 	AllowedProvider string `json:"allowed_provider,omitempty"`
+	TakeoverEnabled bool   `json:"takeover_enabled,omitempty"`
 }
 
 type CardSchedule struct {
@@ -80,6 +81,9 @@ func (c Config) validateNoRestockWindows() error {
 		}
 		if w.AllowedProvider != "" && w.AllowedProvider != "ejh" && w.AllowedProvider != "nexovcc" {
 			return fmt.Errorf("每日禁补时段 %d：允许卡台无效", i+1)
+		}
+		if w.TakeoverEnabled && w.AllowedProvider != "" {
+			return fmt.Errorf("每日禁补时段 %d：环球接管只能选择完全禁补时段", i+1)
 		}
 	}
 	for i, a := range windows {
