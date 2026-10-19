@@ -18,25 +18,28 @@ type Credentials struct {
 	TOTPSecret   string `json:"totp_secret"`
 }
 type Settings struct {
-	Enabled             bool       `json:"enabled"`
-	LoginPresent        bool       `json:"login_present"`
-	PasswordPresent     bool       `json:"password_present"`
-	FundPasswordPresent bool       `json:"fund_password_present"`
-	TOTPPresent         bool       `json:"totp_present"`
-	DefaultMaxAccounts  int        `json:"default_max_accounts"`
-	SingleActiveAccount bool       `json:"single_active_account"`
-	PageRefreshSeconds  int        `json:"page_refresh_seconds"`
-	MaxOnlineCards      int        `json:"max_online_cards"`
-	AutoRecycleAt       int        `json:"auto_recycle_at"`
-	Templates           []Template `json:"templates"`
+	Enabled              bool       `json:"enabled"`
+	LoginPresent         bool       `json:"login_present"`
+	PasswordPresent      bool       `json:"password_present"`
+	FundPasswordPresent  bool       `json:"fund_password_present"`
+	TOTPPresent          bool       `json:"totp_present"`
+	DefaultMaxAccounts   int        `json:"default_max_accounts"`
+	SingleActiveAccount  bool       `json:"single_active_account"`
+	PageRefreshSeconds   int        `json:"page_refresh_seconds"`
+	MaxOnlineCards       int        `json:"max_online_cards"`
+	AutoRecycleAt        int        `json:"auto_recycle_at"`
+	AutoWithdrawEnabled  bool       `json:"auto_withdraw_enabled"`
+	BatchIntervalSeconds int        `json:"batch_interval_seconds"`
+	Templates            []Template `json:"templates"`
 }
 type Template struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	ProductID string `json:"product_id"`
-	Amount    string `json:"amount"`
-	FeeBuffer string `json:"fee_buffer"`
-	HolderID  string `json:"holder_id"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	ProductID  string   `json:"product_id"`
+	ProductIDs []string `json:"product_ids"`
+	Amount     string   `json:"amount"`
+	FeeBuffer  string   `json:"fee_buffer"`
+	HolderID   string   `json:"holder_id"`
 }
 type Product struct {
 	ID           string `json:"id"`
@@ -86,6 +89,7 @@ type Operation struct {
 	Evidence             string    `json:"evidence"`
 	Automatic            bool      `json:"automatic"`
 	CapacityRecycle      bool      `json:"capacity_recycle,omitempty"`
+	AutoWithdraw         bool      `json:"auto_withdraw,omitempty"`
 	BeforeBalance        string    `json:"before_balance"`
 	BeforeAccountBalance string    `json:"before_account_balance"`
 	CreatedAt            time.Time `json:"created_at"`
@@ -99,7 +103,7 @@ type Operation struct {
 
 func (o Operation) Terminal() bool { return o.Status == "succeeded" || o.Status == "failed" }
 func Defaults() Settings {
-	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, Templates: []Template{}}
+	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, BatchIntervalSeconds: 3, Templates: []Template{}}
 }
 
 var moneyPattern = regexp.MustCompile(`^\d{1,10}(\.\d{1,2})?$`)
@@ -123,6 +127,12 @@ func Cents(s string) (int64, error) {
 }
 func Money(n int64) string { return fmt.Sprintf("%d.%02d", n/100, n%100) }
 func Normalize(s Settings) (Settings, error) {
+	if s.BatchIntervalSeconds == 0 {
+		s.BatchIntervalSeconds = 3 // Existing clients/configurations omit this field.
+	}
+	if s.BatchIntervalSeconds < 1 || s.BatchIntervalSeconds > 300 {
+		return s, fmt.Errorf("批量卡片间隔须为 1～300 秒")
+	}
 	if s.AutoRecycleAt < 0 || s.AutoRecycleAt > 10000 {
 		return s, fmt.Errorf("自动回收触发卡数须为 0～10000，0 表示关闭")
 	}
@@ -142,11 +152,24 @@ func Normalize(s Settings) (Settings, error) {
 	for i := range s.Templates {
 		t := &s.Templates[i]
 		t.Name = strings.TrimSpace(t.Name)
-		pid, e := strconv.ParseInt(t.ProductID, 10, 64)
+		t.ProductIDs = t.OrderedProductIDs()
 		amount, ae := Cents(t.Amount)
-		if t.ID == "" || len(t.ID) > 100 || seen[t.ID] || t.Name == "" || len([]rune(t.Name)) > 60 || e != nil || pid < 1 || ae != nil || amount <= 0 {
+		if t.ID == "" || len(t.ID) > 100 || seen[t.ID] || t.Name == "" || len([]rune(t.Name)) > 60 || len(t.ProductIDs) == 0 || len(t.ProductIDs) > 50 || ae != nil || amount <= 0 {
 			return s, fmt.Errorf("请完整填写模板名称、产品和开卡金额")
 		}
+		products := map[string]bool{}
+		for j, id := range t.ProductIDs {
+			pid, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64)
+			if err != nil || pid < 1 {
+				return s, fmt.Errorf("模板产品 ID 无效")
+			}
+			id = strconv.FormatInt(pid, 10)
+			if products[id] {
+				return s, fmt.Errorf("模板产品不能重复选择")
+			}
+			products[id], t.ProductIDs[j] = true, id
+		}
+		t.ProductID = t.ProductIDs[0] // Compatibility with existing clients/exports.
 		seen[t.ID] = true
 		if t.FeeBuffer == "" {
 			t.FeeBuffer = "0.00"
@@ -161,6 +184,32 @@ func Normalize(s Settings) (Settings, error) {
 		}
 	}
 	return s, nil
+}
+
+func (t Template) OrderedProductIDs() []string {
+	if t.ProductIDs != nil {
+		return append([]string{}, t.ProductIDs...)
+	}
+	if t.ProductID != "" {
+		return []string{t.ProductID}
+	}
+	return []string{}
+}
+
+func (t Template) SelectProduct(products []Product) (Product, error) {
+	amount, err := Cents(t.Amount)
+	if err != nil {
+		return Product{}, err
+	}
+	for _, id := range t.OrderedProductIDs() {
+		for _, p := range products {
+			minimum, err := Cents(p.Minimum)
+			if p.ID == id && err == nil && amount >= minimum {
+				return p, nil
+			}
+		}
+	}
+	return Product{}, fmt.Errorf("模板所选产品均已下架、不可用或不满足最低充值金额，请调整产品或金额")
 }
 
 func CardID(serial string) string {

@@ -20,6 +20,7 @@ func (s *Store) initializeNexovcc() error {
  CREATE TABLE IF NOT EXISTS nexovcc_operations(id TEXT PRIMARY KEY,scope TEXT NOT NULL,profile TEXT NOT NULL,status TEXT NOT NULL);
  CREATE UNIQUE INDEX IF NOT EXISTS nexovcc_active_scope ON nexovcc_operations(scope) WHERE status NOT IN ('succeeded','failed');
  CREATE TABLE IF NOT EXISTS nexovcc_case_states(order_id TEXT PRIMARY KEY,state TEXT NOT NULL,reason TEXT NOT NULL,updated_at TEXT NOT NULL,revision INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS nexovcc_case_removals(order_id TEXT PRIMARY KEY,revision INTEGER NOT NULL,removed_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,profile TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_case_matches(order_id TEXT PRIMARY KEY,group_id TEXT NOT NULL UNIQUE,returned INTEGER NOT NULL DEFAULT 0,profile TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_trade_purposes(group_id TEXT PRIMARY KEY,non_pro INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL);
@@ -44,6 +45,9 @@ func (s *Store) nexovccSettingsLocked() (nexovcc.Settings, nexovcc.Credentials, 
 	}
 	if e = json.Unmarshal([]byte(raw), &cfg); e != nil {
 		return cfg, cred, e
+	}
+	for i := range cfg.Templates {
+		cfg.Templates[i].ProductIDs = cfg.Templates[i].OrderedProductIDs()
 	}
 	plain, e := s.decryptOptional(sealed)
 	if e != nil {
@@ -430,13 +434,13 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, restockIDs ...string
 		if pending > 0 {
 			return fmt.Errorf("卡片仍有开通预留或未决付款，请先核实")
 		}
-		if op.CapacityRecycle {
+		if op.CapacityRecycle || op.AutoWithdraw {
 			var unpaid int
 			if e = tx.QueryRow(`SELECT count(*) FROM pro_card_usage u WHERE u.card_key=? AND u.status='success' AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)`, key.String).Scan(&unpaid); e != nil {
 				return e
 			}
 			if unpaid > 0 {
-				return fmt.Errorf("在线卡数回收须等待全部付款实际回款，人工状态不能替代退款流水")
+				return fmt.Errorf("自动提现或回收须等待全部付款实际回款，人工状态不能替代退款流水")
 			}
 		}
 		if (op.Action == "withdraw" || op.Action == "withdraw_all" || op.Action == "cancel" || op.Action == "withdraw_cancel") && n > 0 {
@@ -575,6 +579,7 @@ type NexovccCase struct {
 	OpenedAt      *time.Time    `json:"opened_at,omitempty"`
 	Deleted       bool          `json:"deleted"`
 	ManualState   string        `json:"manual_state,omitempty"`
+	RemovedAt     string        `json:"removed_at,omitempty"`
 	Match         *NexovccMatch `json:"match,omitempty"`
 	Revenue       *float64      `json:"revenue_r"`
 	RevenueNote   string        `json:"revenue_note,omitempty"`
@@ -595,7 +600,11 @@ type NexovccCase struct {
 func (s *Store) NexovccCases() ([]NexovccCase, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, e := s.db.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),'') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id ORDER BY o.created_at DESC,o.id DESC`)
+	return s.nexovccCasesQuery(s.db)
+}
+
+func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
+	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,'') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0) ORDER BY o.created_at DESC,o.id DESC`)
 	if e != nil {
 		return nil, e
 	}
@@ -604,7 +613,7 @@ func (s *Store) NexovccCases() ([]NexovccCase, error) {
 	for rows.Next() {
 		var v NexovccCase
 		var at, openedAt string
-		if e = rows.Scan(&v.ID, &v.Email, &v.CardID, &v.Last4, &v.Plan, &v.PaymentStatus, &v.State, &v.Reason, &v.RequestedAt, &v.UpdatedAt, &v.Revision, &at, &v.CardName, &v.Provider, &openedAt, &v.Deleted, &v.ManualState); e != nil {
+		if e = rows.Scan(&v.ID, &v.Email, &v.CardID, &v.Last4, &v.Plan, &v.PaymentStatus, &v.State, &v.Reason, &v.RequestedAt, &v.UpdatedAt, &v.Revision, &at, &v.CardName, &v.Provider, &openedAt, &v.Deleted, &v.ManualState, &v.RemovedAt); e != nil {
 			return nil, e
 		}
 		v.CreatedAt, _ = time.Parse(time.RFC3339Nano, at)
@@ -617,8 +626,13 @@ func (s *Store) NexovccCases() ([]NexovccCase, error) {
 		return nil, e
 	}
 	rows.Close()
-	if e = s.enrichNexovccCasesLocked(out); e != nil {
+	if e = s.enrichNexovccCasesQuery(q, out); e != nil {
 		return nil, e
+	}
+	for i := range out {
+		if !out[i].canRemoveUnopened() {
+			out[i].RemovedAt = ""
+		}
 	}
 	return out, nil
 }

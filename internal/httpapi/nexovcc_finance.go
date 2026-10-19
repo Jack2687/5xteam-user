@@ -199,7 +199,7 @@ func (s *Server) startNexovccMonitor() {
 			if err != nil {
 				continue
 			}
-			pending := cfg.AutoRecycleAt > 0
+			pending := cfg.AutoRecycleAt > 0 || cfg.AutoWithdrawEnabled
 			for _, c := range cases {
 				if c.PaymentStatus == "success" && (c.State != "returned" || c.Match == nil) {
 					pending = true
@@ -236,6 +236,9 @@ func (s *Server) startNexovccMonitor() {
 			err = s.syncNexovccLocked(workCtx)
 			if err == nil {
 				err = s.autoRecycleNexovccLocked(workCtx)
+			}
+			if err == nil {
+				err = s.autoWithdrawNexovccLocked(workCtx)
 			}
 			stop()
 			s.nexovcc.jobMu.Lock()

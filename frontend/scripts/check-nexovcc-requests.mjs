@@ -47,3 +47,37 @@ for(const action of ['deposit','withdraw']){
  assert.equal(request.body.confirm,true)
 }
 console.log('Passed: template save with numeric/decimal amounts, zero fee buffer, and deposit/withdraw request strings')
+
+cfg.auto_withdraw_enabled=true
+cfg.batch_interval_seconds=7
+cfg.templates[0].product_ids=['268','267']
+await save()
+payload=requests.filter(r=>r.url==='/api/nexovcc/settings').at(-1).body
+assert.deepEqual(payload.templates[0].product_ids,['268','267'])
+assert.equal(payload.templates[0].product_id,'268')
+assert.equal(payload.auto_withdraw_enabled,true)
+assert.equal(payload.batch_interval_seconds,7)
+assert.deepEqual(nexovcc.templateProductIDs({product_id:267}),['267'])
+assert.deepEqual(nexovcc.templateProductIDs({product_id:'267',product_ids:[]}),[])
+
+const picker=readFileSync(new URL('../src/components/NexovccProductPicker.vue',import.meta.url),'utf8')
+ .split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
+const pickerProps=reactive({modelValue:['267'],products:[],disabled:false})
+const pickerContext=vm.createContext({ref,computed,moveProduct:nexovcc.moveProduct,
+ defineProps:()=>pickerProps,defineEmits:()=>(event,value)=>{assert.equal(event,'update:modelValue');pickerProps.modelValue=value},
+})
+vm.runInContext(picker+';globalThis.picker={toggle,start,drop,move,label};',pickerContext)
+pickerContext.picker.toggle('268',true)
+assert.deepEqual(Array.from(pickerProps.modelValue),['267','268'])
+pickerContext.picker.start({dataTransfer:{setData(){}}},1)
+pickerContext.picker.drop(0)
+assert.deepEqual(Array.from(pickerProps.modelValue),['268','267'])
+assert.match(pickerContext.picker.label('268'),/当前不可用/)
+pickerContext.picker.move(0,1)
+assert.deepEqual(Array.from(pickerProps.modelValue),['267','268'])
+pickerContext.picker.toggle('267',false)
+assert.deepEqual(Array.from(pickerProps.modelValue),['268'])
+pickerProps.disabled=true
+pickerContext.picker.toggle('267',true)
+assert.deepEqual(Array.from(pickerProps.modelValue),['268'])
+console.log('Passed: scheduled withdrawal settings, legacy template, multi-select, drag and keyboard priority, unavailable products')

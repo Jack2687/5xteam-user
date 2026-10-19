@@ -85,6 +85,7 @@ type nexovccRuntime struct {
 }
 type nexovccInput struct {
 	CapacityRecycle bool     `json:"-"`
+	AutoWithdraw    bool     `json:"-"`
 	Action          string   `json:"action"`
 	RequestID       string   `json:"request_id"`
 	CardID          string   `json:"card_id"`
@@ -113,6 +114,7 @@ func (s *Server) nexovccRoutes(m *http.ServeMux) {
 	})
 	m.HandleFunc("POST /api/nexovcc/cards/{id}/private", s.nexovccPrivate)
 	m.HandleFunc("PUT /api/nexovcc/cases/{id}", s.nexovccCaseState)
+	m.HandleFunc("DELETE /api/nexovcc/cases/unopened", s.deleteNexovccUnopenedCases)
 	m.HandleFunc("PUT /api/nexovcc/cases/{id}/match", s.nexovccCaseMatch)
 	m.HandleFunc("PUT /api/nexovcc/trades/{id}/purpose", s.nexovccTradePurpose)
 }
@@ -352,26 +354,11 @@ func (s *Server) syncNexovccLocked(ctx context.Context) error {
 		return e
 	}
 	s.nexovccProgress("同步产品 / BIN", 1, 3)
-	rows, e := c.Pages(ctx, "/api/product/findUserProductList")
-	if e != nil {
-		return e
-	}
-	products := []nexovcc.Product{}
-	for _, r := range rows {
-		if !nexovcc.ActiveProduct(r) {
-			continue
-		}
-		p, e := nexovcc.ProductFrom(r)
-		if e != nil {
-			return e
-		}
-		products = append(products, p)
-	}
-	if e = s.store.NexovccCache("products", products); e != nil {
+	if _, e = s.syncNexovccProductsLocked(ctx); e != nil {
 		return e
 	}
 	s.nexovccProgress("分页同步卡片", 2, 3)
-	rows, e = c.Pages(ctx, "/api/card/findUserCardList")
+	rows, e := c.Pages(ctx, "/api/card/findUserCardList")
 	if e != nil {
 		return e
 	}
@@ -568,30 +555,30 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if t == nil {
 		return op, fmt.Errorf("请选择已保存的环球开卡模板")
 	}
-	products := []nexovcc.Product{}
-	if e = s.store.NexovccCached("products", &products); e != nil {
+	// Query current availability; a cached product may have been delisted.
+	products, e := s.syncNexovccProductsLocked(ctx)
+	if e != nil {
 		return op, e
 	}
-	valid := false
+	product, e := t.SelectProduct(products)
+	if e != nil {
+		return op, e
+	}
 	amount, _ := nexovcc.Cents(t.Amount)
-	for _, p := range products {
-		if p.ID == t.ProductID {
-			minimum, e := nexovcc.Cents(p.Minimum)
-			if e != nil || amount < minimum {
-				return op, fmt.Errorf("开卡金额低于该产品最低金额")
-			}
-			valid = true
-		}
-	}
-	if !valid {
-		return op, fmt.Errorf("请先同步环球产品，选择可用产品后开卡")
-	}
 	taskID, _ := ctx.Value(proRestockContextKey{}).(string)
 	if cfg.MaxOnlineCards > 0 || cfg.AutoRecycleAt > 0 {
 		if e = s.store.CheckNexovccOpen(nexovcc.Operation{Action: "open", Amount: t.Amount, Automatic: automatic, CreatedAt: time.Now()}, taskID); e != nil {
 			return op, e
 		}
 		if e = s.ensureNexovccOnlineSlotLocked(ctx, id, cfg, checks...); e != nil {
+			return op, e
+		}
+		products, e = s.syncNexovccProductsLocked(ctx)
+		if e != nil {
+			return op, e
+		}
+		product, e = t.SelectProduct(products)
+		if e != nil {
 			return op, e
 		}
 	}
@@ -615,11 +602,11 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if available < amount+buffer {
 		return op, fmt.Errorf("环球账户余额不足以覆盖开卡金额和预留费用")
 	}
-	op = nexovcc.Operation{ID: id, Action: "open", TemplateID: templateID, ProductID: t.ProductID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	op = nexovcc.Operation{ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if e = s.store.BeginNexovccOperation(op, taskID); e != nil {
 		return op, e
 	}
-	pid, _ := strconv.ParseInt(t.ProductID, 10, 64)
+	pid, _ := strconv.ParseInt(product.ID, 10, 64)
 	body := map[string]any{"pid": pid, "money_id": 3, "holder_id_rand": true, "amount": t.Amount, "remark": id, "open_num": 1, "allow_consume_scene": "1,3,4,5,6,7,8,9", "upload_serial": ""}
 	if t.HolderID != "" {
 		body["holder_id_rand"] = false

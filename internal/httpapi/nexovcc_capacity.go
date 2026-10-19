@@ -106,6 +106,7 @@ func (s *Server) oldestNexovccRecycleCandidateLocked(cards []nexovcc.Card, usedO
 // Caller holds proCardAdmissionMu before nexovcc.mu, sharing the same lock order
 // as Pro card selection and reservation. Run only after a complete fresh sync.
 func (s *Server) autoRecycleNexovccLocked(ctx context.Context) error {
+	var lastCard time.Time
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -147,6 +148,11 @@ func (s *Server) autoRecycleNexovccLocked(ctx context.Context) error {
 		if card == nil {
 			return nil // Wait for actual refunds; do not retire unused new cards.
 		}
+		if !lastCard.IsZero() {
+			if err = s.nexovccBatchGap(ctx, lastCard); err != nil {
+				return err
+			}
+		}
 		s.nexovccProgress(fmt.Sprintf("在线卡 %d 张达到回收值 %d，回收尾号 %s", online, cfg.AutoRecycleAt, card.Last4), 0, 4)
 		// Stable across scans/restarts: an ambiguous or failed money operation
 		// must never become another withdrawal merely because the ticker ran.
@@ -158,6 +164,7 @@ func (s *Server) autoRecycleNexovccLocked(ctx context.Context) error {
 		if err = s.waitNexovccCapacityCloseLocked(ctx, op); err != nil {
 			return err
 		}
+		lastCard = time.Now()
 	}
 }
 

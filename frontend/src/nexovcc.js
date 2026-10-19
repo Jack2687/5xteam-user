@@ -7,9 +7,17 @@ export const terminal = op => ['succeeded','failed'].includes(op.status)
 // expects decimal strings; preserve their value without rounding or defaults.
 export function nexovccSettingsPayload(settings) {
  return {...settings,templates:settings.templates.map(t=>({...t,
-  product_id:String(t.product_id??''),holder_id:String(t.holder_id??''),
+  product_id:templateProductIDs(t)[0]||'',product_ids:templateProductIDs(t),holder_id:String(t.holder_id??''),
   amount:String(t.amount??''),fee_buffer:String(t.fee_buffer??'')
  }))}
+}
+export function templateProductIDs(template){
+ return (Array.isArray(template.product_ids)?template.product_ids:template.product_id?[template.product_id]:[]).map(String)
+}
+export function moveProduct(ids,from,to){
+ const next=[...ids]
+ if(from<0||to<0||from>=next.length||to>=next.length)return next
+ next.splice(to,0,next.splice(from,1)[0]);return next
 }
 export function nexovccOperationPayload(input) {
  return {...input,...(Object.hasOwn(input,'amount')?{amount:String(input.amount??'')}:{})}

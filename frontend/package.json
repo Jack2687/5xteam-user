@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "check": "vue-tsc --noEmit",
-    "test:nexovcc": "node scripts/check-nexovcc-requests.mjs && node scripts/check-nexovcc-finance.mjs && node scripts/check-nexovcc-batch.mjs && node scripts/check-nexovcc-reconciliation.mjs && node scripts/check-nexovcc-case-details.mjs && node scripts/check-nexovcc-pro.mjs",
+    "test:nexovcc": "node scripts/check-nexovcc-requests.mjs && node scripts/check-nexovcc-case-delete.mjs && node scripts/check-nexovcc-finance.mjs && node scripts/check-nexovcc-batch.mjs && node scripts/check-nexovcc-reconciliation.mjs && node scripts/check-nexovcc-case-details.mjs && node scripts/check-nexovcc-pro.mjs",
     "test:ejh": "node scripts/check-ejh.mjs",
     "test:ejh-reconciliation": "node scripts/check-ejh-reconciliation.mjs",
     "test:ejh-reversal-fees": "node scripts/check-ejh-reversal-fees.mjs",

@@ -282,9 +282,9 @@ func (s *Store) MatchNexovccCase(id, groupID, reason string) error {
 	return fmt.Errorf("流水不存在、卡片不一致或交易信息不完整")
 }
 
-func (s *Store) enrichNexovccCasesLocked(cases []NexovccCase) error {
+func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase) error {
 	revenues := map[string]*float64{}
-	rows, e := s.db.Query(`SELECT email,sum(amount) FROM nexovcc_revenue GROUP BY email`)
+	rows, e := q.Query(`SELECT email,sum(amount) FROM nexovcc_revenue GROUP BY email`)
 	if e != nil {
 		return e
 	}
@@ -318,7 +318,7 @@ func (s *Store) enrichNexovccCasesLocked(cases []NexovccCase) error {
 			}
 		}
 		var raw string
-		e = s.db.QueryRow(`SELECT profile FROM nexovcc_case_matches WHERE order_id=?`, c.ID).Scan(&raw)
+		e = q.QueryRow(`SELECT profile FROM nexovcc_case_matches WHERE order_id=?`, c.ID).Scan(&raw)
 		if e != nil && e != sql.ErrNoRows {
 			return e
 		}
@@ -329,7 +329,7 @@ func (s *Store) enrichNexovccCasesLocked(cases []NexovccCase) error {
 			}
 			c.Match = &m
 			var override string
-			e = s.db.QueryRow(`SELECT state FROM nexovcc_case_states WHERE order_id=?`, c.ID).Scan(&override)
+			e = q.QueryRow(`SELECT state FROM nexovcc_case_states WHERE order_id=?`, c.ID).Scan(&override)
 			if e != nil && e != sql.ErrNoRows {
 				return e
 			}

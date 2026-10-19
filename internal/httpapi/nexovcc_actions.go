@@ -100,6 +100,7 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	}
 	op = nexovcc.Operation{ID: in.RequestID, Action: in.Action, CardID: card.ID, Serial: card.Serial, Amount: in.Amount, Remark: in.Remark, Status: "submitted", BeforeBalance: card.Balance, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	op.CapacityRecycle = in.CapacityRecycle
+	op.AutoWithdraw = in.AutoWithdraw
 	if nexovccClosing(in.Action) {
 		op.Step = "ready"
 		if in.Action == "withdraw_cancel" {
@@ -155,7 +156,23 @@ func (s *Server) nexovccActionError(op nexovcc.Operation, err error) (nexovcc.Op
 }
 
 func (s *Server) nexovccGap(ctx context.Context, after time.Time, message string) error {
-	for remaining := time.Until(after.Add(3 * time.Second)); remaining > 0; remaining = time.Until(after.Add(3 * time.Second)) {
+	return s.nexovccWaitGap(ctx, after, 3*time.Second, message)
+}
+
+func (s *Server) nexovccBatchGap(ctx context.Context, after time.Time) error {
+	cfg, _, err := s.store.NexovccSettings()
+	if err != nil {
+		return err
+	}
+	seconds := cfg.BatchIntervalSeconds
+	if seconds < 1 {
+		seconds = 3
+	}
+	return s.nexovccWaitGap(ctx, after, time.Duration(seconds)*time.Second, "准备处理下一张卡")
+}
+
+func (s *Server) nexovccWaitGap(ctx context.Context, after time.Time, gap time.Duration, message string) error {
+	for remaining := time.Until(after.Add(gap)); remaining > 0; remaining = time.Until(after.Add(gap)) {
 		s.nexovccProgress(fmt.Sprintf("%s · 等待 %d 秒", message, int(remaining.Seconds())+1), 1, 3)
 		t := time.NewTimer(min(remaining, time.Second))
 		select {

@@ -29,7 +29,7 @@ func (s *Server) batchNexovccLocked(ctx context.Context, in nexovccInput) {
 			break
 		}
 		if index > 0 {
-			if err := s.nexovccGap(ctx, time.Now(), "准备处理下一张卡"); err != nil {
+			if err := s.nexovccBatchGap(ctx, time.Now()); err != nil {
 				lastError = err.Error()
 				break
 			}
