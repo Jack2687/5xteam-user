@@ -68,7 +68,7 @@ function manage(row){detail.value={type:'manage',cardID:row.card.id}}
 function caseTrades({row,options={type:'trades'}}){const serial=data.cards.find(r=>r.card.id===row.card_id)?.card.serial_no||row.match?.group?.serial_no;if(!serial){show('卡片资料未同步，无法定位流水','error');return}ledger.value={...options,serial,group:row.match?.group}}
 function manageCase(row){const card=data.cards.find(r=>r.card.id===row.card_id);if(card)manage(card)}
 function editMatch(row){dialog.value={type:'match',row,group_id:row.match?.group?.id||'',reason:'',confirm:false}}
-function matchOptions(row){const serial=data.cards.find(r=>r.card.id===row.card_id)?.card.serial_no;return data.groups.filter(g=>g.valid&&Number(g.payment)>0&&g.serial_no===serial&&!data.cases.some(c=>c.id!==row.id&&c.match?.group?.id===g.id))}
+function matchOptions(row){const serial=data.cards.find(r=>r.card.id===row.card_id)?.card.serial_no;return data.groups.filter(g=>!g.non_pro&&g.valid&&Number(g.payment)>0&&g.serial_no===serial&&!data.cases.some(c=>c.id!==row.id&&c.match?.group?.id===g.id))}
 function selectPage(){const ids=visible.value.filter(r=>!cancelReason(r,data.operations)).map(r=>r.card.id);selection.value=ids.every(id=>selection.value.includes(id))?selection.value.filter(id=>!ids.includes(id)):[...new Set([...selection.value,...ids])]}
 function batchAction(action){dialog.value={type:'batch',action,ids:[...selection.value],confirm:false}}
 async function load(){const result=await api('/api/nexovcc/dashboard');if(!disposed)Object.assign(data,result)}
@@ -141,6 +141,11 @@ async function reveal(row){try{privateInfo.value=await api('/api/nexovcc/cards/'
 async function toggle(row){if(running.value)return;saving.value=true;try{await api('/api/gptpay/cards/'+encodeURIComponent(row.card.id),{method:'PUT',body:{enabled:!row.local.enabled}});await load()}catch(e){show(e.message,'error')}finally{saving.value=false}}
 onMounted(async()=>{updateTimer=setTimeout(watchUpdates,5000);try{view.value=localStorage.getItem('nexovcc-view')==='cards'?'cards':'list'}catch{};try{const settings=await api('/api/nexovcc/settings');if(disposed)return;Object.assign(cfg,settings);await load();await loadJob();ready.value=true;if(job.value.status==='running'){poll();return}if(cfg.enabled&&refreshDue(cfg.page_refresh_seconds))await perform({action:'sync'})}catch(e){show(e.message,'error')}})
 onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer);clearTimeout(privateTimer);clearTimeout(updateTimer);privateInfo.value=null;cfg.login=cfg.password=cfg.fund_password=cfg.totp_secret=''})
+async function tradePurposeUpdated(group){
+ const index=data.groups.findIndex(g=>g.id===group.id)
+ if(index>=0)data.groups[index]=group
+ try{await load()}catch(e){show('付款标记已保存，刷新失败：'+e.message,'error')}
+}
 </script>
 
 <template>
@@ -186,7 +191,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer);clearTimeout(privateT
    <template v-else><p>银行卡尾号 {{dialog.card.card.last4}}</p><label v-if="['deposit','withdraw'].includes(dialog.action)" class="field">金额 USD<input v-model="dialog.amount" type="number" min="0.01" step="0.01" required/></label><label v-if="dialog.action==='remark'" class="field">备注<input v-model="dialog.remark" maxlength="40"/></label><p v-if="dialog.action==='withdraw'">提现后须保留 1 USD。核实提现到账后才能继续销卡。</p><p v-if="dialog.action==='withdraw_all'">按最新余额一键提现，保留 1 USD；余额不超过 1 USD 时跳过。</p><p v-if="dialog.action==='cancel'">冻结成功后等待 3 秒自动销卡。卡内余额须不超过 1 USD。</p><p v-if="dialog.action==='withdraw_cancel'">提现保留 1 USD → 核实到账 → 冻结 → 销卡。操作间隔至少 3 秒，剩余余额退回后自动确认完成。</p><label class="check"><input v-model="dialog.confirm" type="checkbox" required/>确认执行{{operationNames[dialog.action]}}</label></template>
    <div class="actions"><button type="button" class="btn ghost" :disabled="running||saving" @click="closeDialog">取消</button><button class="btn primary" :disabled="running||saving">{{running||saving?'处理中…':'确认'}}</button></div>
   </form></div><div v-if="privateInfo" class="modal-backdrop" @click.self="privateInfo=null"><section class="modal nex-dialog"><div class="modal-heading"><h2>卡片信息</h2><button class="icon-button" @click="privateInfo=null"><X :size="18"/></button></div><p class="private-number">{{privateInfo.cardNumber}}</p><p>有效期：{{privateInfo.expMonth}} / {{privateInfo.expYear}}</p><p>CVV：{{privateInfo.cvv}}</p><small>30 秒后自动隐藏</small></section></div></Teleport>
-  <NexovccLedgerDialog v-if="ledger" :data="data" :options="ledger" :page-size="props.defaultPageSize" @close="ledger=null"/>
+  <NexovccLedgerDialog v-if="ledger" :data="data" :options="ledger" :page-size="props.defaultPageSize" @close="ledger=null" @updated="tradePurposeUpdated"/>
  </div>
 </template>
 

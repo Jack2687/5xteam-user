@@ -59,6 +59,8 @@ type Finance struct {
 	Error     string     `json:"error"`
 }
 type TradeGroup struct {
+	NonPro           bool      `json:"non_pro,omitempty"`
+	PurposeRevision  int       `json:"purpose_revision"`
 	ID               string    `json:"id"`
 	Serial           string    `json:"serial_no"`
 	Authorization    string    `json:"authorization"`

@@ -31,7 +31,7 @@ function changeMatch(row){edit.value={type:'match',row,group_id:row.match?.group
 const groups=computed(()=>{
  if(!edit.value)return []
  const row=edit.value.row,serial=data.value.cards.find(c=>c.card.id===row.card_id)?.card.serial_no
- return (data.value.groups||[]).filter(g=>g.valid&&Number(g.payment)>0&&g.serial_no===serial&&!data.value.cases.some(c=>c.id!==row.id&&c.match?.group?.id===g.id))
+ return (data.value.groups||[]).filter(g=>!g.non_pro&&g.valid&&Number(g.payment)>0&&g.serial_no===serial&&!data.value.cases.some(c=>c.id!==row.id&&c.match?.group?.id===g.id))
 })
 async function save(){
  const d=edit.value;if(!d||busy.value||!d.confirm)return
@@ -44,6 +44,11 @@ async function save(){
 }
 onBeforeUnmount(()=>generation++)
 defineExpose({open})
+async function tradePurposeUpdated(group){
+ const index=data.value.groups.findIndex(g=>g.id===group.id)
+ if(index>=0)data.value.groups[index]=group
+ await load();emit('updated')
+}
 </script>
 <template>
  <Teleport to="body"><div v-if="opened" class="modal-backdrop nex-pro-overlay" @click.self="close"><section class="modal nex-pro-cases" role="dialog" aria-modal="true" aria-label="环球开通与回款">
@@ -64,7 +69,7 @@ defineExpose({open})
   <NexovccCaseTable v-else-if="!loading" compact :rows="visible" :cards="data.cards" :finance="data.finance" :running="busy" @state="changeState" @match="changeMatch" @details="details" @card="openCard"/>
   <Pagination v-if="!edit" :page="page" :page-size="size" :total="rows.length" @update:page="page=$event" @update:page-size="size=$event;page=1"/>
  </section></div></Teleport>
- <NexovccLedgerDialog v-if="opened&&ledger" :data="data" :options="ledger" :page-size="size" @close="ledger=null"/>
+ <NexovccLedgerDialog v-if="opened&&ledger" :data="data" :options="ledger" :page-size="size" @close="ledger=null" @updated="tradePurposeUpdated"/>
 </template>
 <style scoped>
 .nex-pro-overlay{z-index:11000}.nex-pro-cases{width:min(920px,95vw);max-height:88vh;overflow:auto}.modal-heading h2{font-size:17px;overflow-wrap:anywhere}.filters{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.filters button{border:1px solid var(--line);border-radius:6px;background:none;color:var(--muted);padding:6px 12px;cursor:pointer;font-size:12px}.filters .selected{color:var(--green-strong);background:var(--green-soft)}.case-editor{border:1px solid var(--line);padding:20px;border-radius:8px}.case-editor h3{font-size:14px;overflow-wrap:anywhere}.case-editor .field{margin:16px 0}.confirm{display:flex;gap:8px;align-items:center;font-size:12px}.confirm input{width:auto}.hint{font-size:11px;color:var(--muted);margin:12px 0}.danger-text{overflow-wrap:anywhere;font-size:12px}

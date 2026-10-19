@@ -28,7 +28,7 @@ export function financeTotals(data,serial='') {
  const linked=new Set(cases.map(c=>c.match?.group?.id).filter(Boolean))
  return {ready,gross,received:serial?0:sum(recharges,r=>cents(r.received)),rechargeFee,opening:fees[3003]+fees[5001],reversal:fees[2003]+fees[5004],transaction:fees[2007]+fees[5008],otherFees:Object.entries(fees).filter(([k])=>![3003,5001,2003,5004,2007,5008].includes(Number(k))).reduce((s,[,v])=>s+v,0),cardLoss,settlement,cost,revenue,profit:revenue-rCents(cost),
   paid:sum(valid,g=>cents(g.payment)),returned:sum(valid,g=>cents(g.returned)),pending:sum(valid.filter(g=>!g.fully_returned&&!g.settled),g=>Math.max(0,cents(g.difference))),
-  unknownRevenue:cases.filter(c=>c.revenue_r==null).length,unmatchedCases:cases.filter(c=>!c.match).length,unmatched:groups.filter(g=>cents(g.payment)>0&&!linked.has(g.id)).length,unverified:groups.filter(g=>!g.valid).length,
+  unknownRevenue:cases.filter(c=>c.revenue_r==null).length,unmatchedCases:cases.filter(c=>!c.match).length,unmatched:groups.filter(g=>!g.non_pro&&cents(g.payment)>0&&!linked.has(g.id)).length,unverified:groups.filter(g=>!g.valid).length,
   foreign:funds.filter(r=>r.currency!=='USD').length+(serial?0:(f.recharges||[]).filter(r=>r.status==='1'&&r.currency!=='USD').length),
   unknownFunds:funds.filter(r=>!fundNames[r.kind]).length}
 }

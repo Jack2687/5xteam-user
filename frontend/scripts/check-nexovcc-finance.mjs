@@ -34,6 +34,15 @@ assert.equal(financeTotals(pending,'fixture-card-1').cost,80)
 const unmatched=structuredClone(data);unmatched.cases=[]
 assert.equal(financeTotals(unmatched).unmatched,1)
 assert.equal(financeTotals(unmatched).cost,635) // cost doesn't disappear before matching
+for (const fixture of [unmatched, {...pending,cases:[]}]) {
+ const marked=structuredClone(fixture), before=financeTotals(fixture)
+ marked.groups[0].non_pro=true
+ const after=financeTotals(marked)
+ assert.equal(before.unmatched,1)
+ assert.deepEqual(after,{...before,unmatched:0}) // money, pending refunds and costs stay intact
+ marked.groups[0].non_pro=false
+ assert.deepEqual(financeTotals(marked),before)
+}
 const unknown=structuredClone(data);unknown.cases[0].revenue_r=null
 assert.equal(financeTotals(unknown).unknownRevenue,1)
 assert.equal(caseAmounts(unknown.cases[0]).profit,null)

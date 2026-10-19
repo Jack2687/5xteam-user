@@ -22,6 +22,7 @@ func (s *Store) initializeNexovcc() error {
  CREATE TABLE IF NOT EXISTS nexovcc_case_states(order_id TEXT PRIMARY KEY,state TEXT NOT NULL,reason TEXT NOT NULL,updated_at TEXT NOT NULL,revision INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,profile TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_case_matches(order_id TEXT PRIMARY KEY,group_id TEXT NOT NULL UNIQUE,returned INTEGER NOT NULL DEFAULT 0,profile TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS nexovcc_trade_purposes(group_id TEXT PRIMARY KEY,non_pro INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_revenue(identity TEXT PRIMARY KEY,email TEXT NOT NULL,amount REAL NOT NULL,updated_at TEXT NOT NULL);`)
 	return e
 }

@@ -114,6 +114,7 @@ func (s *Server) nexovccRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/nexovcc/cards/{id}/private", s.nexovccPrivate)
 	m.HandleFunc("PUT /api/nexovcc/cases/{id}", s.nexovccCaseState)
 	m.HandleFunc("PUT /api/nexovcc/cases/{id}/match", s.nexovccCaseMatch)
+	m.HandleFunc("PUT /api/nexovcc/trades/{id}/purpose", s.nexovccTradePurpose)
 }
 func (s *Server) stopNexovcc() {
 	s.nexovcc.jobMu.Lock()
@@ -212,7 +213,12 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.NexovccCached("finance_error", &financeError)
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": nexovcc.Groups(finance), "finance_error": financeError}, "")
+	groups, e := s.store.NexovccTradeGroups(finance)
+	if e != nil {
+		writeAPI(w, 500, nil, "读取交易标记失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "finance_error": financeError}, "")
 }
 func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Lock()

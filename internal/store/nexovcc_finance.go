@@ -86,6 +86,13 @@ func (s *Store) SaveNexovccFinance(f nexovcc.Finance) error {
 	if e = lockProCardAdmission(tx); e != nil {
 		return e
 	}
+	if e = s.saveNexovccFinanceTx(tx, f); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+func (s *Store) saveNexovccFinanceTx(tx *sql.Tx, f nexovcc.Finance) error {
 	rows, e := tx.Query(`SELECT o.profile,c.serial,u.status FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id JOIN nexovcc_cards c ON c.card_key=u.card_key ORDER BY o.created_at`)
 	if e != nil {
 		return e
@@ -136,10 +143,16 @@ func (s *Store) SaveNexovccFinance(f nexovcc.Finance) error {
 	if e != nil {
 		return e
 	}
-	groups := nexovcc.Groups(f)
+	groups, e := nexovccTradeGroups(tx, f)
+	if e != nil {
+		return e
+	}
 	groupsByID := map[string]nexovcc.TradeGroup{}
 	groupsBySerial := map[string][]nexovcc.TradeGroup{}
 	for _, g := range groups {
+		if g.NonPro {
+			continue
+		}
 		groupsByID[g.ID] = g
 		groupsBySerial[g.Serial] = append(groupsBySerial[g.Serial], g)
 	}
@@ -208,7 +221,7 @@ func (s *Store) SaveNexovccFinance(f nexovcc.Finance) error {
 	if _, e = tx.Exec(`INSERT INTO nexovcc_cache VALUES('finance',?) ON CONFLICT(kind) DO UPDATE SET profile=excluded.profile`, mustJSON(f)); e != nil {
 		return e
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) MatchNexovccCase(id, groupID, reason string) error {
@@ -239,7 +252,14 @@ func (s *Store) MatchNexovccCase(id, groupID, reason string) error {
 	if e = json.Unmarshal([]byte(raw), &f); e != nil {
 		return e
 	}
-	for _, g := range nexovcc.Groups(f) {
+	groups, e := nexovccTradeGroups(tx, f)
+	if e != nil {
+		return e
+	}
+	for _, g := range groups {
+		if g.ID == groupID && g.NonPro {
+			return fmt.Errorf("该付款已标记为非 Pro 付款，请先在交易明细中恢复匹配")
+		}
 		if g.ID == groupID && g.Serial == serial && g.Valid && g.Payment != "0.00" {
 			var owner string
 			e = tx.QueryRow(`SELECT order_id FROM nexovcc_case_matches WHERE group_id=?`, g.ID).Scan(&owner)

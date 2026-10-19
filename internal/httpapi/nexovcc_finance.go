@@ -50,6 +50,26 @@ func (s *Server) nexovccCaseMatch(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, 200, map[string]bool{"saved": true}, "")
 }
 
+func (s *Server) nexovccTradePurpose(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		NonPro   *bool `json:"non_pro"`
+		Revision *int  `json:"revision"`
+	}
+	if decodeJSON(w, r, &in, 4096) != nil {
+		return
+	}
+	if in.NonPro == nil || in.Revision == nil || *in.Revision < 0 {
+		writeAPI(w, 400, nil, "请提供付款标记及当前版本")
+		return
+	}
+	group, err := s.store.SetNexovccTradePurpose(r.PathValue("id"), *in.NonPro, *in.Revision)
+	if err != nil {
+		writeAPI(w, 409, nil, err.Error())
+		return
+	}
+	writeAPI(w, 200, group, "")
+}
+
 // A rise in the aggregate wallet balance can be caused by another card or a
 // recharge. Only the same card's uniquely identified transfer confirms arrival.
 func (s *Server) nexovccTransferConfirmedLocked(ctx context.Context, op *nexovcc.Operation, kind int, amount string) bool {
