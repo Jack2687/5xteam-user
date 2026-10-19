@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 const gptPlanFixture = `{"accounts":{"default":{"account":{"plan_type":"free"},"entitlement":{"subscription_plan":"chatgptproplan","has_active_subscription":true}}}}`

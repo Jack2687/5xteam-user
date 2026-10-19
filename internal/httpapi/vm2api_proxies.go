@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/vm2api"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/vm2api"
 )
 
 func (s *Server) vmSelectionConnection(w http.ResponseWriter, r *http.Request) (model.VM2APISettings, string, bool) {

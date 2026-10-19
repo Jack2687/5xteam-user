@@ -15,18 +15,17 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
-	"chapt-space-user/internal/sub2"
-	"chapt-space-user/internal/vm2api"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
+	"chatgpt-space-merge/internal/sub2"
+	"chatgpt-space-merge/internal/vm2api"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 type proAccountListItem struct {
-	FinancialCases     []ejh.Case `json:"financial_cases"`
-	PushElapsedMinutes int64      `json:"push_elapsed_minutes"`
-	ForceMergeDeadline *time.Time `json:"force_merge_deadline,omitempty"`
+	FinancialCases     []proFinancialCase `json:"financial_cases"`
+	PushElapsedMinutes int64              `json:"push_elapsed_minutes"`
+	ForceMergeDeadline *time.Time         `json:"force_merge_deadline,omitempty"`
 	model.MailAccountProfile
 	ActivationCard *store.ProActivationCard `json:"activation_card,omitempty"`
 	StageProgress  model.ProStageDisplay    `json:"pro_stage_progress"`
@@ -50,8 +49,12 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 	if err != nil {
 		return nil, err
 	}
-	byEmail := map[string][]ejh.Case{}
-	for _, c := range cases {
+	financialCases, err := s.proFinancialCases(cases)
+	if err != nil {
+		return nil, err
+	}
+	byEmail := map[string][]proFinancialCase{}
+	for _, c := range financialCases {
 		byEmail[strings.ToLower(c.Email)] = append(byEmail[strings.ToLower(c.Email)], c)
 	}
 	config, _, _, err := s.store.ProSettings()
@@ -70,7 +73,7 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 		row := proAccountListItem{MailAccountProfile: item, StageProgress: item.ProStages()}
 		row.FinancialCases = byEmail[strings.ToLower(item.Email)]
 		if row.FinancialCases == nil {
-			row.FinancialCases = []ejh.Case{}
+			row.FinancialCases = []proFinancialCase{}
 		}
 		if item.ProPushStartedAt != nil {
 			row.PushElapsedMinutes = max(0, int64(time.Since(*item.ProPushStartedAt)/time.Minute))
@@ -671,6 +674,8 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	previousProvider := current.Provider
 	input.ScheduledEnabled, input.MaxUnmerged, input.ScheduleIntervalSeconds = current.ScheduledEnabled, current.MaxUnmerged, current.ScheduleIntervalSeconds
 	input.EJHAutoOpen, input.EJHTemplateID, input.EJHDailyOpenLimit, input.EJHDailyAmountLimit = current.EJHAutoOpen, current.EJHTemplateID, current.EJHDailyOpenLimit, current.EJHDailyAmountLimit
+	input.CardProvider = current.CardProvider
+	input.NexovccAutoOpen, input.NexovccTemplateID, input.NexovccDailyOpenLimit, input.NexovccDailyAmountLimit = current.NexovccAutoOpen, current.NexovccTemplateID, current.NexovccDailyOpenLimit, current.NexovccDailyAmountLimit
 	input.ForceMergeEnabled, input.ForceMergeMinutes = current.ForceMergeEnabled, current.ForceMergeMinutes
 	input.MergeConcurrency = current.MergeConcurrency
 	now := time.Now()

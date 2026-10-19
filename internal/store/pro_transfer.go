@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 const ProTransferFormat = "space-pro-accounts"
@@ -28,6 +28,7 @@ type ProTransferFile struct {
 	Accounts   []ProTransferAccount `json:"accounts"`
 }
 type ProTransferOrder struct {
+	ReturnRequestedAt *time.Time             `json:"return_requested_at,omitempty"`
 	CaseStateOverride *ejh.CaseStateOverride `json:"case_state_override,omitempty"`
 	ReturnConfirmed   bool                   `json:"return_confirmed,omitempty"`
 	CardType          string                 `json:"card_type,omitempty"`
@@ -181,6 +182,9 @@ func (s *Store) ExportProAccounts(emails []string, downstream model.ProDownstrea
 		if !foundOrder {
 			return out, errors.New("账号正在保存订单，请稍后重新导出")
 		}
+		if err = exportNexovccTransferStates(tx, entry.Orders); err != nil {
+			return out, err
+		}
 		out.Accounts = append(out.Accounts, entry)
 	}
 	return out, tx.Commit()
@@ -217,11 +221,11 @@ func ValidateProTransfer(file ProTransferFile) error {
 		active := 0
 		for _, o := range a.Orders {
 			if v := o.CaseStateOverride; v != nil {
-				if o.CardType != "ejh" || (!ejh.ValidCaseState(v.State) && v.State != "") || strings.TrimSpace(v.Reason) == "" || len(v.Reason) > 2400 || v.UpdatedAt.IsZero() || v.Revision < 1 {
+				if (o.CardType != "ejh" && o.CardType != "nexovcc") || (!ejh.ValidCaseState(v.State) && v.State != "") || strings.TrimSpace(v.Reason) == "" || len(v.Reason) > 2400 || v.UpdatedAt.IsZero() || v.Revision < 1 {
 					return errors.New("迁移文件人工回款状态无效")
 				}
 			}
-			if o.CardType != "" && o.CardType != "ejh" && o.CardType != "other" {
+			if o.CardType != "" && o.CardType != "ejh" && o.CardType != "other" && o.CardType != "nexovcc" {
 				return errors.New("迁移订单银行卡类型无效")
 			}
 			if o.Order.ID == "" || len(o.Order.ID) > 160 || orderIDs[o.Order.ID] || !strings.EqualFold(o.Order.Email, email) {
@@ -583,7 +587,11 @@ func (s *Store) ImportProAccount(entry ProTransferAccount, exportedAt time.Time,
 				return result, err
 			}
 		}
-		if v := o.CaseStateOverride; v != nil {
+		if kind == "nexovcc" {
+			if err = importNexovccTransferState(tx, o, exportedAt, now); err != nil {
+				return result, err
+			}
+		} else if v := o.CaseStateOverride; v != nil {
 			if _, err = tx.Exec(`INSERT INTO ejh_case_states(order_id,state,reason,updated_at,revision) VALUES(?,?,?,?,?)
  ON CONFLICT(order_id) DO UPDATE SET state=excluded.state,reason=excluded.reason,updated_at=excluded.updated_at,revision=ejh_case_states.revision+1`, o.Order.ID, v.State, v.Reason, formatTime(v.UpdatedAt), v.Revision); err != nil {
 				return result, err

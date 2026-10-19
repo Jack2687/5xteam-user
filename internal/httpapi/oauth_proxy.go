@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 type oauthProxyLease struct {

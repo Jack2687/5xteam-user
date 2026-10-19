@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/store"
 )
 
 func TestEJHRechargeLedgerAPI(t *testing.T) {

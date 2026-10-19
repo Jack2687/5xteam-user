@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // SaveMailGPTInfo merges only queried fields into the latest profile. Identity

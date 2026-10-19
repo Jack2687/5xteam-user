@@ -1,7 +1,7 @@
 package store
 
 import (
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 	"crypto/sha256"
 	"fmt"
 	"strings"

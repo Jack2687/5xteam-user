@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"bytes"
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 	"encoding/json"
 	"fmt"
 	"net/http"

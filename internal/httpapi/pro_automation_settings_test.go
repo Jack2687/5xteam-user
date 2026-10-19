@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestProAutomationSettingsSaveWithoutPushCredentials(t *testing.T) {

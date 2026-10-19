@@ -1,0 +1,59 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import vm from 'node:vm'
+import { webcrypto } from 'node:crypto'
+import { ref, reactive, computed, watch } from 'vue'
+import * as helpers from '../src/nexovcc.js'
+import * as finance from '../src/nexovcc-finance.js'
+import { cardUsage } from '../src/card-status.js'
+
+const code=readFileSync(new URL('../src/components/NexovccManagementView.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
+for(const action of ['withdraw_all','cancel','withdraw_cancel']){
+ const requests=[];let polls=0
+ const rows=[]
+ const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,
+  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},clearTimeout(){},setTimeout:fn=>queueMicrotask(fn),formatTime:v=>v,
+  async api(url,options={}){
+   if(url==='/api/nexovcc/dashboard')return {cards:rows,cases:[],operations:[],products:[],balance:{},groups:[],finance:{}}
+   if(url==='/api/nexovcc/job'){polls++;return {id:'batch-job',status:polls===1?'running':'completed',card_total:3,card_done:polls===1?1:3,message:polls===1?'冻结成功 · 等待 3 秒':'已处理 3/3 张'}}
+   if(url!=='/api/nexovcc/run')throw Error(url)
+   const body=JSON.parse(JSON.stringify(options.body));requests.push(body)
+   assert.equal(context.view.running.value,true)
+   return {id:'batch-job',status:'running',card_total:3,card_done:0,message:'正在处理第一张卡'}
+  }
+ })
+ vm.runInContext(code+';globalThis.view={batchCards,message,job,running,cardAction,submit,dialog,resolve};',context)
+ await context.view.batchCards({confirm:true,ids:['a','b','c'],action})
+ assert.equal(requests.length,1,'batch must execute on server')
+ assert.deepEqual(requests[0].card_ids,['a','b','c'])
+ assert.equal(requests[0].action,action)
+ assert.equal(requests[0].amount,undefined,'amount must use fresh server balance')
+ assert.equal(requests[0].confirm,true)
+ assert.equal(polls,2)
+ assert.equal(context.view.job.value.card_done,3)
+ assert.equal(context.view.running.value,false)
+ assert.equal(context.view.message.text,'已处理 3/3 张')
+ polls=0
+ context.view.cardAction({card:{id:'one',last4:'4242',remark:''}},action)
+ context.view.dialog.value.confirm=true
+ await context.view.submit()
+ assert.equal(requests.at(-1).card_id,'one')
+ assert.equal(requests.at(-1).action,action)
+ polls=0
+ await context.view.resolve({id:'pending-close',status:'processing',action:'withdraw_cancel'})
+ assert.equal(context.view.dialog.value,null,'accepted operations query progress without manual confirmation')
+ assert.equal(requests.at(-1).action,'resolve')
+ assert.equal(requests.at(-1).outcome,'query')
+ assert.equal(requests.at(-1).request_id,'pending-close')
+ const before=requests.length
+ context.view.resolve({id:'uncertain-close',status:'unknown',action:'withdraw_cancel'})
+ assert.equal(requests.length,before,'uncertain operations must retain explicit resolution')
+ assert.equal(context.view.dialog.value.type,'resolve')
+}
+const frozen={card:{id:'f',status:'1',control:'frozen',imported:true},local:{source:'nexovcc',issuer_status:'1',issuer_frozen:true,issuer_locked:true}}
+assert.equal(helpers.cardState(frozen),'已冻结')
+assert.equal(helpers.cancelReason(frozen,[]),'','confirmed freeze must allow cancellation')
+assert.equal(cardUsage(frozen).label,'已冻结')
+assert.equal(cardUsage({...frozen.local,issuer_status:'4'}).label,'已销卡')
+assert.ok(helpers.cancelReason(frozen,[{card_id:'f',status:'unknown'}]))
+console.log('Passed: single/batch actions, server-side live balance, immediate progress, batch polling, freeze display and uncertainty guard')

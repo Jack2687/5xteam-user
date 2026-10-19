@@ -1,7 +1,7 @@
 package store
 
 import (
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/restock"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -35,9 +35,11 @@ func (s *Store) readFallbackConfig() (restock.FallbackConfig, string, error) {
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &c)
 	}
+	c.NormalizeGroups()
 	return c, target, err
 }
 func (s *Store) SaveProFallbackConfig(c restock.FallbackConfig, target string) (restock.FallbackConfig, error) {
+	c.NormalizeGroups()
 	if err := c.Validate(); err != nil {
 		return c, err
 	}

@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 
 	_ "modernc.org/sqlite"
 )
@@ -109,6 +109,10 @@ func Open(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.initializeProRestock(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.initializeNexovcc(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

@@ -1,8 +1,9 @@
 package store
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -75,5 +76,43 @@ func TestFallbackStorageEncryptionAndRestart(t *testing.T) {
 	}
 	if err = s.DeleteProFallbackBinding(b); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFallbackLegacyReadAndMultiGroupPersistence(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	legacy := `{"version":4,"group_id":7,"enabled":false,"account_ids":[1],"check_seconds":3}`
+	if _, err = s.db.Exec(`INSERT INTO pro_fallback_config VALUES(1,?,?)`, legacy, "target"); err != nil {
+		t.Fatal(err)
+	}
+	c, target, err := s.ProFallbackConfig()
+	if err != nil || !reflect.DeepEqual(c.GroupIDs, []int64{7}) {
+		t.Fatal(c, err)
+	}
+	var raw string
+	s.db.QueryRow(`SELECT payload FROM pro_fallback_config WHERE id=1`).Scan(&raw)
+	if raw != legacy {
+		t.Fatal("reading config unexpectedly mutated storage")
+	}
+	c.GroupIDs = []int64{7, 8}
+	c, err = s.SaveProFallbackConfig(c, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _, err = s.ProFallbackConfig()
+	if err != nil || !reflect.DeepEqual(c.GroupIDs, []int64{7, 8}) {
+		t.Fatal(c, err)
+	}
+	c.GroupIDs = []int64{}
+	if _, err = s.SaveProFallbackConfig(c, target); err != nil {
+		t.Fatal(err)
+	}
+	c, _, err = s.ProFallbackConfig()
+	if err != nil || len(c.GroupIDs) != 0 || c.GroupID != 0 {
+		t.Fatal("deselection restored legacy group", c, err)
 	}
 }

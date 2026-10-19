@@ -47,6 +47,7 @@ type Card struct {
 	IssuerOrderNo       string         `json:"issuer_order_no,omitempty"`
 	IssuerStatus        string         `json:"issuer_status,omitempty"`
 	IssuerLocked        bool           `json:"issuer_locked,omitempty"`
+	IssuerFrozen        bool           `json:"issuer_frozen,omitempty"`
 	IssuerCancelStatus  string         `json:"issuer_cancel_status,omitempty"`
 	IssuerEnd           string         `json:"issuer_end,omitempty"`
 	MaxAccounts         *int           `json:"max_accounts,omitempty"`

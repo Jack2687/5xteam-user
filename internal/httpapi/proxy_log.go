@@ -3,7 +3,7 @@ package httpapi
 import (
 	"strings"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // proxyLogDetails returns a secret-free proxy summary for account lifecycle

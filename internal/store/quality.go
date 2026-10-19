@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 const qualityAccountsWhere = `COALESCE(json_extract(profile,'$.remove_status'),'')<>'completed' AND (

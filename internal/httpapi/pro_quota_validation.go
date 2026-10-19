@@ -3,7 +3,7 @@ package httpapi
 import (
 	"math"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func validProQuotaWindow(w *model.FreeQuotaWindow) bool {

@@ -14,14 +14,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"chapt-space-user/internal/cpa"
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/mailbridge"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
-	"chapt-space-user/internal/sub2"
-	"chapt-space-user/internal/workflow"
-	"chapt-space-user/webui"
+	"chatgpt-space-merge/internal/cpa"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/mailbridge"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
+	"chatgpt-space-merge/internal/sub2"
+	"chatgpt-space-merge/internal/workflow"
+	"chatgpt-space-merge/webui"
 )
 
 type Server struct {
@@ -30,6 +30,7 @@ type Server struct {
 	proFallback               proFallbackRuntime
 	proRestock                proRestockRuntime
 	ejh                       ejhRuntime
+	nexovcc                   nexovccRuntime
 	downstreamMu              sync.Mutex
 	recovery                  seatRecoveryRuntime
 	qualityRunMu              sync.Mutex
@@ -164,6 +165,7 @@ func New(dataStore *store.Store, jobs *workflow.Manager) (*Server, error) {
 	go server.auditWriter()
 	server.startProAutomationMonitor()
 	server.startProQualityMonitor()
+	server.startNexovccMonitor()
 	return server, nil
 }
 
@@ -176,6 +178,7 @@ func (s *Server) Close() {
 	s.auditCloseOnce.Do(func() {
 		s.stopProQuality()
 		s.stopEJH()
+		s.stopNexovcc()
 		s.stopSeatRecovery()
 		s.qualityMu.Lock()
 		s.qualityClosed = true
@@ -203,6 +206,7 @@ func (s *Server) Close() {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.ejhRoutes(mux)
+	s.nexovccRoutes(mux)
 	mux.HandleFunc("GET /api/notifications", s.getNotifications)
 	mux.HandleFunc("PUT /api/notifications", s.saveNotifications)
 	mux.HandleFunc("POST /api/notifications/test", s.testNotification)

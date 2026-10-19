@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // Reuse-enabled batches stage every selected account before starting network

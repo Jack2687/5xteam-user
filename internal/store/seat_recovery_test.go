@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func recoveryStoreAccount(t *testing.T, s *Store, name string) model.FreeAccountProfile {

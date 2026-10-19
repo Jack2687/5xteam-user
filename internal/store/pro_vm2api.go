@@ -1,7 +1,7 @@
 package store
 
 import (
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 	"database/sql"
 	"encoding/json"
 	"errors"

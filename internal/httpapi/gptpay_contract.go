@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 	"fmt"
 )
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 func (s *Store) GPTPaySettings() (gptpay.Settings, string, error) {
@@ -407,6 +407,9 @@ func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
 		return err
 	}
 	if _, err = tx.Exec(`UPDATE pro_card_usage SET status=? WHERE order_id=?`, v.Status, v.ID); err != nil {
+		return err
+	}
+	if err = holdFailedProAutoCard(tx, current, v); err != nil {
 		return err
 	}
 	if err = ejhSaveCaseTx(tx, v); err != nil {

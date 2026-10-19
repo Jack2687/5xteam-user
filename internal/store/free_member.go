@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // FreeAccountForEmail reads just the matching profile, without loading all

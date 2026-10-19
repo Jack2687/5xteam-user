@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/model"
 )
 
 var financeZone = time.FixedZone("Asia/Shanghai", 8*3600)

@@ -13,6 +13,7 @@ const eventOptions=[
  {value:'pro_failed',label:'全自动失败',hint:'登录、开通、授权或推送失败时'},
  {value:'merge_start',label:'触发合并',hint:'账号进入合并流程时'},
  {value:'merge_result',label:'合并结果',hint:'成功移出，或四步中任一步失败时'},
+ {value:'nexovcc_open',label:'环球开卡',hint:'开卡成功、失败或结果待核实时'},
  {value:'ejh_open',label:'EJH 开卡',hint:'开卡成功、失败或结果待核实时'},
 ]
 const ready=ref(false),busy=ref(false),testing=ref(''),logs=ref([]),message=reactive({text:'',type:'success'})

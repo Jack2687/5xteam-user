@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 )
 
 // Only a matching issuer card snapshot confirms cancellation. Business error

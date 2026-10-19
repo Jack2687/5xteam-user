@@ -1,12 +1,13 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,11 +87,49 @@ func TestFallbackScheduledWindowBoundaries(t *testing.T) {
 	}
 }
 
+func TestFallbackNexovccExceptionUsesNormalEmptyGroupRule(t *testing.T) {
+	for _, forceFallback := range []bool{false, true} {
+		t.Run(fmt.Sprint(forceFallback), func(t *testing.T) {
+			s, st, m, now := fallbackFixture(t)
+			c, _ := st.ProRestockConfig()
+			c.NoRestockWindows = []restock.DailyWindow{{Start: "02:00", End: "09:00"}, {Start: "17:00", End: "20:00", AllowedProvider: "nexovcc"}}
+			c.NoRestockFallback = forceFallback
+			if _, err := st.SaveProRestockConfig(c); err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range []struct {
+				at    string
+				count int
+				want  bool
+			}{
+				{"01:59:59", 2, false}, {"02:00:00", 2, forceFallback}, {"08:59:59", 2, forceFallback}, {"09:00:00", 2, false},
+				{"17:00:00", 2, false}, {"17:29:59", 0, true}, {"17:30:00", 2, false}, {"19:59:59", 2, false}, {"20:00:00", 0, true}, {"20:50:00", 2, false},
+			} {
+				*now, _ = time.Parse(time.RFC3339, "2026-10-18T"+row.at+"+08:00")
+				m.sourceCount = row.count
+				if err := s.tickProFallback(context.Background(), true); err != nil {
+					t.Fatal(err)
+				}
+				if m.on[1] != row.want || m.on[2] != row.want || m.writes[3] != 0 {
+					t.Fatal("wrong fallback in issuer exception", row, m.on)
+				}
+			}
+		})
+	}
+}
+
 func TestDailyEJHMergeTail(t *testing.T) {
 	for _, mode := range []string{"no-timeout", "unknown-timeout", "disabled", "retry", "unknown-result", "new-lifecycle"} {
 		t.Run(mode, func(t *testing.T) {
 			s, st, email := gptPayFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected upstream payment/login") })
 			configureProAutoFixture(t, s)
+			if mode == "retry" {
+				cfg, _, _, _ := st.ProSettings()
+				cfg.RetryCount = 1
+				if _, err := st.SaveProSettings(cfg, "", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
 			card, err := st.ImportEJHCard(ejh.Card{OrderNo: "daily-card", Number: "4242424242424242", Validity: "1299", CVV: "012", Status: "1", CardCurrency: "USD"}, true)
 			if err != nil {
 				t.Fatal(err)

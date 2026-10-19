@@ -110,3 +110,23 @@ func TestForceMergeScansEntireSnapshotAndForecastIndependence(t *testing.T) {
 		t.Fatal("statistics paginated", stats)
 	}
 }
+
+func TestForceMergeNexovccParity(t *testing.T) {
+	c, s, now := fixture()
+	c.ForceMergeEnabled = true
+	c.TimeEnabled = false
+	c.ConcurrencyEnabled = false
+	off := false
+	a := timedAccount(1, 10, now)
+	a.EJH = false
+	a.CardProvider = "nexovcc"
+	s.Accounts = []Account{a, {ID: 2, Ready: true, CardProvider: "nexovcc", PushTimeoutEnabled: &off}, {ID: 3, Ready: true, CardProvider: "nexovcc"}, timedAccount(4, 12, now), {ID: 5, Ready: false, CardProvider: "nexovcc"}}
+	d := Evaluate(c, s, nil, Limits{}, 0, 20, 5, now)
+	if d.ForceMerge.Participants != 2 || d.ForceMerge.Untimed != 1 || d.ForceMerge.Unknown != 1 || *d.ForceMerge.AverageMinutes != 11 || d.ForceMergeNeed != 2 {
+		t.Fatal(d)
+	}
+	tasks := []Task{{ID: "inflight", Status: "running", GroupID: s.GroupID, Binding: s.Binding, ForceMergeSource: a.ForceMergeKey}}
+	if next := Evaluate(c, s, tasks, Limits{}, 0, 20, 5, now); next.Suggested != 0 || next.BatchWait == nil {
+		t.Fatal("did not wait for original batch", next)
+	}
+}

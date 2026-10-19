@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/restock"
 )
 
 func TestProRestockMoneyWindowDefaultAndPersistence(t *testing.T) {

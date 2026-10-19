@@ -9,7 +9,7 @@ const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^imp
 function fixture(){
  const requests=[],timers=new Set();let mount,unmount
  const context=vm.createContext({ref,reactive,computed,createLatestRequest,defineProps(){},onMounted(fn){mount=fn},onUnmounted(fn){unmount=fn},setInterval(fn){timers.add(fn);return fn},clearInterval(fn){timers.delete(fn)},api(url,options={}){let resolve,reject;const promise=new Promise((ok,fail)=>{resolve=ok;reject=fail});requests.push({url,options,resolve,reject});return promise}})
- vm.runInContext(code+'\nglobalThis.exposed={state,form,password,groups,accounts,loaded,search,dirty,notice,error,refresh,save,retry,resetConnection,resetGroup,loadAccounts,loadGroups,selectVisible};',context)
+ vm.runInContext(code+'\nglobalThis.exposed={state,form,password,groups,accounts,loaded,search,dirty,notice,error,refresh,save,retry,resetConnection,resetGroup,loadAccounts,loadGroups,selectVisible,input,groupOptions};',context)
  return {...context.exposed,requests,timers,mount:()=>mount(),unmount:()=>unmount()}
 }
 const config=()=>({version:1,enabled:true,url:'https://example.test',email:'test@example.test',password_present:true,group_id:7,account_ids:[1,2],check_seconds:3})
@@ -37,4 +37,21 @@ const state=(c=config())=>({config:c,plan:{phase:'active',active:true},accounts:
  f.password.value='old-secret';f.resetConnection();assert.equal(f.password.value,'');assert.equal(f.form.group_id,0);assert.equal(f.form.account_ids.length,0);assert.equal(f.accounts.value.length,0)
  f.unmount()
 }
+{
+ const f=fixture();const initial=f.refresh(true);await tick();f.requests[0].resolve(state());await initial
+ assert.deepEqual([...f.form.group_ids],[7],'legacy saved group was lost')
+ f.form.group_ids.push(8);f.dirty.value=true
+ assert.deepEqual([...f.input().group_ids],[7,8])
+ assert.equal(f.input().group_id,7)
+ const loading=f.loadAccounts();await tick();const req=f.requests.at(-1)
+ assert.deepEqual([...req.options.body.group_ids],[7,8],'preview ignored one selected group')
+ req.resolve([{id:1,name:'one',type:'oauth'},{id:2,name:'two',type:'apikey'}]);await loading
+ const saved={...config(),version:2,group_ids:[7,8]}
+ const saving=f.save();await tick();f.requests.at(-1).resolve(saved);await tick();f.requests.at(-1).resolve(state(saved));await saving
+ f.form.group_ids.pop();assert.deepEqual([...f.state.value.config.group_ids],[7,8],'editing draft changed saved groups')
+ f.form.group_ids=[];assert.equal(f.input().group_id,0);assert.deepEqual([...f.input().group_ids],[])
+ f.resetConnection();assert.deepEqual([...f.form.group_ids],[])
+ f.unmount()
+}
+console.log('Passed: fallback multi-group drafts, legacy loading, complete preview payload and clear selection')
 console.log('Passed: fallback drafts, request ordering, credential clearing, preview errors and account multi-select')

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 func proCardKey(number string) string {
@@ -101,6 +101,13 @@ func proCardLimit(q proCapacityQuery, key string) (int, error) {
 	if e != nil {
 		return 0, e
 	}
+	if kind == "nexovcc" {
+		e := q.QueryRow(`SELECT coalesce(json_extract(profile,'$.default_max_accounts'),1) FROM nexovcc_settings WHERE id=1`).Scan(&limit)
+		if errors.Is(e, sql.ErrNoRows) {
+			return 1, nil
+		}
+		return max(1, limit), e
+	}
 	if kind == "ejh" {
 		e := q.QueryRow(`SELECT coalesce(json_extract(profile,'$.default_max_accounts'),3) FROM ejh_settings WHERE id=1`).Scan(&limit)
 		if errors.Is(e, sql.ErrNoRows) {
@@ -129,8 +136,10 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 		return e
 	}
 	card.IssuerCancelStatus = ""
+	card.IssuerFrozen = false
 	if issuer != nil {
 		card.IssuerCancelStatus = issuer.IssuerCancelStatus
+		card.IssuerFrozen = issuer.IssuerFrozen
 		card.Source, card.IssuerOrderNo, card.IssuerStatus, card.IssuerLocked, card.IssuerEnd = issuer.Source, issuer.IssuerOrderNo, issuer.IssuerStatus, issuer.IssuerLocked, issuer.IssuerEnd
 	}
 	limit, err := proCardLimit(s.db, key)
@@ -163,6 +172,20 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 			return err
 		}
 		card.SingleActiveAccount, err = ejhSingleActive(s.db, key)
+		if err != nil {
+			return err
+		}
+	}
+	if card.CardType == "nexovcc" {
+		card.Occupants, err = nexovccOccupants(s.db, key)
+		if err != nil {
+			return err
+		}
+		card.ActiveAccounts, card.ActiveEmail, err = nexovccOccupancy(s.db, key, "")
+		if err != nil {
+			return err
+		}
+		card.SingleActiveAccount, err = nexovccSingleActive(s.db)
 		if err != nil {
 			return err
 		}
@@ -202,6 +225,15 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool, restoc
 	var secret gptpay.CardSecret
 	if err = json.Unmarshal([]byte(raw), &card); err != nil {
 		return err
+	}
+	if owner != "" {
+		task, e := restockDispatchTask(tx, owner)
+		if e != nil {
+			return e
+		}
+		if !RestockCardMatches(card, task.CardProvider, task.StrictCardProvider) {
+			return errors.New("银行卡不属于本次补货指定卡台")
+		}
 	}
 	plain, err := s.decrypt(sealed)
 	if err != nil {

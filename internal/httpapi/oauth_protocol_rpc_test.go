@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/store"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/store"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 func TestOAuthStructuredRetryDecisions(t *testing.T) {

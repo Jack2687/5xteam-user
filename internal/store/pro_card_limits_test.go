@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 func TestProCardCustomLimitPersistenceAndSharedIdentity(t *testing.T) {

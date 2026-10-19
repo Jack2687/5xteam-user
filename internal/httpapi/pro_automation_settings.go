@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Request) {

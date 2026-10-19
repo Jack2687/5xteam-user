@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 type proAutomationHooks struct {
@@ -76,13 +76,21 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ApplyProStageOverrides(&progress)
 	state.Error = progress.Errors[state.Stage]
+	restockRetryAvailable := false
+	if state.ID == "" && state.OrderID == "" && p.ProRestockTaskID != "" {
+		if task, e := s.store.ProRestockDispatchTask(p.ProRestockTaskID); e == nil && task.CardProvider == "nexovcc" && task.Status == "attention" {
+			restockRetryAvailable = true
+			state.Error = task.Message
+		}
+	}
 	writeAPI(w, 200, struct {
 		model.ProAutoState
-		StageProgress       model.ProStageDisplay `json:"stage_progress"`
-		PaymentStatus       string                `json:"payment_status"`
-		PaymentRetryBlocked bool                  `json:"payment_retry_blocked"`
-		PaymentRetryHint    string                `json:"payment_retry_hint"`
-	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint}, "")
+		StageProgress         model.ProStageDisplay `json:"stage_progress"`
+		PaymentStatus         string                `json:"payment_status"`
+		PaymentRetryBlocked   bool                  `json:"payment_retry_blocked"`
+		PaymentRetryHint      string                `json:"payment_retry_hint"`
+		RestockRetryAvailable bool                  `json:"restock_retry_available"`
+	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable}, "")
 }
 
 func (s *Server) autoProUpdate(email, stage, status, message string) error {
@@ -191,6 +199,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	pro, subPassword, _, err := s.proAccountPushSettings(p)
 	if err == nil {
+		pro, _, err = s.restockCardSettings(r.Context(), pro)
+	}
+	if err == nil {
 		err = s.validateProAutoPush(p, pro, subPassword)
 	}
 	if err != nil {
@@ -250,7 +261,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		}
 		if order.Status == "failed" {
 			paidRecovery, restartFailed = false, true
-			if input.CardID == "" && !pro.EJHAutoOpen {
+			if input.CardID == "" && !pro.AutoCardEnabled() {
 				input.CardID = order.CardID
 			}
 		}
@@ -263,7 +274,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			if input.Provider == "" {
 				input.Provider = cfg.Provider
 			}
-			if input.CardID == "" && !pro.EJHAutoOpen {
+			if input.CardID == "" && !pro.AutoCardEnabled() {
 				input.CardID = p.ProAuto.CardID
 			}
 		}
@@ -284,9 +295,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, 409, nil, "供应商、套餐、国家或点数配置已变化，请重新打开窗口")
 			return
 		}
-		if input.CardID == "" && !pro.EJHAutoOpen {
+		if input.CardID == "" && !pro.AutoCardEnabled() {
 			lock.Unlock()
-			writeAPI(w, 400, nil, "请选择银行卡，或启用 EJH 自动补卡")
+			writeAPI(w, 400, nil, "请选择银行卡，或启用自动补卡")
 			return
 		}
 	}
@@ -322,7 +333,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		card, secret, err = s.reserveProStartCard(r.Context(), email, input.CardID, pro.EJHAutoOpen, r.Context().Value(proScheduledContextKey{}) == true, func() error {
+		card, secret, err = s.reserveProStartCard(r.Context(), email, input.CardID, pro.AutoCardEnabled(), r.Context().Value(proScheduledContextKey{}) == true, func() error {
 			latest, _, err := s.store.MailAccountCredential(email)
 			if err != nil {
 				return err
@@ -334,6 +345,14 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			lock.Unlock()
+			var waiting *nexovccCapacityWaitError
+			if errors.As(err, &waiting) {
+				w.Header().Set("X-Pro-Card-Wait", "nexovcc")
+				s.auditProEvent(p, "login", "waiting", "pro_auto", err.Error(), nil)
+				writeAPI(w, 409, nil, err.Error())
+				return
+			}
+			s.auditProEvent(p, "login", "failed", "pro_auto", "全自动准备银行卡失败："+err.Error(), nil)
 			writeAPI(w, 409, nil, err.Error())
 			return
 		}
@@ -597,7 +616,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 		}
 		// Only a newly reserved order reaches this boundary. Paid recovery and
 		// repeated RPCs cannot send another start notice or create a payment.
-		s.queueNotification("pro_start", "Pro 全自动开始开通", "账号："+email+"\n套餐："+order.PlanCode+"\n已完成登录，开始提交开通订单")
+		s.queueNotification("pro_start", "Pro 全自动开始开通", "账号："+email+"\n套餐："+order.PlanCode+"\n已完成登录，开始提交开通订单"+s.proCardProviderNotice(order.CardID))
 		order, err = s.submitGPTPayOrder(ctx, order, snap)
 		if err != nil {
 			return nil, err

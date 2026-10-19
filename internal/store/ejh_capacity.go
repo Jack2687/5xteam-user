@@ -1,8 +1,8 @@
 package store
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/gptpay"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,7 +14,7 @@ func (s *Store) issuerForPhysicalCard(q proCapacityQuery, key string) (*gptpay.C
 	var sealed string
 	e := q.QueryRow(`SELECT r.sealed FROM ejh_card_links l JOIN ejh_records r ON r.kind='card' AND r.id=l.card_id WHERE l.card_key=?`, key).Scan(&sealed)
 	if errors.Is(e, sql.ErrNoRows) {
-		return nil, nil
+		return s.nexovccIssuer(q, key)
 	}
 	if e != nil {
 		return nil, e
@@ -71,6 +71,9 @@ func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 }
 
 func issuerCardUsable(c gptpay.Card) bool {
+	if c.Source == "nexovcc" {
+		return !c.IssuerLocked && c.IssuerStatus == "1"
+	}
 	if c.Source != "ejh" {
 		return true
 	}

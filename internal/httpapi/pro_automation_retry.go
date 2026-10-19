@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 // Retry the pre-payment chain while retaining the account lock, worker slot

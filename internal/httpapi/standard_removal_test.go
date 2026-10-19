@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 func standardAccount(t *testing.T, f *recoveryFixture, name, method string, enabled bool) model.FreeAccountProfile {

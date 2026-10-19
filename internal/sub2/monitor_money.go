@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // Window cost and total_account_cost both use Sub2's account billing basis.

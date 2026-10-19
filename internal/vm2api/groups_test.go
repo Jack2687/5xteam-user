@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestVMGroupsCreateAndCapabilities(t *testing.T) {

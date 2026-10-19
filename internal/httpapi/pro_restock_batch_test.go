@@ -9,13 +9,18 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/nexovcc"
+	"chatgpt-space-merge/internal/restock"
 )
 
 func TestProRestockBatchDrainsBeforeNewDemand(t *testing.T) {
-	for _, tc := range []struct{ size, concurrency int }{{1, 1}, {2, 1}, {3, 2}} {
-		t.Run(fmt.Sprintf("batch_%d_workers_%d", tc.size, tc.concurrency), func(t *testing.T) {
+	for _, tc := range []struct {
+		size, concurrency int
+		nexovcc           bool
+		global            bool
+	}{{1, 1, false, false}, {2, 1, false, false}, {3, 2, false, false}, {2, 1, true, false}, {3, 2, true, false}, {1, 1, true, true}, {2, 1, true, true}, {3, 2, true, true}} {
+		t.Run(fmt.Sprintf("batch_%d_workers_%d_nexovcc_%v_global_%v", tc.size, tc.concurrency, tc.nexovcc, tc.global), func(t *testing.T) {
 			var purchases, pushes atomic.Int32
 			s, st, firstEmail := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintf(w, `{"code":0,"data":{"id":"batch-order-%d","status":"success"}}`, purchases.Add(1))
@@ -25,8 +30,19 @@ func TestProRestockBatchDrainsBeforeNewDemand(t *testing.T) {
 			configureProAutoFixture(t, s)
 			p, password, _, _ := st.ProSettings()
 			p.Concurrency = tc.concurrency
+			if tc.global {
+				p.CardProvider = "nexovcc"
+			}
 			if _, err := st.SaveProSettings(p, password, ""); err != nil {
 				t.Fatal(err)
+			}
+			if tc.nexovcc {
+				for i := 0; i < tc.size; i++ {
+					_, err := st.SaveNexovccCard(nexovcc.Card{Serial: fmt.Sprintf("batch-card-%d", i), Status: "1", Balance: "10.00", CreatedAt: time.Now().Add(time.Duration(i-10) * time.Hour)}, &nexovcc.PrivateCard{Number: []string{"5555555555554444", "4000000000000002", "4242424242424242"}[i], CVV: "123", Month: 12, Year: 2099})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
 			permits := map[string]chan struct{}{firstEmail: make(chan struct{})}
 			for i := 0; i < 2*tc.size; i++ {
@@ -67,6 +83,11 @@ func TestProRestockBatchDrainsBeforeNewDemand(t *testing.T) {
 			c.CapacityPercent, c.Confirmations = 100, 3
 			c.MinBatch, c.MaxBatch, c.MaxInflight, c.AllowSmall = tc.size, tc.size, 10, false
 			c.CooldownSeconds, c.EmergencyCooldownSeconds = 1, 1
+			if tc.nexovcc && !tc.global {
+				now := time.Now().In(time.FixedZone("CST", 8*3600))
+				c.NoRestockEnabled = true
+				c.NoRestockWindows = []restock.DailyWindow{{Start: now.Add(-time.Hour).Format("15:04"), End: now.Add(time.Hour).Format("15:04"), AllowedProvider: "nexovcc"}}
+			}
 			if _, err := st.SaveProRestockConfig(c); err != nil {
 				t.Fatal(err)
 			}
@@ -106,6 +127,13 @@ func TestProRestockBatchDrainsBeforeNewDemand(t *testing.T) {
 			original, err := st.ProRestockTasks()
 			if err != nil || len(original) != tc.size {
 				t.Fatalf("initial batch: %+v %v", original, err)
+			}
+			if tc.nexovcc {
+				for _, task := range original {
+					if task.CardProvider != "nexovcc" {
+						t.Fatal("batch pinned wrong issuer", task)
+					}
+				}
 			}
 			busy(0)
 			for i := 0; i < tc.size; i++ {

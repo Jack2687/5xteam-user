@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 func TestProCardLimitAPIAndScheduledCapacity(t *testing.T) {

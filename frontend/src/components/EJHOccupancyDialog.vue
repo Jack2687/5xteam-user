@@ -4,6 +4,9 @@ import { api } from '../api'
 import { paymentStatusLabel } from '../card-status'
 import { payProviderName, proPlanName } from '../gptpay'
 import { formatTime } from '../utils'
+const props=defineProps({provider:{type:String,default:'ejh'}})
+const base=computed(()=>props.provider==='nexovcc'?'/api/nexovcc/occupancy/':'/api/ejh/occupancy/')
+const issuer=computed(()=>props.provider==='nexovcc'?'环球':'EJH')
 const emit=defineEmits(['updated'])
 const opened=ref(false),busy=ref(false),error=ref(''),order=ref(null),card=ref(null),outcome=ref(''),evidence=ref(''),confirmed=ref(false)
 const allowed=computed(()=>order.value&&['success','failed','manual_review','submission_unknown'].includes(order.value.status))
@@ -11,7 +14,7 @@ const canSave=computed(()=>allowed.value&&!!outcome.value&&confirmed.value&&evid
 async function open(row,local){
  if(busy.value)return
  opened.value=true;busy.value=true;error.value='';order.value=null;card.value=local;outcome.value='';evidence.value='';confirmed.value=false
- try{order.value=await api('/api/ejh/occupancy/'+encodeURIComponent(row.order_id))}catch(e){error.value=e.message}finally{busy.value=false}
+ try{order.value=await api(base.value+encodeURIComponent(row.order_id))}catch(e){error.value=e.message}finally{busy.value=false}
 }
 async function query(){
  if(busy.value||!order.value?.remote?.id)return
@@ -22,7 +25,7 @@ async function save(){
  if(!canSave.value)return
  busy.value=true;error.value=''
  try{
-  await api('/api/ejh/occupancy/'+encodeURIComponent(order.value.id)+'/resolve',{method:'POST',body:{card_id:card.value.id,email:order.value.email,expected_status:order.value.status,outcome:outcome.value,evidence:evidence.value.trim(),confirm:confirmed.value}})
+  await api(base.value+encodeURIComponent(order.value.id)+'/resolve',{method:'POST',body:{card_id:card.value.id,email:order.value.email,expected_status:order.value.status,outcome:outcome.value,evidence:evidence.value.trim(),confirm:confirmed.value}})
   opened.value=false;emit('updated')
  }catch(e){error.value=e.message}finally{busy.value=false}
 }
@@ -41,7 +44,7 @@ defineExpose({open})
 <p v-if="outcome==='not_activated'">记录本次开通失败并释放在途名额，保留原请求和供应商返回记录。</p>
 <label class="field"><span>核实依据（供应商回复、原订单结果或合并移出记录）</span><textarea v-model="evidence" :disabled="busy" minlength="5" maxlength="600" required placeholder="请填写已核实的具体结果，不能只因账号已删除就解除"/></label>
 <label class="occupancy-confirm"><input v-model="confirmed" type="checkbox" :disabled="busy"/>我已核实此账号和原订单，确认上述结果属实</label>
-<p class="muted">仅核实这笔旧订单的本地状态，不发送开通、退款或销卡请求；核实记录保存在 EJH 核对审计中。</p>
+<p class="muted">仅核实这笔旧订单的本地状态，不发送开通、退款或销卡请求；核实记录保存在 {{issuer}} 核对审计中。</p>
 <div class="panel-actions"><button type="submit" class="btn primary" :disabled="!canSave">{{busy?'处理中…':'确认核实结果'}}</button><button type="button" class="btn ghost" :disabled="busy" @click="opened=false">关闭</button></div></form></template>
 <button v-else type="button" class="btn ghost" :disabled="busy" @click="opened=false">关闭</button>
 </section></div></Teleport></template>

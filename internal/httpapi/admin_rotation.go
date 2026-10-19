@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func (s *Server) updateAdminRotation(w http.ResponseWriter, r *http.Request) {

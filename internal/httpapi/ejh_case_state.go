@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync"
 
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/store"
 )
 
 func (s *Server) setEJHCaseState(w http.ResponseWriter, r *http.Request) {

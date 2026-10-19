@@ -36,10 +36,11 @@ func TestEmptyGroupStartup(t *testing.T) {
 	for _, status := range []string{"ready", "failed", "cancelled"} {
 		check(1, Task{Status: status, GroupID: s.GroupID, Binding: s.Binding})
 	}
-	check(1, Task{Status: "running", GroupID: s.GroupID + 1, Binding: s.Binding})
-	check(1, Task{Status: "running", GroupID: s.GroupID, Binding: "other"})
+	// The batch barrier also waits for work started before a group/target change.
+	check(0, Task{Status: "running", GroupID: s.GroupID + 1, Binding: s.Binding})
+	check(0, Task{Status: "running", GroupID: s.GroupID, Binding: "other"})
 	c.EmptyGroupCount = 3
-	check(1, Task{Status: "running", GroupID: s.GroupID, Binding: s.Binding}, Task{Status: "unknown", GroupID: s.GroupID, Binding: s.Binding})
+	check(0, Task{Status: "running", GroupID: s.GroupID, Binding: s.Binding}, Task{Status: "unknown", GroupID: s.GroupID, Binding: s.Binding})
 	c.Reserve = 4
 	if d := check(4); d.EmptyGroupNeed != 3 || d.ReserveNeed != 4 || d.EmptyGroupOnly() {
 		t.Fatal(d)

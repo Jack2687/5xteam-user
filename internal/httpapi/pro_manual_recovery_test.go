@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestProManualRecoveryResumesQuotaWithoutRepurchaseOrRepush(t *testing.T) {

@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/vm2api"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/vm2api"
 	"context"
 	"errors"
 	"fmt"

@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 )
 
 type EJHCaseStateInput struct {

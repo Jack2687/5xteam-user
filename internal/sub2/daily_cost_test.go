@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestDailyUserCostUsesBeijingUserDeductions(t *testing.T) {

@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
-	"chapt-space-user/internal/sub2"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
+	"chatgpt-space-merge/internal/sub2"
 )
 
 func quietProxyLog(string, map[string]any) {}

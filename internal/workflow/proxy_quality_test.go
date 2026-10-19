@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestClassifyOpenAIProxyResponse(t *testing.T) {

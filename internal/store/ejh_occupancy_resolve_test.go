@@ -1,8 +1,8 @@
 package store
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/gptpay"
 	"encoding/json"
 	"sync"
 	"testing"

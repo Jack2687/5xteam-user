@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/sub2"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/sub2"
 )
 
 // Hash the connection scope, not its secret; IDs may repeat on another server.

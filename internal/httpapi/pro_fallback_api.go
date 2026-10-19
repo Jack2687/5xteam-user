@@ -1,9 +1,9 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
-	"chapt-space-user/internal/sub2"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/sub2"
 	"context"
 	"errors"
 	"net/http"
@@ -68,6 +68,7 @@ func (s *Server) readFallbackInput(w http.ResponseWriter, r *http.Request) (fall
 	}
 	v.URL = strings.TrimRight(strings.TrimSpace(v.URL), "/")
 	v.Email = strings.TrimSpace(v.Email)
+	v.NormalizeGroups()
 	if err := v.Validate(); err != nil {
 		writeAPI(w, 400, nil, err.Error())
 		return v, target, false
@@ -98,19 +99,32 @@ func fallbackList(ctx context.Context, client *sub2.Client, v fallbackInput, t m
 	if err != nil {
 		return nil, errors.New(fallbackError("读取兜底分组", err))
 	}
-	found := false
+	selected := v.SelectedGroupIDs()
+	if len(selected) == 0 {
+		return nil, errors.New("请选择兜底分组")
+	}
+	found := map[int64]bool{}
 	for _, g := range groups {
-		if g.ID == v.GroupID {
-			found = true
-			break
+		found[g.ID] = true
+	}
+	for _, id := range selected {
+		if !found[id] {
+			return nil, errors.New("所选兜底分组不存在或不是 OpenAI 分组，请重新读取分组")
 		}
 	}
-	if !found {
-		return nil, errors.New("兜底分组不存在或不是 OpenAI 分组")
-	}
-	accounts, err := client.FallbackAccounts(ctx, t.Sub2, t.Secret, v.GroupID)
-	if err != nil {
-		return nil, errors.New(fallbackError("读取兜底账号", err))
+	accounts := []sub2.FallbackAccount{}
+	seen := map[int64]bool{}
+	for _, id := range selected {
+		items, err := client.FallbackAccounts(ctx, t.Sub2, t.Secret, id)
+		if err != nil {
+			return nil, errors.New(fallbackError("读取兜底账号", err))
+		}
+		for _, a := range items {
+			if !seen[a.ID] {
+				accounts = append(accounts, a)
+				seen[a.ID] = true
+			}
+		}
 	}
 	return accounts, nil
 }
@@ -167,7 +181,7 @@ func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, id := range v.AccountIDs {
 			if !found[id] {
-				writeAPI(w, 400, nil, "所选账号已不在该分组或不是 OpenAI API Key / OAuth 类型，请刷新账号列表")
+				writeAPI(w, 400, nil, "所选账号已不在所选分组或不是 OpenAI API Key / OAuth 类型，请刷新账号列表")
 				return
 			}
 		}

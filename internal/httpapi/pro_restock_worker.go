@@ -1,9 +1,9 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -177,7 +177,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		} else if t.Status != "reserved" {
 			t.Status = "attention"
 			t.ETA = nil
-			t.Message = "启动结果待核验，保留预留，避免重复发卡"
+			t.Message = firstNonEmpty(t.Message, "启动结果待核验，保留预留，避免重复发卡")
 		}
 		t.UpdatedAt = now
 		if err = s.store.SaveProRestockTask(*t); err != nil {
@@ -425,6 +425,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 		return e
 	}
 	d := restock.Evaluate(c, snap, tasks, limits, confirm, p.Sub2.AccountConcurrency, lead, now)
+	d.CardProvider, d.CardSchedule = c.EffectiveCardProvider(now, p.AutoCardProvider()), c.CardSchedule(now)
 	d.ID = randomRegistrationID()
 	for i, t := range tasks {
 		if t.Status == "reserved" && d.NoRestockActive {
@@ -461,7 +462,8 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 				d.BatchWait = restock.WaitForBatch(snap, tasks)
 			}
 			if e == nil && d.Started > 0 {
-				s.queueNotification("restock", "自动补货已安排", fmt.Sprintf("监控分组：%d\n本次补货：%d 个账号\n触发原因：\n%s", c.GroupID, d.Started, restockNotificationReasons(d)))
+				d.CardProvider = reserved[0].CardProvider
+				s.queueNotification("restock", "自动补货已安排", fmt.Sprintf("监控分组：%d\n本次补货：%d 个账号\n补货卡台：%s\n触发原因：\n%s", c.GroupID, d.Started, restock.CardProviderName(d.CardProvider), restockNotificationReasons(d)))
 			}
 		}
 		if e != nil {
@@ -526,14 +528,24 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		if closed || max(busy, jobs) >= p.Concurrency || ctx.Err() != nil {
 			return
 		}
-		cards, _, e := s.store.GPTPayCards(1, 0, true)
+		current, _, _, e := s.store.ProSettings()
+		if e != nil {
+			return
+		}
+		policy := c.CardSchedule(time.Now())
+		if policy.Blocked {
+			return
+		}
+		current.CardProvider = c.EffectiveCardProvider(time.Now(), current.AutoCardProvider())
+		t.CardProvider, t.StrictCardProvider = current.CardProvider, policy.Provider != ""
+		cards, e := s.automaticProCards(current, t.StrictCardProvider)
 		if e != nil {
 			return
 		}
 		card := ""
-		if !p.EJHAutoOpen {
+		if !current.AutoCardEnabled() {
 			if len(cards) == 0 {
-				t.Message = "银行卡没有剩余名额，等待卡片释放"
+				t.Message = restock.CardProviderName(t.CardProvider) + "无可用卡，自动补卡未启用，等待卡片释放"
 				_ = s.store.SaveProRestockTask(t)
 				return
 			}
@@ -562,6 +574,13 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 			}
 			if json.Unmarshal(w.Body.Bytes(), &reply) == nil && reply.Error != "" {
 				t.Message = reply.Error
+			}
+			if w.Header().Get("X-Pro-Card-Wait") == "nexovcc" {
+				// No payment/opening was submitted. Keep this same account and
+				// batch reservation; a future scan resumes after the refund.
+				t.Status, t.SubmittedAt = "reserved", nil
+				_ = s.store.SaveProRestockTask(t)
+				return
 			}
 			_ = s.store.SaveProRestockTask(t)
 		}

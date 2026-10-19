@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 )
 
 // Query only: never replay card.cancel.info, including after timeouts/restarts.

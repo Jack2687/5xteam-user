@@ -49,6 +49,11 @@ func (s ProAutoState) PaymentOrderID() string {
 // ProSettings is intentionally independent from Team rotation push settings.
 // Its providers are mutually exclusive through Provider.
 type ProSettings struct {
+	CardProvider              string         `json:"card_provider"`
+	NexovccAutoOpen           bool           `json:"nexovcc_auto_open"`
+	NexovccTemplateID         string         `json:"nexovcc_template_id"`
+	NexovccDailyOpenLimit     int            `json:"nexovcc_daily_open_limit"`
+	NexovccDailyAmountLimit   string         `json:"nexovcc_daily_amount_limit"`
 	EJHAutoOpen               bool           `json:"ejh_auto_open"`
 	EJHTemplateID             string         `json:"ejh_template_id"`
 	EJHDailyOpenLimit         int            `json:"ejh_daily_open_limit"`
@@ -80,12 +85,25 @@ type ProSettings struct {
 
 func DefaultProSettings() ProSettings {
 	return ProSettings{
-		EJHDailyOpenLimit: 1, ForceMergeMinutes: 60,
+		EJHDailyOpenLimit: 1, ForceMergeMinutes: 60, CardProvider: "ejh", NexovccDailyOpenLimit: 1,
 		MaxUnmerged: 5, ScheduleIntervalSeconds: 120,
 		Provider: "sub2", Sub2: DefaultSub2Settings(), CPA: DefaultCPASettings(), VM2API: DefaultVM2APISettings(),
 		QuotaUsedThreshold: 100, QuotaCheckIntervalSeconds: 120, TargetSeatType: "default",
 		RetryCount: 2, RetryIntervalSeconds: 3, Concurrency: 2, MergeConcurrency: 2,
 	}
+}
+
+func (p ProSettings) AutoCardProvider() string {
+	if p.CardProvider == "nexovcc" {
+		return "nexovcc"
+	}
+	return "ejh"
+}
+func (p ProSettings) AutoCardEnabled() bool {
+	if p.AutoCardProvider() == "nexovcc" {
+		return p.NexovccAutoOpen
+	}
+	return p.EJHAutoOpen
 }
 
 type ProOAuthSession struct {

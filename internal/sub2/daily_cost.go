@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // QueryDailyUserCost uses the same user deduction measure as total_user_cost.

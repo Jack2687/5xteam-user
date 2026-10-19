@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 var ErrInvalidEventCursor = errors.New("invalid account event cursor")

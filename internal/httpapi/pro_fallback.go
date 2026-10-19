@@ -1,10 +1,10 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
-	"chapt-space-user/internal/store"
-	"chapt-space-user/internal/sub2"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/store"
+	"chatgpt-space-merge/internal/sub2"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -229,7 +229,16 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 				b.Error = "账号已不是 OpenAI API Key / OAuth 类型，请人工检查"
 			} else {
 				b.Desired = current && plan.Active
-				member := a.InGroup(b.GroupID)
+				member := false
+				for _, groupID := range f.SelectedGroupIDs() {
+					if a.InGroup(groupID) {
+						member = true
+						if current {
+							b.GroupID = groupID
+						}
+						break
+					}
+				}
 				if b.Desired && !member {
 					b.Desired = false
 					b.Error = "账号已离开兜底分组，停止开启并关闭其调度；请重新选择"

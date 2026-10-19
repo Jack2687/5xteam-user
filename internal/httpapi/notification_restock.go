@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/restock"
 )
 
 func notificationNumber(n float64) string {

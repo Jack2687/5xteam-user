@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func assertRecoveryDeleted(t *testing.T, f *recoveryFixture, p model.SeatRecoveryTask) {

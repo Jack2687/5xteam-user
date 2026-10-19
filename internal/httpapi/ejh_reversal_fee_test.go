@@ -2,8 +2,8 @@ package httpapi
 
 import (
 	"bytes"
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/store"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"

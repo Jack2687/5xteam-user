@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 // Only automation fields are changed here. Downstream credentials and groups
@@ -37,6 +37,8 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 		}
 	}
 	v.QuotaEnabled, v.AutoMergeEnabled = input.QuotaEnabled, input.AutoMergeEnabled
+	v.CardProvider = input.AutoCardProvider()
+	v.NexovccAutoOpen, v.NexovccTemplateID, v.NexovccDailyOpenLimit, v.NexovccDailyAmountLimit = input.NexovccAutoOpen, input.NexovccTemplateID, input.NexovccDailyOpenLimit, input.NexovccDailyAmountLimit
 	v.EJHAutoOpen, v.EJHTemplateID, v.EJHDailyOpenLimit, v.EJHDailyAmountLimit = input.EJHAutoOpen, input.EJHTemplateID, input.EJHDailyOpenLimit, input.EJHDailyAmountLimit
 	v.ForceMergeEnabled, v.ForceMergeMinutes = input.ForceMergeEnabled, input.ForceMergeMinutes
 	v.ScheduledEnabled, v.MaxUnmerged, v.ScheduleIntervalSeconds = input.ScheduledEnabled, input.MaxUnmerged, input.ScheduleIntervalSeconds

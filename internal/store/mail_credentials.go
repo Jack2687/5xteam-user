@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 var ErrMailCredentialsChanged = errors.New("凭证已被其他操作更新，请重新打开窗口后再编辑")

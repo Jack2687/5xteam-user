@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/store"
 )
 
 type ejhFinanceRecording struct {

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 var autoRotationEventSequence atomic.Uint64

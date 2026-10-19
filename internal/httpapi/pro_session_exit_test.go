@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestProAutoExitObservationsNeverBlockPaymentOrTokenSave(t *testing.T) {

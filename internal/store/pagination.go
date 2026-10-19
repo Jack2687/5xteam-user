@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 type MailAccountsPageResult struct {

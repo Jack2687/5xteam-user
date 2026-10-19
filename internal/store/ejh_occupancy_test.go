@@ -1,15 +1,15 @@
 package store
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/gptpay"
 	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestEJHOccupancyConcurrentManualAutomaticAcrossStores(t *testing.T) {

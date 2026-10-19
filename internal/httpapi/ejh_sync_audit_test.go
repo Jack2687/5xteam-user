@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 	"context"
 	"fmt"
 	"net/http"

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func (s *Server) applySeatRecoveryControl(id, action string) (model.SeatRecoveryTask, int, error) {

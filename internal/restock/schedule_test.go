@@ -10,7 +10,7 @@ import (
 func TestNoRestockMultipleWindowsUnion(t *testing.T) {
 	c := DefaultConfig()
 	c.NoRestockEnabled = true
-	c.NoRestockWindows = []DailyWindow{{"02:00", "08:00"}, {"12:00", "13:30"}, {"13:00", "14:00"}, {"14:00", "15:00"}, {"23:00", "01:00"}}
+	c.NoRestockWindows = []DailyWindow{{Start: "02:00", End: "08:00"}, {Start: "12:00", End: "13:30"}, {Start: "13:00", End: "14:00"}, {Start: "14:00", End: "15:00"}, {Start: "23:00", End: "01:00"}}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestNoRestockMultipleWindowsUnion(t *testing.T) {
 		}
 	}
 	// An explicitly empty list must never restore the legacy 00:00-07:00.
-	for _, windows := range [][]DailyWindow{{}, {{"02:00", "08:00"}, {"bad", "10:00"}}, {{"02:00", "08:00"}, {"12:00", "12:00"}}} {
+	for _, windows := range [][]DailyWindow{{}, {{Start: "02:00", End: "08:00"}, {Start: "bad", End: "10:00"}}, {{Start: "02:00", End: "08:00"}, {Start: "12:00", End: "12:00"}}} {
 		c.NoRestockWindows = windows
 		if c.Validate() == nil || c.NoRestockReason(day.Add(18*time.Hour)) == "" {
 			t.Fatal("invalid enabled window list did not fail closed", windows)
@@ -47,7 +47,7 @@ func TestNoRestockLegacyAndExplicitListRoundTrip(t *testing.T) {
 	if c.NoRestockReason(at) == "" {
 		t.Fatal("legacy single interval was lost")
 	}
-	c.NoRestockWindows = []DailyWindow{{"12:00", "13:00"}, {"23:00", "01:00"}}
+	c.NoRestockWindows = []DailyWindow{{Start: "12:00", End: "13:00"}, {Start: "23:00", End: "01:00"}}
 	data, _ := json.Marshal(c)
 	var restored Config
 	if err := json.Unmarshal(data, &restored); err != nil {

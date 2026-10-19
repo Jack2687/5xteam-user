@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 type EJHOccupancyResolutionInput struct {
@@ -21,6 +21,14 @@ type EJHOccupancyResolutionInput struct {
 // Reconcile one legacy deleted-account order, never all orders of an email.
 // The admission lock makes release atomic with card allocation across stores.
 func (s *Store) ResolveEJHOccupancy(id string, in EJHOccupancyResolutionInput) error {
+	return s.resolveCardOccupancy("ejh", id, in)
+}
+
+func (s *Store) ResolveNexovccOccupancy(id string, in EJHOccupancyResolutionInput) error {
+	return s.resolveCardOccupancy("nexovcc", id, in)
+}
+
+func (s *Store) resolveCardOccupancy(provider, id string, in EJHOccupancyResolutionInput) error {
 	in.Evidence = strings.TrimSpace(in.Evidence)
 	if !in.Confirm || len([]rune(in.Evidence)) < 5 || len(in.Evidence) > 2000 {
 		return fmt.Errorf("请确认已核实原订单，并填写至少 5 个字的核实依据（最多 2000 字节）")
@@ -62,7 +70,7 @@ func (s *Store) ResolveEJHOccupancy(id string, in EJHOccupancyResolutionInput) e
 	if err != nil {
 		return err
 	}
-	if kind != "ejh" || proCardKey(secret.Number) != key || !strings.EqualFold(email, strings.TrimSpace(in.Email)) || !strings.EqualFold(order.Email, email) {
+	if kind != provider || proCardKey(secret.Number) != key || !strings.EqualFold(email, strings.TrimSpace(in.Email)) || !strings.EqualFold(order.Email, email) {
 		return fmt.Errorf("卡片、账号与原订单不匹配，请刷新后核对")
 	}
 	if order.OccupancyResolution != nil {
@@ -113,17 +121,29 @@ func (s *Store) ResolveEJHOccupancy(id string, in EJHOccupancyResolutionInput) e
 	if _, err = tx.Exec(`UPDATE pro_card_usage SET status=? WHERE order_id=?`, target, id); err != nil {
 		return err
 	}
-	if err = ejhSaveCaseTx(tx, order); err != nil {
-		return err
-	}
-	if target == "success" {
-		// Verified removal starts pending return and keeps the card occupied.
-		if err = ejhMarkRequestedTx(tx, email, id, "manual", now); err != nil {
+	if provider == "nexovcc" {
+		// Mark only this verified order, never all orders belonging to the email.
+		if target == "success" {
+			if _, err = tx.Exec(`INSERT OR IGNORE INTO pro_card_order_releases(order_id,released_at) VALUES(?,?)`, id, formatTime(now)); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.Exec(`INSERT INTO nexovcc_audit(profile) VALUES(?)`, mustJSON(map[string]any{"action": "deleted_account_occupancy", "before": before, "after": order, "reason": in.Evidence, "at": now})); err != nil {
+			return err
+		}
+	} else {
+		if err = ejhSaveCaseTx(tx, order); err != nil {
+			return err
+		}
+		if target == "success" {
+			if err = ejhMarkRequestedTx(tx, email, id, "manual", now); err != nil {
+				return err
+			}
+		}
+		if err = s.ejhPutTx(tx, "match_audit", EJHID("occupancy", id), map[string]any{"action": "deleted_account_occupancy", "before": before, "after": order, "reason": in.Evidence, "at": now}); err != nil {
 			return err
 		}
 	}
-	if err = s.ejhPutTx(tx, "match_audit", EJHID("occupancy", id), map[string]any{"action": "deleted_account_occupancy", "before": before, "after": order, "reason": in.Evidence, "at": now}); err != nil {
-		return err
-	}
+
 	return tx.Commit()
 }

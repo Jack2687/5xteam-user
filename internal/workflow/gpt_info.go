@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 const gptInfoAttempts = 3

@@ -1,8 +1,8 @@
 package store
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -97,14 +97,30 @@ func (s *Store) SaveProRestockTask(t restock.Task) error {
 func (s *Store) ClaimProRestockDispatch(t restock.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, err := readRestockConfig(s.db)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	if reason := c.NoRestockReason(time.Now()); reason != "" {
+	defer tx.Rollback()
+	if _, err = tx.Exec(`UPDATE pro_restock_config SET payload=payload WHERE id=1`); err != nil {
+		return err
+	}
+	c, err := readRestockConfig(tx)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if reason := c.NoRestockReason(now); reason != "" {
 		return errors.New(reason)
 	}
-	result, err := s.db.Exec(`UPDATE pro_restock_tasks SET status=?,payload=? WHERE id=? AND status='reserved' AND EXISTS(SELECT 1 FROM pro_restock_config WHERE id=1 AND json_extract(payload,'$.version')=? AND json_extract(payload,'$.enabled')=1 AND json_extract(payload,'$.mode')='auto')`, t.Status, mustJSON(t), t.ID, t.Version)
+	provider, strict, err := restockCardProvider(tx, c, now)
+	if err != nil {
+		return err
+	}
+	if t.CardProvider != provider || t.StrictCardProvider != strict {
+		return errors.New("补货卡台或时段已变化，等待按当前规则重新派发")
+	}
+	result, err := tx.Exec(`UPDATE pro_restock_tasks SET status=?,payload=? WHERE id=? AND status='reserved' AND EXISTS(SELECT 1 FROM pro_restock_config WHERE id=1 AND json_extract(payload,'$.version')=? AND json_extract(payload,'$.enabled')=1 AND json_extract(payload,'$.mode')='auto')`, t.Status, mustJSON(t), t.ID, t.Version)
 	if err != nil {
 		return err
 	}
@@ -115,7 +131,7 @@ func (s *Store) ClaimProRestockDispatch(t restock.Task) error {
 	if n != 1 {
 		return errors.New("补货意图已被领取、撤销或配置已变化")
 	}
-	return nil
+	return tx.Commit()
 }
 func restockLimits(q proCapacityQuery, now time.Time) (restock.Limits, error) {
 	var l restock.Limits
@@ -181,6 +197,11 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	if reason := c.NoRestockReason(time.Now()); reason != "" {
 		return nil, errors.New(reason)
 	}
+	provider, strict, err := restockCardProvider(tx, c, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	d.CardProvider, d.CardSchedule = provider, c.CardSchedule(time.Now())
 	l, err := restockLimits(tx, d.At)
 	if err != nil {
 		return nil, err
@@ -265,6 +286,7 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	for i, email := range emails {
 		t := restock.Task{ID: fmt.Sprintf("%s-%d", d.ID, i+1), Plan: d.Snapshot.NewPlan, DecisionID: d.ID, Email: email, Version: c.Version, GroupID: c.GroupID, Binding: d.Snapshot.Binding, Status: "reserved", Stage: "queued", Cost: c.UnitCost, CreatedAt: d.At, UpdatedAt: d.At, Stages: map[string]time.Time{"reserved": d.At}}
 		t.EmptyGroupStartup = d.EmptyGroupOnly()
+		t.CardProvider, t.StrictCardProvider = provider, strict
 		t.ForceMergeTracked = true
 		if d.Trace != nil {
 			t.Capacity = d.Trace.NewAccountCapacity

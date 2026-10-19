@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"slices"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 type Group struct {

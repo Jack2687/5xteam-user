@@ -3,7 +3,7 @@ package httpapi
 import (
 	"strings"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // This value is local to one job, including all of its proxy retries.

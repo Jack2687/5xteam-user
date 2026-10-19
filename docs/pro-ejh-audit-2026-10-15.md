@@ -1,6 +1,6 @@
 # Pro 与 EJH 审计记录（2026-10-15）
 
-范围：本地 chapt-space-user 的 Pro 自动补货、Pro 管理及 EJH。未修改正式环境或另一个 Space 仓库。
+范围：本地 chatgpt-space-merge 的 Pro 自动补货、Pro 管理及 EJH。未修改正式环境或另一个 Space 仓库。
 
 ## 本轮复现并修复
 

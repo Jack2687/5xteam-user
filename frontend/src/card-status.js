@@ -7,7 +7,7 @@ function cardInfo(card) {
 }
 export function isClosedCard(card) {
   const { linked, status } = cardInfo(card)
-  return linked && status === '2'
+  return cardInfo(card).local.source==='nexovcc' ? status==='4' : linked && status === '2'
 }
 export function paymentStatusLabel(status) {
   return ({ reserved: '开通前预留', created: '订单待提交', submitting: '订单提交中', processing: '开通处理中', submission_unknown: '提交结果未知', manual_review: '支付待核实', success: '开通成功', failed: '开通失败' })[status] || '订单状态待核实'
@@ -15,7 +15,7 @@ export function paymentStatusLabel(status) {
 export function cardOccupancy(card) {
   const { local } = cardInfo(card)
   const occupants = local.occupants || []
-  if (occupants.some(row => row.deleted)) return { label: '已删除账号占用待核实', detail: '账号已删除，原订单仍占用；请核实开通结果；成功订单须等待自动识别回款' }
+  if (occupants.some(row => row.deleted)) return { label: '已删除账号占用待核实', detail: '账号已删除，原订单仍占用；请核实开通结果；成功订单须等待确认回款' }
   if (occupants.some(row => !['reserved', 'created', 'submitting', 'processing', 'success'].includes(row.status))) return { label: '支付待核实', detail: '先查询原开通订单；确认失败后释放占用' }
   if (occupants.some(row => ['created', 'submitting', 'processing'].includes(row.status))) return { label: '开通处理中', detail: '等待原开通订单结果；确认失败后释放占用' }
   if (occupants.some(row => row.status === 'reserved')) return { label: '开通前预留', detail: '登录或开通准备占位，停止任务后释放' }
@@ -24,7 +24,13 @@ export function cardOccupancy(card) {
 export function cardUsage(card, now = new Date()) {
   const { local, linked, status, locked, end } = cardInfo(card)
   const blocked = (label, detail = '不能用于开通', tone = 'danger') => ({ label, detail, tone })
-  if (linked) {
+  if (local.source==='nexovcc') {
+    if (status==='4') return blocked('已销卡')
+    if (local.issuer_cancel_status) return blocked('销卡处理中','等待卡片状态及余额回款核实','pending')
+    if (local.issuer_frozen) return blocked('已冻结','可解冻或执行销卡','pending')
+    if (locked) return blocked('操作待核实','请到环球卡台查询原操作','pending')
+    if (status!=='1') return blocked('卡台状态不可用',`环球状态 ${status||'未知'}`)
+  } else if (linked) {
     if (status === '2') return blocked('已销卡')
     if (status === '8' || local.issuer_cancel_status === 'processing') return blocked('销卡处理中', '卡台正在处理，完成后自动更新，无需重复提交', 'pending')
     if (['submitting','unknown'].includes(local.issuer_cancel_status)) return blocked('销卡结果确认中', '后台正在查询卡台结果，请勿重复提交', 'pending')

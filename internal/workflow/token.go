@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // ExtractAccessToken accepts either a raw JWT or a Session JSON object (the

@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/store"
 )
 
 func (s *Server) selectMailAccounts(w http.ResponseWriter, r *http.Request) {

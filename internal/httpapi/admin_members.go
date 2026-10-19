@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 func (s *Server) adminAccountMembers(w http.ResponseWriter, r *http.Request) {

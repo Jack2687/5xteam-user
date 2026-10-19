@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // Test unsaved connection values without changing the active provider or account state.

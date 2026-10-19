@@ -1,7 +1,7 @@
 package store
 
 import (
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 	"encoding/json"
 	"strings"
 	"testing"

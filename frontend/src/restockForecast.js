@@ -18,7 +18,7 @@ export function forecastDetails(decision = {}, now = Date.now()) {
   const complete = ['ready','idle'].includes(money.state)
   const stale = !snapshot.valid || !snapshot.load_valid || !Number.isFinite(at) || now - at > (config.fresh_seconds || 20) * 1000 || at > now + 5000 || (complete && (!Number.isFinite(until) || now >= until))
   const rows = money.rows || []
-  const current = (snapshot.accounts || []).filter(a=>a.ready && !a.shared && (!a.expires_at || Date.parse(a.expires_at)>now)).map(a=>a.id).sort((a,b)=>a-b)
+  const current = (snapshot.accounts || []).filter(a=>a.ready && (!a.expires_at || Date.parse(a.expires_at)>now)).map(a=>a.id).sort((a,b)=>a-b)
   const sampled = rows.map(a=>a.id).sort((a,b)=>a-b)
   const sameAccounts = JSON.stringify(current) === JSON.stringify(sampled)
   const usable = !stale && sameWindow && complete && sameAccounts && finite(money.remaining_usd) && finite(money.rate_usd)
@@ -34,7 +34,7 @@ export function forecastDetails(decision = {}, now = Date.now()) {
 }
 export function concurrencyDetails(snapshot = {}, unavailable = false, now = Date.now(), config = {}) {
   const capacityPercent = Number.isInteger(config.capacity_percent) && config.capacity_percent >= 1 && config.capacity_percent <= 100 ? config.capacity_percent : 60
-  const accounts = (snapshot.accounts || []).filter(a=>a.ready && !a.shared && (!a.expires_at || Date.parse(a.expires_at)>now))
+  const accounts = (snapshot.accounts || []).filter(a=>a.ready && (!a.expires_at || Date.parse(a.expires_at)>now))
   const valid = !unavailable && snapshot.valid && snapshot.load_valid && accounts.every(a=>finite(a.used) && finite(a.capacity))
   const used = accounts.reduce((sum,a)=>sum+a.used,0), reportedCapacity = accounts.reduce((sum,a)=>sum+a.capacity,0)
   const capacity = reportedCapacity * capacityPercent / 100

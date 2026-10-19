@@ -1,13 +1,44 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
+
+// A failed payment ends the order's occupancy, but not its running workflow.
+// Convert that occupancy back to a reservation in the same transaction. This
+// closes the gap before retry preparation, including the configured retry wait.
+// Worker cleanup (or process-start recovery) releases the reservation on exit.
+func holdFailedProAutoCard(tx *sql.Tx, previous, order gptpay.Order) error {
+	if order.Status != "failed" || !previous.Active() || order.SucceededAt != nil {
+		return nil
+	}
+	var raw string
+	err := tx.QueryRow(`SELECT profile FROM mail_accounts WHERE email=?`, order.Email).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var p model.MailAccountProfile
+	if err = json.Unmarshal([]byte(raw), &p); err != nil {
+		return err
+	}
+	a := p.ProAuto
+	if p.ManagementScope != "pro" || a.Status != "running" || a.ID == "" || a.CardID != order.CardID || a.PaymentOrderID() != order.ID || (a.OrderID != "" && a.OrderID != order.ID) {
+		return nil
+	}
+	_, err = tx.Exec(`INSERT INTO pro_card_reservations(email,card_key)
+	 SELECT email,card_key FROM pro_card_usage WHERE order_id=?
+	 ON CONFLICT(email) DO NOTHING`, order.ID)
+	return err
+}
 
 // The caller keeps the original account lock and worker slot throughout the
 // wait. Verify payment history and advance the attempt in one transaction.

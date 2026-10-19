@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 func TestProMergeProgressAndKeepsDownstream(t *testing.T) {

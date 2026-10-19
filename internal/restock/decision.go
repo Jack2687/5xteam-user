@@ -33,7 +33,9 @@ func Pressure(c Config, s Snapshot) bool {
 	return pressureAt(c, s, s.At)
 }
 func availableAccount(a Account, now time.Time) bool {
-	return a.Ready && !a.Shared && (a.ExpiresAt == nil || a.ExpiresAt.After(now))
+	// The snapshot already contains only members of the selected monitoring group.
+	// Membership in another push group does not remove this account's capacity.
+	return a.Ready && (a.ExpiresAt == nil || a.ExpiresAt.After(now))
 }
 func pressureAt(c Config, s Snapshot, now time.Time) bool {
 	if !s.Valid || !s.LoadValid {
@@ -101,11 +103,6 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	block := func(reason string) Decision { d.Suggested = 0; d.Reason = reason; return d }
 	if !s.Valid || s.At.IsZero() || now.Sub(s.At) > time.Duration(c.FreshSeconds)*time.Second || s.At.After(now.Add(5*time.Second)) {
 		return block(first(s.Error, "监控快照缺失或过期，暂停新增"))
-	}
-	for _, a := range s.Accounts {
-		if a.Shared {
-			return block("监控组包含多组共享账号，无法可靠归属需求")
-		}
 	}
 	faults := 0
 	for _, a := range s.Accounts {

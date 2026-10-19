@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 const qualityTestStart = "data: {\"type\":\"test_start\",\"model\":\"gpt-6-astra\",\"data\":{\"custom_prompt\":true,\"reasoning_effort\":\"xhigh\"}}\n\n"

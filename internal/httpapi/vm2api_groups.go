@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/vm2api"
+	"chatgpt-space-merge/internal/vm2api"
 	"net/http"
 )
 

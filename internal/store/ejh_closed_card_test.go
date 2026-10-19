@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 )
 
 func TestEJHClosedCardExcludedAndAdmissionBlocked(t *testing.T) {

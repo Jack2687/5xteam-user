@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 func proAutoToken(email, version string) string {

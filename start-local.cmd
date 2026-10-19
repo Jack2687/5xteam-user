@@ -8,10 +8,10 @@ if not exist "%PS_EXE%" set "PS_EXE=pwsh.exe"
 
 if not exist "run-logs" mkdir "run-logs"
 
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":18121 .*LISTENING"') do set "EXISTING_PID=%%P"
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":18120 .*LISTENING"') do set "EXISTING_PID=%%P"
 if defined EXISTING_PID (
-  echo [OK] Service is already listening on port 18121. PID %EXISTING_PID%
-  start "" "http://127.0.0.1:18121/"
+  echo [OK] Service is already listening on port 18120. PID %EXISTING_PID%
+  start "" "http://127.0.0.1:18120/"
   exit /b 0
 )
 
@@ -21,25 +21,25 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Building chapt-space-user...
-go build -o chapt-space-user.exe ./cmd/server
+echo Building chatgpt-space-merge...
+go build -o chatgpt-space-merge.exe ./cmd/server
 if errorlevel 1 (
   echo [ERROR] Build failed.
   exit /b 1
 )
 
-set "APP_ADDR=127.0.0.1:18121"
+set "APP_ADDR=127.0.0.1:18120"
 set "APP_DATA_DIR=%CD%\data"
 set "STDOUT=%CD%\run-logs\server.out.log"
 set "STDERR=%CD%\run-logs\server.err.log"
 
-"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -Command "$process = Start-Process -FilePath '%CD%\chapt-space-user.exe' -WorkingDirectory '%CD%' -RedirectStandardOutput '%STDOUT%' -RedirectStandardError '%STDERR%' -WindowStyle Hidden -PassThru; Set-Content -Path '%CD%\run-logs\server.pid' -Value $process.Id"
+"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -Command "$process = Start-Process -FilePath '%CD%\chatgpt-space-merge.exe' -WorkingDirectory '%CD%' -RedirectStandardOutput '%STDOUT%' -RedirectStandardError '%STDERR%' -WindowStyle Hidden -PassThru; Set-Content -Path '%CD%\run-logs\server.pid' -Value $process.Id"
 
-"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -Command "$ready=$false; for($i=0;$i -lt 40;$i++){ Start-Sleep -Milliseconds 250; try { $r=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:18121/health/ready' -TimeoutSec 1; if($r.StatusCode -eq 200){$ready=$true;break} } catch {} }; if(-not $ready){exit 1}"
+"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -Command "$ready=$false; for($i=0;$i -lt 40;$i++){ Start-Sleep -Milliseconds 250; try { $r=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:18120/health/ready' -TimeoutSec 1; if($r.StatusCode -eq 200){$ready=$true;break} } catch {} }; if(-not $ready){exit 1}"
 if errorlevel 1 (
   echo [ERROR] Startup failed. Check run-logs\server.err.log.
   exit /b 1
 )
 
-echo [OK] Started: http://127.0.0.1:18121/
+echo [OK] Started: http://127.0.0.1:18120/
 exit /b 0

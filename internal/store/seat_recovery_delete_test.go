@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestSeatRecoveryForceDeleteFencesConcurrentWriters(t *testing.T) {

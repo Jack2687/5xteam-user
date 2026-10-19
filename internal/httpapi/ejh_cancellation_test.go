@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 )
 
 func cancelFixtureRequest(s *Server, cardID, requestID, action string) *httptest.ResponseRecorder {

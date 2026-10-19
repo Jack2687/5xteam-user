@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // Delete only local Pro credentials and their Team projection. Keep orders,

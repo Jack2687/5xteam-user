@@ -1,22 +1,15 @@
-# Deliberately distinct from the chatgpt-space-merge project: the compose
-# project name, service, container, image, volume and host port must not
-# collide when both stacks run on the same production host.
-name: chapt-space-user
-
 services:
-  chapt-space-user:
+  chatgpt-space-merge:
     build: .
-    container_name: chapt-space-user
-    image: chapt-space-user:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:18121:18121"
+      - "127.0.0.1:18120:18120"
     volumes:
-      - chapt_space_user_data:/data
+      - chatgpt_space_merge_data:/data
     environment:
       TZ: Asia/Shanghai
-      APP_ADDR: 0.0.0.0:18121
+      APP_ADDR: 0.0.0.0:18120
       APP_DATA_DIR: /data
 
 volumes:
-  chapt_space_user_data:
+  chatgpt_space_merge_data:

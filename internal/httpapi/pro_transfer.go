@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 func (s *Server) exportProAccounts(w http.ResponseWriter, r *http.Request) {

@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 type Group struct {

@@ -1,6 +1,6 @@
 # 降智检测验收记录
 
-验收日期：2026-09-18。适用 chapt-space-user、chapt-space-user 及配套 Qerkai-sub2api。
+验收日期：2026-09-18。适用 chatgpt-space-merge、chapt-space-user 及配套 Qerkai-sub2api。
 
 ## 六项核对
 

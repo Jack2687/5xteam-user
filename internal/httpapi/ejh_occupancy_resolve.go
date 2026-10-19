@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/store"
 	"net/http"
 	"sync"
 )
@@ -16,6 +16,14 @@ func (s *Server) getEJHOccupancyOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveEJHOccupancy(w http.ResponseWriter, r *http.Request) {
+	s.resolveCardOccupancy(w, r, false)
+}
+
+func (s *Server) resolveNexovccOccupancy(w http.ResponseWriter, r *http.Request) {
+	s.resolveCardOccupancy(w, r, true)
+}
+
+func (s *Server) resolveCardOccupancy(w http.ResponseWriter, r *http.Request, nexovcc bool) {
 	var in store.EJHOccupancyResolutionInput
 	if decodeJSON(w, r, &in, 8<<10) != nil {
 		return
@@ -36,9 +44,14 @@ func (s *Server) resolveEJHOccupancy(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "原账号仍在执行自动流程，请先停止并核实结果")
 		return
 	}
-	if err = s.store.ResolveEJHOccupancy(order.ID, in); err != nil {
+	if nexovcc {
+		err = s.store.ResolveNexovccOccupancy(order.ID, in)
+	} else {
+		err = s.store.ResolveEJHOccupancy(order.ID, in)
+	}
+	if err != nil {
 		writeAPI(w, 409, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, map[string]bool{"released": true}, "")
+	writeAPI(w, 200, map[string]bool{"resolved": true, "released": in.Outcome == "not_activated"}, "")
 }

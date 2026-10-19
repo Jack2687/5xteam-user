@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // UpdateAdminRotation changes scheduling without touching credentials or child state.

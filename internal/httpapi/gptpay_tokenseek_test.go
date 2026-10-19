@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 func TestTokenseekCountryQuantitySnapshotAndReplay(t *testing.T) {

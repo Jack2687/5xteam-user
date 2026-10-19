@@ -61,7 +61,7 @@ func (s Settings) Accepts(kind string) bool {
 
 func validEvent(kind string) bool {
 	switch kind {
-	case "restock", "merge_start", "merge_result", "pro_start", "pro_pushed", "pro_failed", "ejh_open":
+	case "restock", "merge_start", "merge_result", "pro_start", "pro_pushed", "pro_failed", "ejh_open", "nexovcc_open":
 		return true
 	}
 	return false

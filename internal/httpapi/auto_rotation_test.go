@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 func TestAutoRotationSkipsOverlappingScheduledRun(t *testing.T) {

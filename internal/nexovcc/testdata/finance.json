@@ -1,0 +1,175 @@
+{
+  "/api/findLogReportCardDay": {
+    "list": [
+      {
+        "count_date": "2026-10-18",
+        "money_id": 3,
+        "income_day": "500.26",
+        "income_fee_day": "5",
+        "income_count": 1,
+        "withdraw_day": "0",
+        "withdraw_count": 0,
+        "manual_deduct_day": "0",
+        "manual_deduct_count": 0,
+        "un_auth_day": "0.5",
+        "un_auth_count": 1,
+        "card_day": "27.67",
+        "card_deposit_fee": "0",
+        "card_count": 1,
+        "open_card_day": "0.5",
+        "open_card_count": 1,
+        "foreign_fee_day": "0",
+        "foreign_fee_count": 0,
+        "refund_fee_day": "0",
+        "allocate_day": "0",
+        "consume_day": "92.33",
+        "consume_count": 1,
+        "complete_day": "0",
+        "complete_count": 0,
+        "cancel_day": "92.28",
+        "cancel_count": 1,
+        "refund_day": "0",
+        "refund_count": 0,
+        "refuse_day": "0",
+        "refuse_count": 0,
+        "consume_money_rate": "0.5001",
+        "cancel_money_rate": "0.9995",
+        "refund_money_rate": "0",
+        "refuse_money_rate": "0",
+        "consume_rate": "0.5",
+        "cancel_rate": "1",
+        "refund_rate": "0",
+        "refuse_rate": "0",
+        "refuse_fee": "0",
+        "expire_fee": "0",
+        "cancel_fee": "0.5"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 100
+  },
+  "/api/findLogWebFunds": {
+    "list": [
+      {
+        "link_log_no": "fixture-log-1",
+        "serial_no": "fixture-card-1",
+        "card_no": "****4242",
+        "money_id": 3,
+        "change_type_id": 2003,
+        "before_balance": "0",
+        "amount": "-0.5",
+        "after_balance": "373.96",
+        "created_at": "2026-10-18T23:17:02+08:00"
+      },
+      {
+        "link_log_no": "fixture-log-2",
+        "serial_no": "fixture-card-1",
+        "card_no": "****4242",
+        "money_id": 3,
+        "change_type_id": 2007,
+        "before_balance": "0",
+        "amount": "-0.3",
+        "after_balance": "374.46",
+        "created_at": "2026-10-18T22:53:48+08:00"
+      },
+      {
+        "serial_no": "fixture-card-1",
+        "card_no": "****4242",
+        "money_id": 3,
+        "change_type_id": 3003,
+        "before_balance": "0",
+        "amount": "-0.5",
+        "after_balance": "374.76",
+        "created_at": "2026-10-18T22:47:32+08:00"
+      },
+      {
+        "serial_no": "fixture-card-1",
+        "card_no": "****4242",
+        "money_id": 3,
+        "change_type_id": 3001,
+        "before_balance": "0",
+        "amount": "-120",
+        "after_balance": "375.26",
+        "created_at": "2026-10-18T22:47:32+08:00"
+      },
+      {
+        "link_log_no": "fixture-log-3",
+        "serial_no": "",
+        "money_id": 3,
+        "change_type_id": 1000,
+        "before_balance": "0",
+        "amount": "495.26",
+        "after_balance": "495.26",
+        "created_at": "2026-10-18T22:41:01+08:00"
+      }
+    ],
+    "total": 5,
+    "page": 1,
+    "pageSize": 100
+  },
+  "/api/findLogCardTrades": {
+    "list": [
+      {
+        "log_no": "fixture-log-1",
+        "money_id": 3,
+        "card_no": "****4242",
+        "serial_no": "fixture-card-1",
+        "trade_type": "Auth",
+        "trade_amount": "92.28",
+        "merchant_amount": "5794.64",
+        "merchant_country": "USA",
+        "merchant_currency": "PHP",
+        "merchant_address": "OPENAI*CHATGPTSUBSCR",
+        "business_token": "fixture-auth-1",
+        "status": "REVERSED",
+        "created_at": "2026-10-18T23:16:43+08:00",
+        "approve_at": null
+      },
+      {
+        "log_no": "fixture-log-2",
+        "money_id": 3,
+        "card_no": "****4242",
+        "serial_no": "fixture-card-1",
+        "trade_type": "Auth",
+        "trade_amount": "92.33",
+        "merchant_amount": "5794.64",
+        "merchant_country": "USA",
+        "merchant_currency": "PHP",
+        "merchant_address": "OPENAI*CHATGPTSUBSCR",
+        "business_token": "fixture-auth-1",
+        "status": "PENDING",
+        "created_at": "2026-10-18T22:53:47+08:00",
+        "approve_at": null
+      }
+    ],
+    "total": 2,
+    "page": 1,
+    "pageSize": 100
+  },
+  "/api/findLogRecharge": {
+    "list": [
+      {
+        "order_no": "fixture-recharge-1",
+        "money_id": 3,
+        "amount": "500.26",
+        "real_amount": "495.26",
+        "fee": "5",
+        "status": 1,
+        "created_at": "2026-10-18T22:36:53+08:00"
+      },
+      {
+        "order_no": "fixture-recharge-2",
+        "money_id": 3,
+        "amount": "500.13",
+        "real_amount": "495.13",
+        "fee": "5",
+        "status": 5,
+        "created_at": "2026-10-18T22:16:27+08:00"
+      }
+    ],
+    "total": 2,
+    "page": 1,
+    "pageSize": 100
+  }
+}

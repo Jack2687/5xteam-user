@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
 )
 
 // Keep forecasts aligned with the policy actually used by this account's

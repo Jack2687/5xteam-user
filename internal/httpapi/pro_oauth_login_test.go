@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 // Pro uses the existing mailbox-only entry to the same executeCodexOAuth

@@ -1,7 +1,7 @@
 package sub2
 
 import (
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 	"context"
 	"encoding/json"
 	"net/http"

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func (s *Store) initializeSeatRecovery() error {

@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
 	"context"
 	"errors"
 	"net/http"
@@ -109,7 +109,7 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, map[string]any{"config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "daily_ejh_merge_run": dailyRun}, "")
+	writeAPI(w, 200, map[string]any{"config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": c.EffectiveCardProvider(now, p.AutoCardProvider()), "daily_ejh_merge_run": dailyRun}, "")
 }
 func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	c := restock.DefaultConfig()

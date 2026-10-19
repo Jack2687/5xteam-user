@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/store"
 	"testing"
 	"time"
 )

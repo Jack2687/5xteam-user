@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/herosms"
+	"chatgpt-space-merge/internal/herosms"
 )
 
 func (s *Store) SMSAccountID(email string) string {

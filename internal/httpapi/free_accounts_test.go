@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 func TestCPAAccountNameAndPayload(t *testing.T) {
@@ -501,7 +501,7 @@ func TestChildLeaveUsesMailManagementAccessToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dataStore.Close()
-	if err := dataStore.SaveSettings(model.Settings{BaseURL: "http://127.0.0.1:18121", RequestTimeoutSeconds: 5}); err != nil {
+	if err := dataStore.SaveSettings(model.Settings{BaseURL: "http://127.0.0.1:18120", RequestTimeoutSeconds: 5}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dataStore.SaveMailAccount(model.MailAccountProfile{Email: "leave-token@example.com"}, model.MailAccountCredentials{

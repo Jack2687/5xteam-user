@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func historyFixture(t *testing.T, s *Store, email string) model.FreeAccountProfile {

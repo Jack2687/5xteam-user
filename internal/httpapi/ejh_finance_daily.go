@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/store"
 )
 
 // Project the same retained financial totals into account and card details.

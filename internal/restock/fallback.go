@@ -16,12 +16,33 @@ type FallbackConfig struct {
 	Email           string  `json:"email"`
 	PasswordPresent bool    `json:"password_present"`
 	GroupID         int64   `json:"group_id"`
+	GroupIDs        []int64 `json:"group_ids"`
 	AccountIDs      []int64 `json:"account_ids"`
 	CheckSeconds    int     `json:"check_seconds"`
 }
 
 func DefaultFallbackConfig() FallbackConfig {
 	return FallbackConfig{Version: 1, AccountIDs: []int64{}, CheckSeconds: 3}
+}
+
+// A missing list reads legacy single-group configurations. An explicit empty
+// list means deselected and must not restore the old group_id.
+func (c FallbackConfig) SelectedGroupIDs() []int64 {
+	if c.GroupIDs != nil {
+		return c.GroupIDs
+	}
+	if c.GroupID > 0 {
+		return []int64{c.GroupID}
+	}
+	return []int64{}
+}
+
+func (c *FallbackConfig) NormalizeGroups() {
+	c.GroupIDs = append([]int64{}, c.SelectedGroupIDs()...)
+	c.GroupID = 0
+	if len(c.GroupIDs) > 0 {
+		c.GroupID = c.GroupIDs[0]
+	}
 }
 
 func (c FallbackConfig) Validate() error {
@@ -37,8 +58,19 @@ func (c FallbackConfig) Validate() error {
 			return errors.New("请输入兜底 Sub2 管理员邮箱")
 		}
 	}
-	if c.Enabled && (c.GroupID <= 0 || len(c.AccountIDs) == 0) {
+	groups := c.SelectedGroupIDs()
+	if c.Enabled && (len(groups) == 0 || len(c.AccountIDs) == 0) {
 		return errors.New("请选择兜底分组及至少一个 OpenAI 账号")
+	}
+	if len(groups) > 100 {
+		return errors.New("兜底分组最多选择 100 个")
+	}
+	seenGroups := map[int64]bool{}
+	for _, id := range groups {
+		if id <= 0 || seenGroups[id] {
+			return errors.New("兜底分组 ID 无效或重复")
+		}
+		seenGroups[id] = true
 	}
 	if len(c.AccountIDs) > 1000 {
 		return errors.New("兜底账号最多选择 1000 个")

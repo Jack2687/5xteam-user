@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func (s *Store) ProQualitySettings() (model.ProQualitySettings, error) {

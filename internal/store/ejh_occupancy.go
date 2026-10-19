@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 // Orders and pre-payment reservations are the durable occupancy source. A
@@ -83,6 +83,13 @@ func ejhCardOccupancy(q proCapacityQuery, key, exceptEmail string) (count int, e
 }
 
 func validateEJHOccupancy(q proCapacityQuery, key, email string) error {
+	kind, e := proCardType(q, key)
+	if e != nil {
+		return e
+	}
+	if kind == "nexovcc" {
+		return validateNexovccOccupancy(q, key, email)
+	}
 	enabled, err := ejhSingleActive(q, key)
 	if err != nil || !enabled {
 		return err

@@ -3,7 +3,7 @@ package store
 import (
 	"encoding/json"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // AdminAccountProfile reads display metadata without decrypting credentials or

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestEJHFinanceConsumptionAndSnapshots(t *testing.T) {

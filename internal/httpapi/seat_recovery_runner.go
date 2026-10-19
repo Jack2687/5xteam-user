@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 func (s *Server) runSeatRecoveryStep(parent context.Context, id string) {

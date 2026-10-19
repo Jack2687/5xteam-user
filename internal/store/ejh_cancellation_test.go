@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 )
 
 func TestEJHCancellationRecoveredByCardSyncAfterRestart(t *testing.T) {

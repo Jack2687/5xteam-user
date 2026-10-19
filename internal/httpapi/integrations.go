@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 // importTurbRegistration receives only a completed registration result. The

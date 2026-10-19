@@ -19,7 +19,7 @@ const summary = computed(() => cardOccupancy(props.card))
     <span v-if="!local.occupants?.length">{{local.active_email}}</span>
     <small v-if="!compact">{{summary.detail}}</small>
   </div>
-  <EJHOccupancyDialog ref="resolver" @updated="emit('updated')" />
+  <EJHOccupancyDialog ref="resolver" :provider="local.card_type" @updated="emit('updated')" />
 </template>
 <style scoped>
 .card-occupancy{font-size:12px;line-height:1.7;overflow-wrap:anywhere;margin:10px 0}.card-occupancy strong{font-weight:500}.card-occupancy span,.card-occupancy small{display:block}.card-occupancy small{font-size:11px;color:var(--muted)}

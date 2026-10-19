@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"chapt-space-user/internal/httpapi"
-	"chapt-space-user/internal/store"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/httpapi"
+	"chatgpt-space-merge/internal/store"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 func main() {
-	addr := env("APP_ADDR", "127.0.0.1:18121")
+	addr := env("APP_ADDR", "127.0.0.1:18120")
 	dataDir, err := filepath.Abs(env("APP_DATA_DIR", "./data"))
 	if err != nil {
 		fatal("解析数据目录失败", err)
@@ -44,7 +44,7 @@ func main() {
 		defer done()
 		_ = server.Shutdown(shutdown)
 	}()
-	slog.Info("chapt-space-user listening", "addr", addr, "data_dir", dataDir)
+	slog.Info("chatgpt-space-merge listening", "addr", addr, "data_dir", dataDir)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fatal("HTTP 服务异常退出", err)
 	}

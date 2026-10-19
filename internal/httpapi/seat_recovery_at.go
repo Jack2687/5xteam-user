@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 // Reuse the mail page's live /me check, using the global proxy. Only absent,

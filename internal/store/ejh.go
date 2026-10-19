@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 func (s *Store) initializeEJH() error {

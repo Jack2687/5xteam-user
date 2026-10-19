@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/ejh"
+	"chatgpt-space-merge/internal/ejh"
 )
 
 type EJHRechargeLedger struct {

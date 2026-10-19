@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"

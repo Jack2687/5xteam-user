@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 func TestProAccountListsIncludeActivationCard(t *testing.T) {

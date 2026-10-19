@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
-	"chapt-space-user/internal/sub2"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/sub2"
 )
 
 func restockMoneyUsage(u sub2.MoneyUsage, now time.Time) restock.AccountMoney {
@@ -126,7 +126,7 @@ func (s *Server) refreshRestockMoney(c restock.Config, p model.ProSettings, pass
 			if closed {
 				break
 			}
-			if a.Ready && !a.Shared {
+			if a.Ready {
 				jobs <- a
 			}
 		}

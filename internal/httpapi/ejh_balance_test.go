@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/store"
 )
 
 type ejhBalanceTransport func(*http.Request) (*http.Response, error)

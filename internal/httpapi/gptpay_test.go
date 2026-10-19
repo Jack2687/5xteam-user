@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 func gptPayFixture(t *testing.T, handler http.HandlerFunc, dataDirs ...string) (*Server, *store.Store, string) {

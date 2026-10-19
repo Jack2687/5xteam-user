@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 type SchedulingPause struct {

@@ -1,7 +1,7 @@
 package vm2api
 
 import (
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 	"encoding/json"
 	"fmt"
 	"net/http"

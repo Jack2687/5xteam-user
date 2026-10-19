@@ -2,7 +2,7 @@ package sub2
 
 import (
 	"bufio"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 	"context"
 	"encoding/json"
 	"errors"

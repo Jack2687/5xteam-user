@@ -2,7 +2,7 @@ package vm2api
 
 import (
 	"bytes"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 	"context"
 	"encoding/json"
 	"errors"

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 var errProTransferUncertain = errors.New("合并结果待确认：请求中断，远端可能已经合并。请核实后将合并步骤改为成功再续跑；确认未合并才改为待处理重试")

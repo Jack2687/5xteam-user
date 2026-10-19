@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/store"
 )
 
 func TestEJHFinanceReadOnlyAndAuthentication(t *testing.T) {

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/store"
 )
 
 func TestGlobalPaginationRestockAndRecovery(t *testing.T) {

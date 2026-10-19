@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func normalizeProSettings(v *model.ProSettings) {
@@ -243,6 +243,9 @@ func (s *Store) UpdateProAccount(email string, mutate func(*model.MailAccountPro
 		return p, err
 	}
 	if err = s.recordEJHConsumptionTx(tx, p, p.UpdatedAt); err != nil {
+		return p, err
+	}
+	if err = s.recordNexovccRevenueTx(tx, p); err != nil {
 		return p, err
 	}
 	if !wasRemoved && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") {

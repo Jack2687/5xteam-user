@@ -1,7 +1,7 @@
 package store
 
 import (
-	"chapt-space-user/internal/notify"
+	"chatgpt-space-merge/internal/notify"
 	"strings"
 	"testing"
 )

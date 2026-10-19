@@ -1,9 +1,9 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/store"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +20,8 @@ type fallbackMock struct {
 	mu               sync.Mutex
 	on               map[int64]bool
 	group            map[int64]int64
+	memberships      map[int64][]int64
+	failGroup        int64
 	writes           map[int64]int
 	fail             map[int64]bool
 	ambiguous        map[int64]bool
@@ -34,6 +36,7 @@ type fallbackMock struct {
 
 func newFallbackMock(t *testing.T) *fallbackMock {
 	m := &fallbackMock{on: map[int64]bool{1: false, 2: false, 3: true}, group: map[int64]int64{1: 7, 2: 7, 3: 7}, writes: map[int64]int{}, fail: map[int64]bool{}, ambiguous: map[int64]bool{}}
+	m.memberships = map[int64][]int64{}
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -44,7 +47,11 @@ func newFallbackMock(t *testing.T) *fallbackMock {
 			if id == 2 {
 				kind = "apikey"
 			}
-			return map[string]any{"id": id, "name": fmt.Sprintf("fallback-%d", id), "platform": "openai", "type": kind, "status": "active", "schedulable": m.on[id], "group_ids": []int64{m.group[id]}, "credentials": map[string]string{"api_key": "DO-NOT-EXPOSE-KEY", "refresh_token": "DO-NOT-EXPOSE-TOKEN"}}
+			ids := m.memberships[id]
+			if ids == nil {
+				ids = []int64{m.group[id]}
+			}
+			return map[string]any{"id": id, "name": fmt.Sprintf("fallback-%d", id), "platform": "openai", "type": kind, "status": "active", "schedulable": m.on[id], "group_ids": ids, "credentials": map[string]string{"api_key": "DO-NOT-EXPOSE-KEY", "refresh_token": "DO-NOT-EXPOSE-TOKEN"}}
 		}
 		switch r.URL.Path {
 		case "/api/v1/auth/login":
@@ -52,7 +59,7 @@ func newFallbackMock(t *testing.T) *fallbackMock {
 			write(map[string]string{"access_token": "fake-admin-token"})
 			return
 		case "/api/v1/admin/groups/all":
-			groups := []map[string]any{{"id": 7, "name": "fallback", "platform": "openai"}}
+			groups := []map[string]any{{"id": 7, "name": "fallback", "platform": "openai"}, {"id": 8, "name": "fallback-two", "platform": "openai"}}
 			if !m.sourceMissing {
 				groups = append(groups, map[string]any{"id": 9, "name": "main", "platform": "openai"})
 			}
@@ -73,10 +80,26 @@ func newFallbackMock(t *testing.T) *fallbackMock {
 				write(map[string]any{"items": items, "total": m.sourceCount})
 				return
 			}
-			if r.URL.Query().Get("group") != "7" || r.URL.Query().Get("platform") != "openai" {
+
+			group, _ := strconv.ParseInt(r.URL.Query().Get("group"), 10, 64)
+			if (group != 7 && group != 8) || r.URL.Query().Get("platform") != "openai" {
 				t.Error("wrong account filters")
 			}
-			write(map[string]any{"items": []any{account(1), account(2), account(3)}, "total": 3})
+			if group == m.failGroup {
+				w.WriteHeader(503)
+				return
+			}
+			items := []any{}
+			for _, id := range []int64{1, 2, 3} {
+				a := account(id)
+				for _, g := range a["group_ids"].([]int64) {
+					if g == group {
+						items = append(items, a)
+						break
+					}
+				}
+			}
+			write(map[string]any{"items": items, "total": len(items)})
 			return
 		}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/accounts/"), "/")

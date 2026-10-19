@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 var ErrProStageConflict = errors.New("账号进度已变化，请刷新后重新修改")

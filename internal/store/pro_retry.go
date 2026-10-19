@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/restock"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/restock"
 )
 
 // An explicit retry becomes a manual flow. Keep the failed restock intent and
@@ -62,6 +62,20 @@ func (s *Store) DetachFailedProRestock(email, flowID, orderID string) error {
 	}
 	if task.Status == "ready" {
 		return errors.New("原补货任务已就绪，不能重新开通")
+	}
+	if p.ProAuto.ID == "" && task.CardProvider == "nexovcc" {
+		if task.Status != "attention" {
+			return errors.New("补货任务仍在排队或启动中，请等待当前任务")
+		}
+		// Issuance precedes the workflow ID. No payment does not prove that
+		// issuing another card is safe: first resolve every unfinished open.
+		var pendingOpen bool
+		if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM nexovcc_operations WHERE scope='open' AND status NOT IN ('succeeded','failed'))`).Scan(&pendingOpen); err != nil {
+			return err
+		}
+		if pendingOpen {
+			return errors.New("环球开卡结果尚未核实，请先在环球操作记录查询或同步原卡，再重试当前账号")
+		}
 	}
 	task.Status, task.OrderID = "failed", orderID
 	task.ETA = nil

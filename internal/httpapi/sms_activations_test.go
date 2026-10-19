@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"chapt-space-user/internal/herosms"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/herosms"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 )
 
 func heroFixture(t *testing.T, handler http.HandlerFunc) (*Server, *httptest.Server) {

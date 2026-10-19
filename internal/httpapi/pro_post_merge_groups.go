@@ -7,7 +7,7 @@ import (
 	"slices"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 // Persist before removal so a restart between OpenAI removal and the Sub2

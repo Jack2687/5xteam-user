@@ -1,10 +1,10 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/notify"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/notify"
+	"chatgpt-space-merge/internal/store"
 	"context"
 	"fmt"
 	"log/slog"
@@ -90,7 +90,7 @@ func (s *Server) deliverNotification(ctx context.Context, event notificationEven
 }
 
 func (s *Server) notifyProAutomation(p model.MailAccountProfile, stage, status string) {
-	text := "账号：" + p.Email + "\n套餐：" + p.ProAuto.PlanCode
+	text := "账号：" + p.Email + "\n套餐：" + p.ProAuto.PlanCode + s.proCardProviderNotice(p.ProAuto.CardID)
 	if stage == "push" && status == "completed" {
 		s.queueNotification("pro_pushed", "Pro 全自动推送完成", text+"\n已开通并完成推送，可在 Pro 管理查看")
 		return
@@ -177,7 +177,7 @@ func (s *Server) notifyMergeStarted(p model.MailAccountProfile) {
 		}
 	}
 	text := "账号：" + p.Email + "\n消耗额度（标准）：" + standard + "\n用户费用（已用）：" + user + "\n已进入合并流程，按配置并发执行"
-	s.queueNotification("merge_start", "Pro 触发合并", text)
+	s.queueNotification("merge_start", "Pro 触发合并", text+s.proCardProviderNotice(p.ProAuto.CardID))
 }
 
 func notificationUSD(value float64) string {
@@ -232,7 +232,7 @@ func (s *Server) notifyMergeFailure(ctx context.Context, p model.MailAccountProf
 		title = "Pro 合并结果待确认"
 		text += "\n请求响应未确认，请先核实远端结果，避免重复合并"
 	}
-	s.queueNotification("merge_result", title, text)
+	s.queueNotification("merge_result", title, text+s.proCardProviderNotice(p.ProAuto.CardID))
 }
 func (s *Server) notifyMergeRemoved(ctx context.Context, p model.MailAccountProfile) {
 	if state, ok := ctx.Value(mergeNoticeKey{}).(*mergeNoticeState); ok {
@@ -241,5 +241,19 @@ func (s *Server) notifyMergeRemoved(ctx context.Context, p model.MailAccountProf
 		}
 		state.removed = true
 	}
-	s.queueNotification("merge_result", "Pro 合并成功移出", "账号："+p.Email+"\n空间合并完成，已成功移出母号")
+	s.queueNotification("merge_result", "Pro 合并成功移出", "账号："+p.Email+"\n空间合并完成，已成功移出母号"+s.proCardProviderNotice(p.ProAuto.CardID))
+}
+
+func (s *Server) proCardProviderNotice(id string) string {
+	if id != "" {
+		if card, _, e := s.store.GPTPayCard(id); e == nil {
+			if card.Source == "nexovcc" {
+				return "\n卡台：环球"
+			}
+			if card.Source == "ejh" {
+				return "\n卡台：EJH"
+			}
+		}
+	}
+	return ""
 }

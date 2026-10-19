@@ -7,15 +7,17 @@ import { parseCardText, payStatusName, proPlanName, supplierPaymentLabel, payPro
 import MessageBar from './MessageBar.vue'
 import PaymentCardStatus from './PaymentCardStatus.vue'
 import CardOccupancy from './CardOccupancy.vue'
+import { providerName } from '../nexovcc'
 import { isClosedCard } from '../card-status'
 import Pagination from './Pagination.vue'
 import ProSchedulePanel from './ProSchedulePanel.vue'
 import { caseSummary, cardHasCase } from '../ejh'
 import ReturnCaseLine from './ReturnCaseLine.vue'
 import CardAccountPreview from './CardAccountPreview.vue'
+import NexovccProCasesDialog from './NexovccProCasesDialog.vue'
 
 const props = defineProps({ mode: String, defaultPageSize: { type: Number, default: 10 }, adminAccounts: { type: Array, default: () => [] } })
-const emit = defineEmits(['saved'])
+const emit = defineEmits(['saved','open-card'])
 const settings = reactive({ terms_accepted: false, provider: 'tokenseek', country: 'PH', credit_quantity: 0, url: 'https://gptpay.tokenseek.app/api/v1', plan_code: 'pro5', key_present: false, api_key: '', session_timeout_minutes: 30,card_account_limit:3 })
 const providerDrafts = new Map()
 const savedURLs = new Map(), catalogEpoch = ref(0)
@@ -73,15 +75,18 @@ async function changeProvider(event) {
 }
 const automation = reactive({ scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 const selectedAdmin = computed(() => props.adminAccounts.find(a => a.id === automation.target_admin_id))
-Object.assign(automation,{ejh_auto_open:false,ejh_template_id:'',ejh_daily_open_limit:1,ejh_daily_amount_limit:'',force_merge_enabled:false,force_merge_minutes:60})
+Object.assign(automation,{card_provider:'ejh',nexovcc_auto_open:false,nexovcc_template_id:'',nexovcc_daily_open_limit:1,nexovcc_daily_amount_limit:'',ejh_auto_open:false,ejh_template_id:'',ejh_daily_open_limit:1,ejh_daily_amount_limit:'',force_merge_enabled:false,force_merge_minutes:60})
+const nexovccTemplates=ref([])
+const nexovccCasesDialog=ref(null)
+function showCardAccounts(card){if(card.card_type==='nexovcc')nexovccCasesDialog.value.open({cardID:associated(card).find(c=>c.nexovcc)?.nexovcc.card_id||card.id});else cardDetail.value=card}
 const ejhTemplates=ref([]),cardCases=ref([]),cardDetail=ref(null)
-function associated(card){return cardCases.value.filter(c=>cardHasCase(card,c))}
+function associated(card){return cardCases.value.filter(c=>cardHasCase(card,c)||c.nexovcc?.card_id===card.id)}
 function cardHint(card){return associated(card).slice(0,30).map(caseSummary).join('\n')||'暂无关联账号'}
 const configSection = ref('purchase')
 const configSections = [
   { id: 'purchase', label: '开通设置', hint: '供应商、套餐与国家', icon: CreditCard },
   { id: 'schedule', label: '定时任务', hint: '自动开通与任务容量', icon: CalendarClock },
-  { id: 'cards', label: '银行卡与补卡', hint: '用卡上限、EJH 预算', icon: CreditCard },
+  { id: 'cards', label: '银行卡与补卡', hint: '用卡上限、卡台与预算', icon: CreditCard },
   { id: 'merge', label: '空间合并', hint: '额度条件、超时与目标', icon: Workflow },
   { id: 'advanced', label: '高级设置', hint: '并发、重试与会话', icon: SlidersHorizontal },
 ]
@@ -143,7 +148,7 @@ async function saveSettings() {
 }
 async function queryAccount() { await action(async () => { account.value = await api('/api/gptpay/account?provider=' + queryProvider.value); notify('供应商账户信息已更新', 'success') }) }
 function edit(card = null) {
-  editor.value = { id: card?.id || '', card_type: card?.card_type || 'other', name: card?.name || '', closed: isClosedCard(card), enabled: isClosedCard(card) ? false : card?.enabled ?? true, number: '', cvv: '', exp_month: card?.exp_month || 0, exp_year: card?.exp_year || 0, last4: card?.last4 || '', max_accounts: card?.max_accounts || 0 }
+  editor.value = { id: card?.id || '', source: card?.source || '', card_type: card?.card_type || 'other', name: card?.name || '', closed: isClosedCard(card), enabled: isClosedCard(card) ? false : card?.enabled ?? true, number: '', cvv: '', exp_month: card?.exp_month || 0, exp_year: card?.exp_year || 0, last4: card?.last4 || '', max_accounts: card?.max_accounts || 0 }
   rawCard.value = ''; notify()
 }
 function parseCard() { try { Object.assign(editor.value, parseCardText(rawCard.value)); rawCard.value = ''; notify('已解析，请核对有效期后保存', 'success') } catch (e) { notify(e.message, 'error') } }
@@ -174,7 +179,7 @@ async function queryOrders() {
 }
 onMounted(() => action(async () => {
   if (props.mode === 'settings') {
-    const ejh=await api('/api/ejh/settings');ejhTemplates.value=ejh.templates||[]
+    const [ejh,nex]=await Promise.all([api('/api/ejh/settings'),api('/api/nexovcc/settings')]);ejhTemplates.value=ejh.templates||[];nexovccTemplates.value=nex.templates||[]
     const [pay, pro] = await Promise.all([api('/api/gptpay/settings'), api('/api/pro-settings')])
     if (disposed) return
     Object.assign(settings, pay); savedURLs.set(settings.provider, settings.url); Object.assign(automation, pro); settingsReady.value = true
@@ -188,6 +193,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 
 <template>
   <div class="gptpay-panel view-stack">
+    <NexovccProCasesDialog ref="nexovccCasesDialog" :default-page-size="defaultPageSize" @open-card="emit('open-card',$event)" @updated="load"/>
     <Teleport to="body"><div v-if="cardDetail" class="modal-backdrop" @click.self="cardDetail=null"><section class="modal" style="max-height:80vh;overflow:auto"><h2>{{cardDetail.name}} · 关联账号</h2><ReturnCaseLine v-for="c in associated(cardDetail)" :key="c.id" :row="c"/><p v-if="!associated(cardDetail).length">暂无关联账号</p><button class="btn" @click="cardDetail=null">关闭</button></section></div></Teleport>
     <MessageBar v-if="message.text" :message="message" />
     <form v-if="mode === 'settings'" class="automation-config" @submit.prevent="saveSettings" @invalid.capture="revealInvalid">
@@ -239,12 +245,19 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
           <section v-show="configSection === 'cards'" data-config-section="cards">
             <div class="settings-fields">        <label class="field"><span>银行卡默认最大开通数</span><input v-model.number="settings.card_account_limit" type="number" min="1" max="10000" required/><small>未单独设置的卡沿用此上限，默认 3 个。成功开通与在途占位共同计数，同一卡号共用上限。</small></label>
 </div>
-            <div class="config-divider"><h4>EJH 自动补卡</h4><p>EJH 卡片使用卡台独立的默认上限，可在卡台或单卡设置中调整。</p></div>
-            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>无可用卡时自动从 EJH 开卡</strong><small>优先使用现有可用卡；新卡加入银行卡信息。结果未知时停止等待核实，不重复扣款。</small></div><input v-model="automation.ejh_auto_open" type="checkbox"/><i></i></label>
+            <div class="config-divider"><h4>自动补卡</h4><p>按所选卡台优先使用最早开出的可用卡，无可用卡时补卡。各卡台单独保存模板和预算。</p></div>
+            <label class="field"><span>卡台选择</span><select v-model="automation.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select></label>
+            <div v-if="automation.card_provider==='ejh'" class="settings-fields">        <label class="toggle-row wide"><div><strong>无可用卡时自动从 EJH 开卡</strong><small>优先使用现有可用卡；新卡加入银行卡信息。结果未知时停止等待核实，不重复扣款。</small></div><input v-model="automation.ejh_auto_open" type="checkbox"/><i></i></label>
         <label class="field"><span>EJH 开卡模板</span><select v-model="automation.ejh_template_id" :required="automation.ejh_auto_open"><option value="">请先到 EJH 卡台保存模板</option><option v-for="t in ejhTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.cardAmount}} {{t.cardCurrency}}</option></select></label>
         <label class="field"><span>自动开卡每日数量上限</span><input v-model.number="automation.ejh_daily_open_limit" type="number" min="1" max="1000" :required="automation.ejh_auto_open"/></label>
         <label class="field wide"><span>自动开卡每日刷卡额度预算（模板币种）</span><input v-model="automation.ejh_daily_amount_limit" :required="automation.ejh_auto_open" placeholder="例如 100"/><small>累计新卡额度，不含手续费和汇率差，不是实际扣款上限；按北京时间每日计算。</small></label>
 </div>
+            <div v-else class="settings-fields">
+              <label class="toggle-row wide"><div><strong>无可用卡时自动从环球开卡</strong><small>优先使用环球可用卡；原开卡结果待核实时停止补卡，查询原卡继续导入。</small></div><input v-model="automation.nexovcc_auto_open" type="checkbox"/><i></i></label>
+              <label class="field"><span>环球开卡模板</span><select v-model="automation.nexovcc_template_id" :required="automation.nexovcc_auto_open"><option value="">请先到环球卡台保存模板</option><option v-for="t in nexovccTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.amount}} USD</option></select></label>
+              <label class="field"><span>自动开卡每日数量上限</span><input v-model.number="automation.nexovcc_daily_open_limit" type="number" min="1" max="1000" :required="automation.nexovcc_auto_open"/></label>
+              <label class="field wide"><span>自动开卡每日充值金额预算（USD）</span><input v-model="automation.nexovcc_daily_amount_limit" :required="automation.nexovcc_auto_open" placeholder="例如 100"/><small>累计新卡充值金额；按北京时间每日计算。平台手续费另计。</small></label>
+            </div>
           </section>
           <section v-show="configSection === 'merge'" data-config-section="merge">
             <p class="config-callout">手动账号使用下方检测开关；全自动任务沿用启动时的额度配置。合并、移出仍走原流程。</p>
@@ -277,11 +290,11 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 
     <template v-else-if="mode === 'cards'">
       <section class="panel">
-        <div class="panel-title"><div><span>PAYMENT CARDS</span><h2>银行卡信息</h2><p>卡片须启用、未过期且有剩余名额；已绑定 EJH 的卡还须卡台状态可用。</p></div><button class="btn primary" :disabled="busy" @click="edit()">添加银行卡</button></div>
+        <div class="panel-title"><div><span>PAYMENT CARDS</span><h2>银行卡信息</h2><p>卡片须启用、未过期且有剩余名额；已绑定卡台的卡还须对应卡台状态可用。</p></div><button class="btn primary" :disabled="busy" @click="edit()">添加银行卡</button></div>
         <div class="card-filter" role="group" aria-label="银行卡筛选"><button v-for="[value,label] in [['available','可开通'],['all','全部']]" :key="value" type="button" :disabled="busy" :class="{active:cardFilter===value}" :aria-pressed="cardFilter===value" @click="changeCardFilter(value)">{{label}}</button><span>{{busy?'正在读取…':`共 ${total} 张`}}</span></div>
         <div class="table-shell"><table><thead><tr><th>名称</th><th>类型</th><th>银行卡</th><th>已开通账号</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>
           <tr v-if="!rows.length"><td colspan="7" class="empty-cell">{{busy?'正在读取银行卡…':cardFilter==='available'?'暂无可开通银行卡，可切换“全部”查看':'暂无银行卡'}}</td></tr>
-          <tr v-for="card in rows" :key="card.id"><td>{{ card.name }}</td><td>{{card.card_type==='ejh'?'EJH':'其他'}}</td><td>•••• {{ card.last4 }}</td><td><CardAccountPreview :rows="associated(card)"><button class="btn ghost compact" @click="cardDetail=card">{{card.opened_accounts||0}} / {{card.account_limit||3}}</button></CardAccountPreview><small class="order-id">{{ card.max_accounts ? '单独设置' : card.card_type==='ejh'?'EJH 默认':'沿用全局' }}</small><small class="order-id">在途 {{card.pending_accounts||0}} · 剩余 {{card.remaining_accounts??0}}</small><CardOccupancy v-if="card.card_type==='ejh'" :card="card" @updated="load" /></td><td>{{ card.exp_year }}-{{ String(card.exp_month).padStart(2, '0') }}</td><td><PaymentCardStatus :card="card" /></td><td><div class="row-actions"><button class="btn ghost compact" :disabled="busy || isClosedCard(card)" @click="toggle(card)">{{ isClosedCard(card) ? '已销卡' : card.enabled ? '禁用' : '启用' }}</button><button class="btn ghost compact" :disabled="busy" @click="edit(card)">编辑</button><button class="btn ghost compact danger-text" :disabled="busy" @click="remove(card)">删除</button></div></td></tr>
+          <tr v-for="card in rows" :key="card.id"><td>{{ card.name }}</td><td>{{providerName(card.card_type)}}</td><td>•••• {{ card.last4 }}</td><td><CardAccountPreview :rows="associated(card)"><button class="btn ghost compact" @click="showCardAccounts(card)">{{card.opened_accounts||0}} / {{card.account_limit||3}}</button></CardAccountPreview><small class="order-id">{{ card.max_accounts ? '单独设置' : card.card_type==='ejh'?'EJH 默认':card.card_type==='nexovcc'?'环球默认':'沿用全局' }}</small><small class="order-id">在途 {{card.pending_accounts||0}} · 剩余 {{card.remaining_accounts??0}}</small><CardOccupancy v-if="['ejh','nexovcc'].includes(card.card_type)" :card="card" @updated="load" /></td><td>{{ card.exp_year }}-{{ String(card.exp_month).padStart(2, '0') }}</td><td><PaymentCardStatus :card="card" /></td><td><div class="row-actions"><button class="btn ghost compact" :disabled="busy || isClosedCard(card)" @click="toggle(card)">{{ isClosedCard(card) ? '已销卡' : card.enabled ? '禁用' : '启用' }}</button><button class="btn ghost compact" :disabled="busy" @click="edit(card)">编辑</button><button class="btn ghost compact danger-text" :disabled="busy" @click="remove(card)">删除</button></div></td></tr>
         </tbody></table></div>
         <Pagination :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
       </section>
@@ -290,7 +303,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <label class="field"><span>粘贴银行卡信息</span><input v-model="rawCard" type="password" autocomplete="off" placeholder="银行卡号----202812----CVV" /><small>年月支持 202812、2028-12、12/28；四位连续数字按 YYMM 解析。</small></label>
         <button class="btn ghost compact" type="button" :disabled="!rawCard.trim() || busy" @click="parseCard">解析填入</button>
         <div class="settings-fields">
-          <label class="field"><span>类型</span><select v-model="editor.card_type" required><option value="other">其他</option><option value="ejh">EJH</option></select><small>同一卡号共用类型；EJH 类型适用单卡占用开关。运行中的 EJH 卡不可改为其他。</small></label><label class="field"><span>名称</span><input v-model="editor.name" maxlength="60" placeholder="可选，默认使用银行卡尾号" /></label>
+          <label class="field"><span>类型</span><select v-model="editor.card_type" :disabled="editor.source==='ejh'||editor.source==='nexovcc'" required><option value="other">其他</option><option value="ejh">EJH</option><option v-if="editor.source==='nexovcc'" value="nexovcc">环球</option></select><small>同一卡号共用类型；从卡台导入的卡保持来源不变。环球卡请从环球卡台同步导入。</small></label><label class="field"><span>名称</span><input v-model="editor.name" maxlength="60" placeholder="可选，默认使用银行卡尾号" /></label>
           <label class="field"><span>卡号</span><input v-model="editor.number" type="password" autocomplete="off" :required="!editor.id" :placeholder="editor.id ? `尾号 ${editor.last4}，留空不修改` : '银行卡号'" /></label>
           <label class="field"><span>到期年份</span><input v-model.number="editor.exp_year" required type="number" min="2000" max="9999" /></label>
           <label class="field"><span>到期月份</span><input v-model.number="editor.exp_month" required type="number" min="1" max="12" /></label>

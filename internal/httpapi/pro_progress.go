@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 func (s *Server) beginProManualStage(email, stage string) func(error) {

@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestEJHConsumptionUsesLatestUserSnapshot(t *testing.T) {

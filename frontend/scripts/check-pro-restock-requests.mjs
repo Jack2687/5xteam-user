@@ -178,16 +178,17 @@ for (const windows of [[], [{start:'02:00',end:'08:00'},{start:'',end:'12:00'}],
  const before={version:1,enabled:false,no_restock_enabled:true,money_window_minutes:3,no_restock_start:'02:00',no_restock_end:'08:00'}
  f.state.value={config:before};f.applyConfig(before)
  assert.equal(f.form.no_restock_windows[0].start,'02:00','legacy interval was lost')
- f.addNoRestockWindow();Object.assign(f.form.no_restock_windows[1],{start:'23:00',end:'01:00'})
+ f.addNoRestockWindow();Object.assign(f.form.no_restock_windows[1],{start:'23:00',end:'01:00',allowed_provider:'nexovcc'})
  assert.equal(f.dirty.value,true)
- assert.match(f.scheduleSummary(f.form),/02:00～08:00、23:00～次日 01:00/)
+ assert.match(f.scheduleSummary(f.form),/02:00～08:00 完全禁补、23:00～次日 01:00 仅环球/)
  const saving=f.save();await tick()
  const put=f.requests[0]
- assert.equal(JSON.stringify(put.options.body.no_restock_windows),JSON.stringify([{start:'02:00',end:'08:00'},{start:'23:00',end:'01:00'}]))
+ assert.equal(JSON.stringify(put.options.body.no_restock_windows),JSON.stringify([{start:'02:00',end:'08:00',allowed_provider:''},{start:'23:00',end:'01:00',allowed_provider:'nexovcc'}]))
  const saved={...put.options.body,version:2};put.resolve(saved);await tick()
  f.requests.findLast(r=>r.url==='/api/pro-restock').resolve({config:saved});await tick()
  f.requests.findLast(r=>r.url.includes('/records')).resolve([]);await saving
  assert.equal(f.form.no_restock_windows.length,2)
+ assert.equal(f.form.no_restock_windows[1].allowed_provider,'nexovcc','issuer was lost on save/reload')
  f.form.no_restock_windows[1].start='22:00';f.dirty.value=true
  assert.equal(f.state.value.config.no_restock_windows[1].start,'23:00','draft mutated saved config')
  const poll=f.refresh();await tick();f.requests.findLast(r=>r.url==='/api/pro-restock').resolve({config:saved});await tick()
@@ -331,7 +332,7 @@ console.log('Passed: capacity percentage validation, save round-trip and live da
  assert.equal(request.options.body.no_restock_fallback,true)
  assert.equal(request.options.body.daily_ejh_merge_enabled,true)
  assert.equal(request.options.body.daily_ejh_merge_time,'17:30')
- assert.deepEqual(JSON.parse(JSON.stringify(request.options.body.no_restock_windows)),[{start:'17:00',end:'20:50'}])
+ assert.deepEqual(JSON.parse(JSON.stringify(request.options.body.no_restock_windows)),[{start:'17:00',end:'20:50',allowed_provider:''}])
  request.resolve({...config,version:2});await tick()
  f.requests.at(-1).resolve({config:{...config,version:2}});await tick()
  f.requests.at(-1).resolve([]);await saving
@@ -339,3 +340,20 @@ console.log('Passed: capacity percentage validation, save round-trip and live da
  f.unmounted()
 }
 console.log('Passed: 17:00–20:50 fallback schedule and 17:30 daily merge settings validation/save')
+
+// Reject conflicting allowed issuers even across midnight; preserve full-block rows.
+for(const windows of [
+ [{start:'23:00',end:'02:00',allowed_provider:'nexovcc'},{start:'01:00',end:'03:00',allowed_provider:'ejh'}],
+ [{start:'17:00',end:'20:50',allowed_provider:'unknown'}]
+]){
+ const f=fixture();f.applyConfig({no_restock_enabled:true,no_restock_windows:windows})
+ await f.save();assert.equal(f.requests.length,0);assert.match(f.error.value,/卡台/);f.unmounted()
+}
+{
+ const f=fixture();f.applyConfig({no_restock_enabled:true,no_restock_windows:[{start:'17:00',end:'20:50',allowed_provider:'nexovcc'},{start:'18:00',end:'19:00',allowed_provider:''}],daily_ejh_merge_enabled:true,daily_ejh_merge_time:'17:30'})
+ const saving=f.save();await tick();assert.equal(f.requests.length,1,'full prohibition overlap should be accepted')
+ assert.equal(f.requests[0].options.body.no_restock_windows[0].allowed_provider,'nexovcc')
+ assert.equal(f.requests[0].options.body.daily_ejh_merge_time,'17:30')
+ f.requests[0].reject(new Error('fixture stop'));await saving;f.unmounted()
+}
+console.log('Passed: issuer exceptions round-trip, overlap validation, and independent daily merge')

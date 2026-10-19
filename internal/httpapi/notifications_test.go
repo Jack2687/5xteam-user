@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/notify"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/notify"
+	"chatgpt-space-merge/internal/store"
 	"context"
 	"encoding/json"
 	"io"

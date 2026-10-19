@@ -1,9 +1,9 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/store"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/store"
 	"context"
 	"crypto/des"
 	"encoding/base64"

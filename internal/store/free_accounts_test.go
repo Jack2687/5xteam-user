@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestFreeAccountSecretsAreEncryptedAndStatePersists(t *testing.T) {

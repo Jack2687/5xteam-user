@@ -13,7 +13,7 @@ Tokenseek 已支持国家选择、Go/Plus/Pro 三档、Plus 升级和 Codex 点�
 
 顶部的“进入空间”“合并空间”“移出空间”菜单分别执行 1-2、3、4 步。三个分步菜单仍要求选择母号并上传当次可用的子号 AT；历史任务只用于显示账号阶段，不会复用旧 AT。
 
-项目采用 Go 单进程后端并内嵌 Vue 3 + Vite 前端，默认只监听 `127.0.0.1:18121`。空间任务中的临时子号 Access Token 只在任务执行期间保存在进程内存中，不会写入数据库、历史或日志。
+项目采用 Go 单进程后端并内嵌 Vue 3 + Vite 前端，默认只监听 `127.0.0.1:18120`。空间任务中的临时子号 Access Token 只在任务执行期间保存在进程内存中，不会写入数据库、历史或日志。
 
 ## 功能
 
@@ -39,11 +39,11 @@ Tokenseek 已支持国家选择、Go/Plus/Pro 三档、Plus 升级和 Codex 点�
 双击 `start-local.cmd`，或者在 PowerShell 中执行：
 
 ```powershell
-go build -o chapt-space-user.exe ./cmd/server
-./chapt-space-user.exe
+go build -o chatgpt-space-merge.exe ./cmd/server
+./chatgpt-space-merge.exe
 ```
 
-打开 `http://127.0.0.1:18121/`。
+打开 `http://127.0.0.1:18120/`。
 
 首次打开会进入登录页，默认账号为 `admin`、密码为 `admin`。登录后可点击右上角钥匙按钮修改密码（需要输入当前密码和两次新密码）。
 
@@ -70,7 +70,7 @@ Content-Type: application/json
 成功响应的 `data.mail_account_saved` 表示邮件账号凭证已保存，`data.management_scope` 返回实际归属 `mail` 或 `pro`，`data.entered_pro` 表示本次请求已执行直接归入 Pro。
 在 turb 的「配置 → Space 推送」开启「直接进入 Pro 管理」并保存即可，自动和手动推送共用此设置。
 
-如果 turb 与本项目不在同一台机器，需让本项目监听可访问的地址，例如设置 `APP_ADDR=0.0.0.0:18121` 并在防火墙/反向代理中限制来源；turb 的 `REMOTE_IMPORT_URL` 填实际地址。修改本项目登录密码后，记得同步更新 turb 的 `REMOTE_IMPORT_PASSWORD`。
+如果 turb 与本项目不在同一台机器，需让本项目监听可访问的地址，例如设置 `APP_ADDR=0.0.0.0:18120` 并在防火墙/反向代理中限制来源；turb 的 `REMOTE_IMPORT_URL` 填实际地址。修改本项目登录密码后，记得同步更新 turb 的 `REMOTE_IMPORT_PASSWORD`。
 
 停止后台启动的服务可双击 `stop-local.cmd`。
 
@@ -86,10 +86,10 @@ docker compose logs -f --tail=100
 ```bash
 docker compose build --no-cache
 docker compose up -d
-docker compose exec chapt-space-user python3 -c "import curl_cffi; print('curl_cffi ok')"
-docker compose exec chapt-space-user python3 -c "import pyotp; print('pyotp ok')"
-docker compose exec chapt-space-user sh -c 'PYTHONPATH=/app/internal/codex_runtime python3 -c "import config, config.codex, core.session; print(\"codex runtime ok\")"'
-docker compose exec chapt-space-user node --version
+docker compose exec chatgpt-space-merge python3 -c "import curl_cffi; print('curl_cffi ok')"
+docker compose exec chatgpt-space-merge python3 -c "import pyotp; print('pyotp ok')"
+docker compose exec chatgpt-space-merge sh -c 'PYTHONPATH=/app/internal/codex_runtime python3 -c "import config, config.codex, core.session; print(\"codex runtime ok\")"'
+docker compose exec chatgpt-space-merge node --version
 ```
 
 Compose 仍只将端口发布到宿主机回环地址。
@@ -100,7 +100,7 @@ Compose 仍只将端口发布到宿主机回环地址。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `APP_ADDR` | `127.0.0.1:18121` | HTTP 监听地址 |
+| `APP_ADDR` | `127.0.0.1:18120` | HTTP 监听地址 |
 | `APP_DATA_DIR` | `./data` | 配置与脱敏历史目录 |
 | `APP_MASTER_KEY` | 自动生成 | 可选，Base64 编码的 32 字节母号凭据主密钥 |
 

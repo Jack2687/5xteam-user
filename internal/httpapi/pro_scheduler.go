@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,7 +26,7 @@ func (s *Server) proScheduleStatus() (model.ProScheduleStatus, error) {
 	}
 	v.Enabled, v.Maximum = cfg.ScheduledEnabled, cfg.MaxUnmerged
 	v.Needed = max(0, v.Maximum-v.OpenedUnmerged-v.Pending)
-	cards, _, err := s.store.GPTPayCards(10000, 0, true)
+	cards, err := s.automaticProCards(cfg)
 	if err != nil {
 		return v, err
 	}
@@ -216,15 +216,15 @@ func (s *Server) tickProSchedule(force bool) {
 	}
 	for _, email := range emails {
 		// Recheck after every startup, including manual orders competing for cards.
-		cards, _, e := s.store.GPTPayCards(1, 0, true)
-		if e != nil || (len(cards) == 0 && !cfg.EJHAutoOpen) {
+		cards, e := s.automaticProCards(cfg)
+		if e != nil || (len(cards) == 0 && !cfg.AutoCardEnabled()) {
 			run.Message = "银行卡无剩余可用名额"
 			break
 		}
 		// Empty card ID delegates buying to startProAutomation, after its
 		// per-account lock and task/credential checks have succeeded.
 		var card gptpay.Card
-		if len(cards) > 0 && !cfg.EJHAutoOpen {
+		if len(cards) > 0 && !cfg.AutoCardEnabled() {
 			card = cards[0]
 		}
 		task := model.ProScheduleTask{Email: email, CardID: card.ID, Status: "queued"}

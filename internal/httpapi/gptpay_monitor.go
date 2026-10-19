@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 var errGPTPayRemoteNotFound = errors.New("供应商未找到该订单，请核对供应商账户；原订单已保留")

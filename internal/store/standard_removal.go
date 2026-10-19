@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 var ErrStandardSeatBusy = errors.New("等待上一子号释放普通席位并完成间隔")

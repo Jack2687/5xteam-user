@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 func (s *Server) gptPayClient() *gptpay.Client {
@@ -90,7 +90,27 @@ func (s *Server) getGPTPayCatalog(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) listGPTPayCards(w http.ResponseWriter, r *http.Request) {
 	p := s.parsePagination(r)
-	items, total, err := s.store.GPTPayCards(p.Limit, p.Offset, r.URL.Query().Get("enabled") == "true")
+	var items []gptpay.Card
+	var total int
+	var err error
+	if provider := r.URL.Query().Get("card_provider"); provider != "" {
+		if provider != "configured" || r.URL.Query().Get("enabled") != "true" {
+			writeAPI(w, 400, nil, "开通选卡请使用当前配置的卡台和可用卡筛选")
+			return
+		}
+		var cfg model.ProSettings
+		cfg, _, _, err = s.store.ProSettings()
+		if err == nil {
+			// Filter before pagination so an earlier EJH/Other card cannot
+			// become the default when full automation is configured for Nexovcc.
+			items, err = s.automaticProCards(cfg)
+			total = len(items)
+			offset := min(p.Offset, total)
+			items = items[offset:min(total, offset+p.Limit)]
+		}
+	} else {
+		items, total, err = s.store.GPTPayCards(p.Limit, p.Offset, r.URL.Query().Get("enabled") == "true")
+	}
 	if err != nil {
 		writeAPI(w, 500, nil, "读取银行卡失败")
 		return
@@ -135,14 +155,18 @@ func (s *Server) saveGPTPayCard(w http.ResponseWriter, r *http.Request) {
 	v.CardType = ""
 	if input.CardType != nil {
 		v.CardType = *input.CardType
-		if v.CardType != "ejh" && v.CardType != "other" {
-			writeAPI(w, 400, nil, "银行卡类型只能是 EJH 或其他")
+		if v.CardType != "ejh" && v.CardType != "other" && v.CardType != "nexovcc" {
+			writeAPI(w, 400, nil, "银行卡类型只能是 EJH、环球或其他")
+			return
+		}
+		if v.CardType == "nexovcc" && v.Source != "nexovcc" {
+			writeAPI(w, 400, nil, "环球卡请从环球卡台同步导入")
 			return
 		}
 	}
 	v.MaxAccounts = input.MaxAccounts
-	if v.Source == "ejh" && (input.Raw != "" || input.Number != "" || input.CVV != "" || (input.Month != 0 && input.Month != secret.Month) || (input.Year != 0 && input.Year != secret.Year)) {
-		writeAPI(w, 400, nil, "EJH 卡密只能从卡台刷新，不允许手动替换")
+	if (v.Source == "ejh" || v.Source == "nexovcc") && (input.Raw != "" || input.Number != "" || input.CVV != "" || (input.Month != 0 && input.Month != secret.Month) || (input.Year != 0 && input.Year != secret.Year)) {
+		writeAPI(w, 400, nil, "卡台卡密只能从对应卡台刷新，不允许手动替换")
 		return
 	}
 	if input.Raw != "" {
@@ -191,7 +215,12 @@ func (s *Server) listGPTPayCardCases(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, cases, "")
+	financialCases, err := s.proFinancialCases(cases)
+	if err != nil {
+		writeAPI(w, 500, nil, "读取环球关联账号失败")
+		return
+	}
+	writeAPI(w, 200, financialCases, "")
 }
 func (s *Server) deleteGPTPayCard(w http.ResponseWriter, r *http.Request) {
 	unlock := s.lockFreeAccount("gptpay-card:" + r.PathValue("id"))
@@ -361,7 +390,7 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "账号正在执行登录或自动任务，未购买新卡")
 		return
 	}
-	card, secret, err := s.reserveProStartCard(r.Context(), email, input.CardID, pro.EJHAutoOpen, false)
+	card, secret, err := s.reserveProStartCard(r.Context(), email, input.CardID, pro.AutoCardEnabled(), false)
 	if err != nil {
 		writeAPI(w, 409, nil, err.Error())
 		return

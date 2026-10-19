@@ -1,9 +1,9 @@
 package httpapi
 
 import (
-	"chapt-space-user/internal/gptpay"
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/workflow"
 	"context"
 	"errors"
 	"fmt"

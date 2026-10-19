@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"chapt-space-user/internal/model"
-	"chapt-space-user/internal/workflow"
+	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/workflow"
 )
 
 func randomRegistrationID() string {

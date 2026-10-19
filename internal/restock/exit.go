@@ -290,11 +290,6 @@ func ForecastExits(c Config, s Snapshot, tasks []Task, newSlots int, lead float6
 	readyIDs := map[int64]bool{}
 	events := []time.Time{}
 	for _, a := range s.Accounts {
-		if a.Shared {
-			f.Valid = false
-			f.Complete = false
-			return f
-		}
 		if !availableAccount(a, now) {
 			continue
 		}

@@ -1,8 +1,8 @@
 package store
 
 import (
-	"chapt-space-user/internal/ejh"
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/ejh"
+	"chatgpt-space-merge/internal/model"
 	"sync"
 	"sync/atomic"
 	"testing"

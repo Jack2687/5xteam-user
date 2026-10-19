@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestClientLoginGroupsCreateAndQuota(t *testing.T) {

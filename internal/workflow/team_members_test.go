@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"chapt-space-user/internal/model"
+	"chatgpt-space-merge/internal/model"
 )
 
 func TestFindMemberByEmailUsesSeatQueryTransportAndExactMatch(t *testing.T) {

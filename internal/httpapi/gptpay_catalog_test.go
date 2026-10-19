@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"testing"
 
-	"chapt-space-user/internal/gptpay"
+	"chatgpt-space-merge/internal/gptpay"
 )
 
 func TestGPTPayCatalogReadsDraftURLWithoutSavingOrSendingKey(t *testing.T) {
