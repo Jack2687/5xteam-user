@@ -94,7 +94,7 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 	}
 	start, end, wanted := rc.TakeoverWindow(now, c.LeadMinutes)
 	wanted = wanted && c.Enabled && rc.Enabled && rc.Mode == "auto" && p.AutoCardProvider() == "ejh" && request.Willing
-	st.ReleaseAtEnd(now)
+	st.RecoverAtEnd(now)
 	if !st.Active() && wanted {
 		st = restock.TakeoverState{Epoch: randomRegistrationID(), Phase: "preparing", PeerID: request.ID, Groups: slices.Clone(groups), Start: start, End: end}
 	}
@@ -107,7 +107,7 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 			st.PeerPending = request.Pending
 			st.Covered = request.Covered
 		}
-		if wanted && !st.ScheduledRelease {
+		if wanted {
 			st.Start, st.End = start, end
 			st.Phase = "preparing"
 			if !now.Before(start) {
@@ -120,26 +120,18 @@ func (s *Server) acceptTakeoverHeartbeat(w http.ResponseWriter, r *http.Request)
 			} else if pending > 0 {
 				st.LeaseUntil = now
 			}
-		} else if st.Taking() && c.Enabled && request.Willing && rc.Enabled && rc.Mode == "auto" {
-			// The selected interval was removed/shortened. Stop covering it on
-			// the next heartbeat, just like its ordinary end.
-			st.Phase, st.ScheduledRelease, st.CoverageReady = "released", true, false
-			st.LeaseUntil = now
 		} else if st.Taking() {
-			st.Phase = "recovering"
-			st.RecoveryAt = now
-			st.ReadyCount = 0
+			// A shortened window or manual stop also waits for real replacements.
+			st.BeginRecovery(now)
 		}
-		if st.Phase == "released" && !st.ScheduledRelease && current && !request.Released {
+		if st.Phase == "released" && current && !request.Released {
 			snapshot, err := s.store.ProRestockSnapshot()
 			ready, _, _, _ := restock.TakeoverRecoveryReady(rc, c, snapshot, pending, st.RecoveryAt, now)
-			if err != nil || !ready || request.Pending > 0 {
-				st.Phase = "recovering"
-				st.ReadyCount = 0
-				st.RecoveryAt = now
+			if err != nil || !ready || st.ReadyCount < c.ReturnConfirmations || !rc.Enabled || rc.Mode != "auto" || rc.NoRestockReason(now) != "" || (!st.EndReached(now) && request.Pending > 0) {
+				st.BeginRecovery(now)
 			}
 		}
-		if st.Phase == "released" && current && request.Released && (st.ScheduledRelease || request.Pending == 0) {
+		if st.Phase == "released" && current && request.Released && (st.EndReached(now) || request.Pending == 0) {
 			st = restock.TakeoverState{Phase: "idle", ContactAt: now}
 		}
 		st.Error = ""
@@ -193,7 +185,7 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 	if e != nil || (!c.Enabled && !st.Active()) {
 		return
 	}
-	ended := st.ReleaseAtEnd(s.takeoverNow())
+	ended := st.RecoverAtEnd(s.takeoverNow())
 	if ended {
 		if e = s.store.SaveProTakeoverState(st); e != nil {
 			return
@@ -208,14 +200,6 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 	if e != nil {
 		fail("Pro 设置读取失败")
 		return
-	}
-	// The known deadline remains authoritative if the peer is offline. No
-	// unrelated purchase batch needs to finish before removing recorded groups.
-	if st.ScheduledRelease {
-		if e = s.reconcileTakeoverGroups(ctx, p, secret, st, true); e != nil {
-			fail(e.Error())
-			return
-		}
 	}
 	rc, e := s.store.ProRestockConfig()
 	if e != nil {
@@ -252,7 +236,7 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 	st.PeerPending = peer.State.Pending
 	st.ContactAt = s.takeoverNow()
 	st.Error = ""
-	st.ReleaseAtEnd(s.takeoverNow())
+	st.RecoverAtEnd(s.takeoverNow())
 	if len(bindings) > 0 && !st.Active() {
 		st = old
 		fail("对方未保留接管记录，保留现有临时分组并暂停新增，请核对对方数据")
@@ -269,7 +253,7 @@ func (s *Server) tickProTakeover(ctx context.Context) {
 		}
 		st.CoverageReady = true
 		_ = s.store.SaveProTakeoverState(st)
-	} else if st.Phase == "released" && (st.ScheduledRelease || pending == 0) {
+	} else if st.Phase == "released" && (st.EndReached(s.takeoverNow()) || pending == 0) {
 		if e = s.reconcileTakeoverGroups(ctx, p, secret, st, true); e != nil {
 			fail(e.Error())
 			return
@@ -285,7 +269,7 @@ func (s *Server) observeTakeoverRecovery(c restock.Config, snap restock.Snapshot
 	defer s.proTakeover.mu.Unlock()
 	tc, _, e := s.store.ProTakeoverConfig()
 	st, se := s.store.ProTakeoverState()
-	if e != nil || se != nil || tc.Role != "receiver" || st.Phase != "recovering" {
+	if e != nil || se != nil || tc.Role != "receiver" || (st.Phase != "recovering" && st.Phase != "released") {
 		return
 	}
 	pending := 0
@@ -298,6 +282,15 @@ func (s *Server) observeTakeoverRecovery(c restock.Config, snap restock.Snapshot
 	st.OwnReady, st.OwnCapacity, st.Demand, st.Pending = count, capacity, demand, pending
 	if !c.Enabled || c.Mode != "auto" || c.NoRestockReason(s.takeoverNow()) != "" || st.Block(tc, s.takeoverNow()) != "" || snap.TakeoverToken != st.Token(tc) {
 		ready = false
+	}
+	if st.Phase == "released" {
+		// Failed rounds are not persisted as the last good snapshot. Revoke the
+		// pending release here too, before a peer can use that earlier sample.
+		if !ready {
+			st.BeginRecovery(s.takeoverNow())
+		}
+		_ = s.store.SaveProTakeoverState(st)
+		return
 	}
 	if snap.At.After(st.LastReadySample) {
 		st.LastReadySample = snap.At

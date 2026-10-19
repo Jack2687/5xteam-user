@@ -52,7 +52,7 @@ async function toggleEnabled(){await action(async()=>{
  const data=await api('/api/pro-takeover/enabled',{method:'POST',body:{version:form.version,enabled:!form.enabled}})
  if(disposed)return
  applySaved(data)
- notice.value=data.enabled?'接管已启用，后台按所选时段交接。':'接管已停用；当前接管按就绪条件安全交还，最迟到时段结束撤回。'
+ notice.value=data.enabled?'接管已启用，后台按所选时段交接。':'接管已停用；已有临时分组保留，待 EJH 接替就绪后撤回。'
 })}
 onUnmounted(()=>{disposed=true})
 </script>
@@ -65,7 +65,7 @@ onUnmounted(()=>{disposed=true})
   <small v-if="state.error">{{state.error}}</small>
  </div>
  <article v-else-if="!compact" class="takeover-panel" aria-label="跨项目接管配置">
-  <header><div><h2>跨项目接管</h2><p>仅接管勾选的禁补时段：环球现有账号和新推送账号追加所选分组，到点撤回。</p></div><b class="phase">{{title}}</b></header>
+  <header><div><h2>跨项目接管</h2><p>仅接管勾选的禁补时段；结束后等 EJH 接替就绪，再撤回环球临时分组。</p></div><b class="phase">{{title}}</b></header>
   <p v-if="error" role="alert" class="message danger">{{error}}</p><p v-if="notice" role="status" class="message">{{notice}}</p>
   <form @submit.prevent="save" @input="dirty=true">
    <p>先保存两边配置，再分别启用。保存无需对方在线。</p>
@@ -86,10 +86,10 @@ onUnmounted(()=>{disposed=true})
      </div>
      <p>已选 {{form.groups.length}} 个。名称从 Sub2 刷新，首次默认带入推送分组，可自行调整。须包含本项目监控组，不能与环球常驻推送组重叠。</p>
      <p>环球已有账号和新号保留原推送分组，追加勾选的分组。接管进行中修改选择，下次接管生效。</p>
-     <div class="columns"><label>提前准备（分钟）<input v-model.number="form.lead_minutes" type="number" min="0" max="120" required :disabled="busy"></label><label>手动停用后至少就绪（个）<input v-model.number="form.return_min_accounts" type="number" min="1" max="1000" required :disabled="busy"></label><label>手动停用后确认（次）<input v-model.number="form.return_confirmations" type="number" min="1" max="20" required :disabled="busy"></label></div>
-     <p>请在上方每日禁补时段中逐条勾选“环球接管”。提前准备填 0 即到点接管；时段结束直接撤回临时分组，两边各自运行，不等待 EJH 恢复。手动提前关闭则按就绪条件安全交还。</p>
+     <div class="columns"><label>提前准备（分钟）<input v-model.number="form.lead_minutes" type="number" min="0" max="120" required :disabled="busy"></label><label>切回至少就绪（个）<input v-model.number="form.return_min_accounts" type="number" min="1" max="1000" required :disabled="busy"></label><label>切回连续确认（次）<input v-model.number="form.return_confirmations" type="number" min="1" max="20" required :disabled="busy"></label></div>
+     <p>在每日禁补时段逐条勾选“环球接管”。时段结束后 EJH 恢复补货，环球保留现有支援；EJH 完成推送、本批次结束，且监控连续确认可调度后撤组。默认至少 1 个、连续 3 次，失败继续保留支援。</p>
     </div>
-    <div v-else><label>接管至少就绪（个）<input v-model.number="form.support_min_accounts" type="number" min="1" max="1000" required :disabled="busy"></label><label>连接检查周期（秒）<input v-model.number="form.check_seconds" type="number" min="5" max="60" required :disabled="busy"></label><p>分组和时段由接受方指定。接管时统一监控常驻组与接管组，账号与消耗按 ID 去重，沿用本项目全部补货规则。</p><p>退出接管只撤掉本功能添加的分组；时段结束按记录撤回分组；时段内连接异常保留服务，授权过期暂停新增。</p></div>
+    <div v-else><label>接管至少就绪（个）<input v-model.number="form.support_min_accounts" type="number" min="1" max="1000" required :disabled="busy"></label><label>连接检查周期（秒）<input v-model.number="form.check_seconds" type="number" min="5" max="60" required :disabled="busy"></label><p>分组和时段由接受方指定。接管时统一监控常驻组与接管组，账号与消耗按 ID 去重，沿用本项目全部补货规则。</p><p>时段结束后按自己的分组补货，现有支援等 EJH 就绪后再撤回。连接异常保留临时分组，撤回时保留原有分组。</p></div>
    </div>
    <details v-if="active||state.error" class="details"><summary>交接进度</summary><p>临时挂组 {{state.covered||0}} 个 · 本地在途 {{state.pending||0}} · 对方在途 {{state.peer_pending||0}}</p><p>EJH 自有容量 {{state.own_capacity||0}} · 当前需求 {{state.demand||0}} · 连续确认 {{state.ready_count||0}} 次</p><p>最后连接 {{format(state.contact_at)}} · 时段结束 {{format(state.end)}}</p><p v-if="state.error" class="danger">{{state.error}}</p></details>
    <footer><span>{{dirty?'有未保存修改':'不改变每日 EJH 定点合并'}}</span><div class="actions"><button type="submit" :disabled="busy" class="primary">{{busy?'处理中…':'保存配置'}}</button><button type="button" :disabled="busy||dirty||!form.version" @click="toggleEnabled">{{form.enabled?'停用接管':'启用接管'}}</button></div></footer>

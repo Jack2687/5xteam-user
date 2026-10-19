@@ -53,7 +53,7 @@ func TestTakeoverSelectedWindowsOnly(t *testing.T) {
 	}
 }
 
-func TestTakeoverDeadlineIgnoresCapacityAndPending(t *testing.T) {
+func TestTakeoverDeadlineStartsRecoveryAndRetainsGroups(t *testing.T) {
 	now := time.Now()
 	c := DefaultTakeoverConfig()
 	c.Enabled, c.Role = true, "provider"
@@ -61,8 +61,8 @@ func TestTakeoverDeadlineIgnoresCapacityAndPending(t *testing.T) {
 	if s.Block(c, now) == "" {
 		t.Fatal("old grant allowed purchases after window end")
 	}
-	if !s.ReleaseAtEnd(now) || !s.ScheduledRelease || s.Phase != "released" {
-		t.Fatal("did not release at exact boundary")
+	if !s.RecoverAtEnd(now) || s.Phase != "recovering" || !s.RecoveryAt.Equal(now) {
+		t.Fatal("did not begin recovery at exact boundary")
 	}
 	if s.Block(c, now) != "" {
 		t.Fatal("provider own-group purchases stayed blocked")
@@ -71,8 +71,16 @@ func TestTakeoverDeadlineIgnoresCapacityAndPending(t *testing.T) {
 	if s.Block(c, now) != "" {
 		t.Fatal("receiver recovery waited for capacity or peer batch")
 	}
-	if s.ReleaseAtEnd(now.Add(time.Minute)) {
+	s.ContactAt = now.Add(-time.Hour)
+	if s.Block(c, now) != "" {
+		t.Fatal("offline peer blocked deadline recovery")
+	}
+	if s.RecoverAtEnd(now.Add(time.Minute)) {
 		t.Fatal("replayed deadline transition")
+	}
+	s.Phase = "released"
+	if s.RecoverAtEnd(now.Add(time.Minute)) || s.Phase != "released" {
+		t.Fatal("deadline reset completed confirmation")
 	}
 }
 
@@ -134,6 +142,27 @@ func TestTakeoverMoneyKeepsDemandButExcludesBorrowedBudget(t *testing.T) {
 		t.Fatalf("double counted budget or lost demand: %+v", f)
 	}
 }
+
+func TestTakeoverRecoveryStartsOwnSupplyEvenWhenBorrowedAccountsAreIdle(t *testing.T) {
+	c, s, now := fixture()
+	c.ConcurrencyEnabled = false
+	c.AllowSmall = true
+	c.MaxBatch = 1
+	c.Reserve = DefaultTakeoverConfig().ReturnMinAccounts
+	s.Accounts = []Account{{ID: 2, Ready: true, SupplyExcluded: true, Capacity: 80}}
+	d := Evaluate(c, s, nil, Limits{}, 0, 80, 1, now)
+	if d.Suggested != 1 || d.ReserveNeed != 1 {
+		t.Fatalf("idle borrowed supply prevented the EJH replacement: %+v", d)
+	}
+	pending := Task{ID: "return", Status: "running", GroupID: s.GroupID, Binding: s.Binding}
+	if Evaluate(c, s, []Task{pending}, Limits{}, 0, 80, 1, now).Suggested != 0 {
+		t.Fatal("replacement batch was duplicated")
+	}
+	if Evaluate(c, s, nil, Limits{Failures: c.FailureLimit}, 0, 80, 1, now).Suggested != 0 {
+		t.Fatal("recovery bypassed manual-reset failure breaker")
+	}
+}
+
 func TestTakeoverRecoveryNeedsFreshOwnReadySupply(t *testing.T) {
 	c, s, now := fixture()
 	c.TimeEnabled = false
@@ -141,11 +170,12 @@ func TestTakeoverRecoveryNeedsFreshOwnReadySupply(t *testing.T) {
 	tc := DefaultTakeoverConfig()
 	after := now.Add(-time.Minute)
 	s.Accounts[0].Used = 2
+	s.Accounts[0].EJH = true
 	ready, _, _, _ := TakeoverRecoveryReady(c, tc, s, 0, after, now)
 	if !ready {
 		t.Fatal("own supply not recognized")
 	}
-	for _, kind := range []string{"borrowed", "inflight", "stale", "before", "demand", "exiting"} {
+	for _, kind := range []string{"borrowed", "inflight", "stale", "before", "not-ready", "not-ejh", "partial-groups", "fault", "leaving", "exiting", "invalid-load", "expired"} {
 		v := s
 		v.Accounts = append([]Account{}, s.Accounts...)
 		pending := 0
@@ -158,8 +188,21 @@ func TestTakeoverRecoveryNeedsFreshOwnReadySupply(t *testing.T) {
 			v.At = now.Add(-time.Hour)
 		case "before":
 			v.CollectionStartedAt = after.Add(-time.Second)
-		case "demand":
-			v.Accounts[0].Used = 100
+		case "not-ready":
+			v.Accounts[0].Ready = false
+		case "not-ejh":
+			v.Accounts[0].EJH, v.Accounts[0].CardProvider = false, "nexovcc"
+		case "partial-groups":
+			v.Accounts[0].TakeoverPending = true
+		case "fault":
+			v.Accounts[0].Fault = true
+		case "leaving":
+			v.Accounts[0].Leaving = true
+		case "invalid-load":
+			v.LoadValid = false
+		case "expired":
+			expired := now.Add(-time.Second)
+			v.Accounts[0].ExpiresAt = &expired
 		case "exiting":
 			deadline := now.Add(time.Second)
 			v.Accounts[0].ForceMergeDeadline = &deadline
@@ -167,6 +210,18 @@ func TestTakeoverRecoveryNeedsFreshOwnReadySupply(t *testing.T) {
 		if ready, _, _, _ := TakeoverRecoveryReady(c, tc, v, pending, after, now); ready {
 			t.Fatal("unsafe release:", kind)
 		}
+	}
+	// One verified EJH is the default return condition, even while it is busy
+	// or its first cost sample is still pending. More replacements remain configurable.
+	c.TimeEnabled = true
+	s.Accounts[0].Money = nil
+	s.Accounts[0].Used = 100
+	if ready, _, _, _ := TakeoverRecoveryReady(c, tc, s, 0, after, now); !ready {
+		t.Fatal("money or demand prevented configured ready-count handoff")
+	}
+	tc.ReturnMinAccounts = 2
+	if ready, _, _, _ := TakeoverRecoveryReady(c, tc, s, 0, after, now); ready {
+		t.Fatal("ignored configured replacement count")
 	}
 }
 func TestTakeoverExpiredGrantRetainsOwnershipBarrier(t *testing.T) {

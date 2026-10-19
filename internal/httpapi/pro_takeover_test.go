@@ -14,13 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"chatgpt-space-merge/internal/ejh"
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/nexovcc"
 	"chatgpt-space-merge/internal/restock"
 )
 
-func TestTakeoverTwoProjectsPrepareCoverAndScheduledWithdraw(t *testing.T) {
+func TestTakeoverTwoProjectsWaitForEJHBeforeScheduledWithdraw(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-10-19T16:49:00+08:00")
 	var mu sync.Mutex
 	memberships := map[int64][]int64{101: {7, 99}, 201: {42}}
@@ -93,7 +94,7 @@ func TestTakeoverTwoProjectsPrepareCoverAndScheduledWithdraw(t *testing.T) {
 	}))
 	defer upstream.Close()
 	provider, ps, email := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("payment must not run in handoff test") })
-	receiver, rs, _ := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("payment must not run in handoff test") })
+	receiver, rs, receiverEmail := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("payment must not run in handoff test") })
 	provider.stopProAutomations()
 	receiver.stopProAutomations()
 	provider.stopNexovcc()
@@ -315,29 +316,142 @@ func TestTakeoverTwoProjectsPrepareCoverAndScheduledWithdraw(t *testing.T) {
 	mu.Lock()
 	memberships[101] = append(memberships[101], 88)
 	mu.Unlock()
-	// The window ends with a donor purchase in progress and no receiver-ready
-	// confirmation. Neither may postpone the scheduled withdrawal.
+	// At the deadline, an offline receiver and a donor's own purchase must
+	// preserve service and allow EJH recovery instead of withdrawing groups.
 	provider.proRestock.tasks = []restock.Task{{Email: "donor-running", Status: "external"}}
 	now, _ = time.Parse(time.RFC3339, "2026-10-19T20:00:00+08:00")
 	peerOffline.Store(true)
 	provider.proTakeover.next = time.Now().Add(time.Hour)
 	receiver.tickProTakeover(context.Background())
 	st, _ = rs.ProTakeoverState()
-	if st.Phase != "released" || !st.ScheduledRelease || st.Block(tr, now) != "" {
+	if st.Phase != "recovering" || st.Block(tr, now) != "" {
 		t.Fatal("receiver did not resume at the deadline", st)
 	}
 	provider.tickProTakeover(context.Background())
 	st, _ = ps.ProTakeoverState()
-	if !st.ScheduledRelease || st.Error == "" {
+	if st.Phase != "recovering" || st.Error == "" {
 		t.Fatal("offline deadline not processed", st)
 	}
 	mu.Lock()
-	ok = slices.Equal(memberships[101], []int64{7, 99, 88}) && slices.Equal(memberships[102], []int64{7, 9})
+	ok = slices.Equal(memberships[101], []int64{7, 99, 42, 43, 88}) && slices.Equal(memberships[102], []int64{7, 9, 42, 43})
 	mu.Unlock()
 	if !ok {
-		t.Fatal("lost original/unrelated groups")
+		t.Fatal("withdrew coverage before EJH was ready")
 	}
 	peerOffline.Store(false)
+	tick()
+	st, _ = rs.ProTakeoverState()
+	if st.Phase != "recovering" || st.Block(tr, now) != "" {
+		t.Fatal("donor own pending purchase blocked EJH recovery", st)
+	}
+	if groups := restock.TakeoverGroups(pc.GroupID, tc, st); !slices.Equal(groups, []int64{7}) {
+		t.Fatal("provider still replenishing receiver demand during recovery", groups)
+	}
+	// Recovery status and memberships survive a process restart.
+	receiver.proTakeover = proTakeoverRuntime{now: func() time.Time { return now }}
+	provider.proTakeover = proTakeoverRuntime{now: func() time.Time { return now }}
+	tick()
+	enableEJHPaymentFixture(t, rs)
+	ejhCard, err := rs.ImportEJHCard(ejh.Card{OrderNo: "return-card", Number: "5555555555554444", Validity: "1299", CVV: "123", Status: "1", CardCurrency: "USD"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = rs.CreateGPTPayOrder(gptpay.Order{ID: "return-paid", Email: receiverEmail, CardID: ejhCard.ID, Status: "success", CreatedAt: now}, gptpay.Snapshot{Input: gptpay.CreateInput{CardSecret: gptpay.CardSecret{Number: "5555555555554444"}}}); err != nil {
+		t.Fatal(err)
+	}
+	ref = model.ProDownstream(rp)
+	if _, err = rs.UpdateProAccount(receiverEmail, func(v *model.MailAccountProfile) {
+		v.PushStatus, v.PushProvider, v.Sub2AccountID, v.ProPushDownstream = "completed", "sub2", 201, &ref
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sample := func() restock.Snapshot {
+		t.Helper()
+		now = now.Add(time.Second)
+		v, err := receiver.collectProRestock(context.Background(), rc, rp, "sub-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The upstream fake uses wall time; normalize sample times to the test clock.
+		v.At, v.CollectionStartedAt = now, now.Add(-time.Millisecond)
+		if err = rs.SaveProRestockSnapshot(v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	// Payment and push succeeded, but one required group is still missing.
+	receiver.observeTakeoverRecovery(rc, sample(), nil)
+	st, _ = rs.ProTakeoverState()
+	if st.ReadyCount != 0 || st.Phase != "recovering" {
+		t.Fatal("incomplete push memberships counted as ready", st)
+	}
+	mu.Lock()
+	memberships[201] = []int64{42, 43}
+	mu.Unlock()
+	receiver.observeTakeoverRecovery(rc, sample(), []restock.Task{{Status: "verifying"}})
+	st, _ = rs.ProTakeoverState()
+	if st.ReadyCount != 0 {
+		t.Fatal("receiver's unfinished batch counted as ready")
+	}
+	v := sample()
+	receiver.observeTakeoverRecovery(rc, v, nil)
+	receiver.observeTakeoverRecovery(rc, v, nil)
+	st, _ = rs.ProTakeoverState()
+	if st.ReadyCount != 1 || st.Phase != "recovering" {
+		t.Fatal("cached sample counted twice", st)
+	}
+	// A failed monitor round resets consecutive confirmation.
+	v = sample()
+	v.Valid = false
+	receiver.observeTakeoverRecovery(rc, v, nil)
+	st, _ = rs.ProTakeoverState()
+	if st.ReadyCount != 0 {
+		t.Fatal("failed sample did not reset confirmations")
+	}
+	for i := 1; i <= tr.ReturnConfirmations; i++ {
+		receiver.observeTakeoverRecovery(rc, sample(), nil)
+		st, _ = rs.ProTakeoverState()
+		if st.ReadyCount != i || i < tr.ReturnConfirmations && st.Phase != "recovering" {
+			t.Fatal("wrong confirmation count", st)
+		}
+	}
+	if st.Phase != "released" || st.OwnReady != 1 {
+		t.Fatal("one verified EJH did not release", st)
+	}
+	// A failed live round is not written over the last good durable snapshot.
+	// It still must revoke a release that the provider has not acted on yet.
+	v = sample()
+	v.Valid = false
+	receiver.observeTakeoverRecovery(rc, v, nil)
+	st, _ = rs.ProTakeoverState()
+	if st.Phase != "recovering" || st.ReadyCount != 0 {
+		t.Fatal("failed live round retained release permission", st)
+	}
+	tick()
+	for range tr.ReturnConfirmations {
+		receiver.observeTakeoverRecovery(rc, sample(), nil)
+	}
+	// Revalidate immediately before telling the provider to remove memberships.
+	v = sample()
+	v.Valid = false
+	if err = rs.SaveProRestockSnapshot(v); err != nil {
+		t.Fatal(err)
+	}
+	tick()
+	st, _ = rs.ProTakeoverState()
+	if st.Phase != "recovering" {
+		t.Fatal("withdrew on a failed last-minute monitor round", st)
+	}
+	for range tr.ReturnConfirmations {
+		receiver.observeTakeoverRecovery(rc, sample(), nil)
+	}
+	tick()
+	mu.Lock()
+	ok = slices.Equal(memberships[101], []int64{7, 99, 88}) && slices.Equal(memberships[102], []int64{7, 9}) && slices.Equal(memberships[201], []int64{42, 43})
+	mu.Unlock()
+	if !ok {
+		t.Fatal("handoff lost original, unrelated or EJH groups")
+	}
 	tick()
 	st, _ = ps.ProTakeoverState()
 	if st.Active() {

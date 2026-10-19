@@ -63,28 +63,27 @@ func (c TakeoverConfig) Validate() error {
 }
 
 // The receiver owns the handoff epoch, bounded purchase grant and scheduled
-// end. Grant expiration pauses purchases; the window end withdraws groups.
+// end. Grant expiration pauses purchases; the window end starts EJH recovery.
 type TakeoverState struct {
-	Epoch            string    `json:"epoch"`
-	Phase            string    `json:"phase"`
-	PeerID           string    `json:"peer_id"`
-	Groups           []int64   `json:"groups"`
-	Start            time.Time `json:"start"`
-	End              time.Time `json:"end"`
-	LeaseUntil       time.Time `json:"lease_until"`
-	ContactAt        time.Time `json:"contact_at"`
-	RecoveryAt       time.Time `json:"recovery_at"`
-	LastReadySample  time.Time `json:"last_ready_sample"`
-	ReadyCount       int       `json:"ready_count"`
-	OwnReady         int       `json:"own_ready"`
-	OwnCapacity      float64   `json:"own_capacity"`
-	Demand           int       `json:"demand"`
-	Pending          int       `json:"pending"`
-	PeerPending      int       `json:"peer_pending"`
-	CoverageReady    bool      `json:"coverage_ready"`
-	ScheduledRelease bool      `json:"scheduled_release"`
-	Covered          int       `json:"covered"`
-	Error            string    `json:"error"`
+	Epoch           string    `json:"epoch"`
+	Phase           string    `json:"phase"`
+	PeerID          string    `json:"peer_id"`
+	Groups          []int64   `json:"groups"`
+	Start           time.Time `json:"start"`
+	End             time.Time `json:"end"`
+	LeaseUntil      time.Time `json:"lease_until"`
+	ContactAt       time.Time `json:"contact_at"`
+	RecoveryAt      time.Time `json:"recovery_at"`
+	LastReadySample time.Time `json:"last_ready_sample"`
+	ReadyCount      int       `json:"ready_count"`
+	OwnReady        int       `json:"own_ready"`
+	OwnCapacity     float64   `json:"own_capacity"`
+	Demand          int       `json:"demand"`
+	Pending         int       `json:"pending"`
+	PeerPending     int       `json:"peer_pending"`
+	CoverageReady   bool      `json:"coverage_ready"`
+	Covered         int       `json:"covered"`
+	Error           string    `json:"error"`
 }
 
 func (s TakeoverState) Active() bool { return s.Epoch != "" && s.Phase != "idle" }
@@ -93,16 +92,20 @@ func (s TakeoverState) EndReached(now time.Time) bool {
 	return s.Active() && !s.End.IsZero() && !now.Before(s.End)
 }
 
-// The persisted end is an explicit timed withdrawal instruction. It does not
-// depend on receiver capacity, pending purchases, or a live peer connection.
-func (s *TakeoverState) ReleaseAtEnd(now time.Time) bool {
-	if !s.EndReached(now) || s.ScheduledRelease {
+// Ending a window returns purchasing to each project but preserves temporary
+// memberships until the receiver confirms its own EJH replacements are ready.
+func (s *TakeoverState) RecoverAtEnd(now time.Time) bool {
+	if !s.EndReached(now) || !s.Taking() {
 		return false
 	}
-	s.Phase, s.ScheduledRelease, s.CoverageReady = "released", true, false
+	s.BeginRecovery(now)
 	s.LeaseUntil = s.End
-	s.ReadyCount = 0
 	return true
+}
+
+func (s *TakeoverState) BeginRecovery(now time.Time) {
+	s.Phase, s.RecoveryAt = "recovering", now
+	s.ReadyCount, s.LastReadySample = 0, time.Time{}
 }
 func (s TakeoverState) Token(c TakeoverConfig) string {
 	if !s.Active() {
@@ -115,13 +118,15 @@ func (s TakeoverState) Block(c TakeoverConfig, now time.Time) string {
 		return ""
 	}
 	if s.Taking() && s.EndReached(now) {
-		return "接管时段已结束，等待切回各自分组的新快照"
+		return "接管时段已结束，等待 EJH 恢复补货的新快照"
 	}
 	if c.Role == "receiver" {
 		if s.Taking() {
 			return "对方接管中，暂停本项目新增；原在途与额度巡检继续"
 		}
-		if s.Phase == "recovering" && (now.Before(s.LeaseUntil) || s.PeerPending > 0 || now.Sub(s.ContactAt) > time.Minute) {
+		// At the agreed deadline the provider can only start own-group work.
+		// Its unrelated batches or an offline peer must not block EJH recovery.
+		if s.Phase == "recovering" && !s.EndReached(now) && (now.Before(s.LeaseUntil) || s.PeerPending > 0 || now.Sub(s.ContactAt) > time.Minute) {
 			return "等待对方在途结束并确认交还补货权"
 		}
 	} else if s.Taking() && (!s.CoverageReady || !c.Enabled || !now.Before(s.LeaseUntil) || now.Sub(s.ContactAt) > time.Minute) {
@@ -201,7 +206,7 @@ func TakeoverRecoveryReady(c Config, t TakeoverConfig, s Snapshot, pending int, 
 	count, reported, demand := 0, 0, 0
 	for _, a := range s.Accounts {
 		demand += a.Used + a.Waiting
-		if !availableAccount(a, now) {
+		if !availableAccount(a, now) || (!a.EJH && a.CardProvider != "ejh") || a.TakeoverPending || a.Leaving || a.Fault {
 			continue
 		}
 		if a.ForceMergeDeadline != nil && a.ForceMergeDeadline.Before(now.Add(time.Duration(c.LeadMinutes+c.MarginMinutes)*time.Minute)) {
@@ -211,17 +216,16 @@ func TakeoverRecoveryReady(c Config, t TakeoverConfig, s Snapshot, pending int, 
 		reported += a.Capacity
 	}
 	capacity := c.EffectiveCapacity(reported)
-	ready := s.Valid && s.LoadValid && !s.CollectionStartedAt.IsZero() && s.RefreshedAfter(after) && now.Sub(s.At) <= time.Duration(c.FreshSeconds)*time.Second && !s.At.After(now.Add(5*time.Second)) && pending == 0 && count >= t.ReturnMinAccounts && float64(demand) <= capacity*float64(c.TargetPercent)/100
-	if ready && c.TimeEnabled && demand > 0 {
-		f := ForecastMoney(c, s, now)
-		ready = f.State == "ready" && f.RemainingUSD != nil && f.RateUSD != nil && (*f.RateUSD == 0 || *f.RemainingUSD >= *f.RateUSD*float64(c.TargetMinutes))
-	}
+	// Return is governed by the configured number of ready EJH accounts.
+	// Concurrent demand and dollar forecasts continue to govern replenishment;
+	// missing cost samples must not prevent a successful handoff indefinitely.
+	ready := s.Valid && s.LoadValid && !s.CollectionStartedAt.IsZero() && s.RefreshedAfter(after) && now.Sub(s.At) <= time.Duration(c.FreshSeconds)*time.Second && !s.At.After(now.Add(5*time.Second)) && pending == 0 && count >= t.ReturnMinAccounts
 	return ready, count, capacity, demand
 }
 
 func TakeoverGroups(base int64, c TakeoverConfig, s TakeoverState) []int64 {
 	groups := []int64{base}
-	if s.Active() && !s.ScheduledRelease && ((c.Role == "provider" && s.Taking()) || c.Role == "receiver") {
+	if s.Active() && ((c.Role == "provider" && s.Taking()) || c.Role == "receiver") {
 		for _, g := range s.Groups {
 			if !slices.Contains(groups, g) {
 				groups = append(groups, g)

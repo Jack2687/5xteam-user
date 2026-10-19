@@ -83,3 +83,40 @@ func TestTakeoverStorageRestartEncryptionAndTransactionalGate(t *testing.T) {
 		t.Fatal("disabled provider purchased")
 	}
 }
+
+func TestTakeoverRecoveryRejectsOldPurchaseSnapshot(t *testing.T) {
+	for _, role := range []string{"provider", "receiver"} {
+		t.Run(role, func(t *testing.T) {
+			s, err := Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			c := restock.DefaultTakeoverConfig()
+			c.Enabled, c.Role, c.PeerID, c.PeerURL, c.Username = true, role, "peer", "http://peer.test", "admin"
+			c.Groups = []int64{42}
+			if c, err = s.SaveProTakeoverConfig(c, "test"); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			state := restock.TakeoverState{Epoch: "return", Phase: "active", End: now, LeaseUntil: now.Add(time.Minute), ContactAt: now, CoverageReady: true, PeerPending: 1}
+			if err = s.SaveProTakeoverState(state); err != nil {
+				t.Fatal(err)
+			}
+			oldToken := state.Token(c)
+			if err = takeoverPurchaseGate(s.db, oldToken, now); err == nil {
+				t.Fatal("purchase used expired coverage before monitor transition")
+			}
+			state.RecoverAtEnd(now)
+			if err = s.SaveProTakeoverState(state); err != nil {
+				t.Fatal(err)
+			}
+			if err = takeoverPurchaseGate(s.db, oldToken, now); err == nil {
+				t.Fatal("old takeover batch purchased during recovery")
+			}
+			if err = takeoverPurchaseGate(s.db, state.Token(c), now); err != nil {
+				t.Fatal("fresh recovery purchase blocked", err)
+			}
+		})
+	}
+}
