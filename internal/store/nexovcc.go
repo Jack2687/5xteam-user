@@ -397,7 +397,15 @@ func (s *Store) NexovccOperation(id string) (nexovcc.Operation, error) {
 	}
 	return v, e
 }
-func (s *Store) BeginNexovccOperation(op nexovcc.Operation, restockIDs ...string) error {
+
+// NexovccOpenAdmission is supplied by the server after validating the manual
+// choice. A claimed restock task always retains its own issuer and ownership.
+type NexovccOpenAdmission struct {
+	RestockID      string
+	ManualProvider string
+}
+
+func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...NexovccOpenAdmission) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, e := s.db.Begin()
@@ -476,7 +484,7 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, restockIDs ...string
 			}
 		}
 	}
-	if e = validateNexovccAutomaticOpen(tx, op, restockIDs...); e != nil {
+	if e = validateNexovccAutomaticOpen(tx, op, admission...); e != nil {
 		return e
 	}
 
@@ -487,7 +495,7 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, restockIDs ...string
 	return tx.Commit()
 }
 
-func validateNexovccAutomaticOpen(tx *sql.Tx, op nexovcc.Operation, restockIDs ...string) error {
+func validateNexovccAutomaticOpen(tx *sql.Tx, op nexovcc.Operation, admission ...NexovccOpenAdmission) error {
 	if !op.Automatic {
 		return nil
 	}
@@ -501,12 +509,21 @@ func validateNexovccAutomaticOpen(tx *sql.Tx, op nexovcc.Operation, restockIDs .
 		return e
 	}
 	provider := cfg.AutoCardProvider()
-	if len(restockIDs) > 0 && restockIDs[0] != "" {
-		task, err := restockDispatchTask(tx, restockIDs[0])
+	var choice NexovccOpenAdmission
+	if len(admission) > 0 {
+		choice = admission[0]
+	}
+	if choice.RestockID != "" {
+		task, err := restockDispatchTask(tx, choice.RestockID)
 		if err != nil {
 			return err
 		}
 		provider = task.CardProvider
+	} else if choice.ManualProvider != "" {
+		if choice.ManualProvider != "ejh" && choice.ManualProvider != "nexovcc" {
+			return fmt.Errorf("请选择 EJH 或环球卡台")
+		}
+		provider = choice.ManualProvider
 	}
 	if !cfg.NexovccAutoOpen || provider != "nexovcc" {
 		return fmt.Errorf("环球自动补卡已关闭或切换")
@@ -527,7 +544,7 @@ func validateNexovccAutomaticOpen(tx *sql.Tx, op nexovcc.Operation, restockIDs .
 
 // Check the opening budget before closing an old card to make room. The final
 // insertion repeats these checks under the admission transaction.
-func (s *Store) CheckNexovccOpen(op nexovcc.Operation, restockIDs ...string) error {
+func (s *Store) CheckNexovccOpen(op nexovcc.Operation, admission ...NexovccOpenAdmission) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, e := s.db.Begin()
@@ -542,7 +559,7 @@ func (s *Store) CheckNexovccOpen(op nexovcc.Operation, restockIDs ...string) err
 	if pending > 0 {
 		return fmt.Errorf("存在未完成环球开卡，请先核实原操作")
 	}
-	return validateNexovccAutomaticOpen(tx, op, restockIDs...)
+	return validateNexovccAutomaticOpen(tx, op, admission...)
 }
 
 func (s *Store) SaveNexovccOperation(op nexovcc.Operation) error {

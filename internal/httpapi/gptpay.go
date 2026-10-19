@@ -94,13 +94,16 @@ func (s *Server) listGPTPayCards(w http.ResponseWriter, r *http.Request) {
 	var total int
 	var err error
 	if provider := r.URL.Query().Get("card_provider"); provider != "" {
-		if provider != "configured" || r.URL.Query().Get("enabled") != "true" {
-			writeAPI(w, 400, nil, "开通选卡请使用当前配置的卡台和可用卡筛选")
+		if (provider != "configured" && provider != "ejh" && provider != "nexovcc") || r.URL.Query().Get("enabled") != "true" {
+			writeAPI(w, 400, nil, "请选择有效卡台和可用卡筛选")
 			return
 		}
 		var cfg model.ProSettings
 		cfg, _, _, err = s.store.ProSettings()
 		if err == nil {
+			if provider != "configured" {
+				cfg.CardProvider = provider
+			}
 			// Filter before pagination so an earlier EJH/Other card cannot
 			// become the default when full automation is configured for Nexovcc.
 			items, err = s.automaticProCards(cfg)

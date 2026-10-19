@@ -7,7 +7,7 @@ import { computed, reactive, ref } from 'vue'
 for (const file of ['ProRechargeDialog.vue', 'ProAutoDialog.vue']) {
  const source = readFileSync(new URL('../src/components/' + file, import.meta.url), 'utf8')
  const parsed = ts.createSourceFile(file, source.split('<script setup>')[1].split('</script>')[0], ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
- const methods = parsed.statements.filter(s => ts.isFunctionDeclaration(s) && ['loadCards','open','start','submit'].includes(s.name?.text)).map(s => s.getText(parsed)).join('\n')
+ const methods = parsed.statements.filter(s => ts.isFunctionDeclaration(s) && ['loadCards','open','start','submit','changeProvider'].includes(s.name?.text)).map(s => s.getText(parsed)).join('\n')
  const providerState = parsed.statements.filter(s => ts.isVariableStatement(s) && s.declarationList.declarations.some(d => ['autoCardEnabled','autoCardLabel'].includes(d.name.getText(parsed)))).map(s => s.getText(parsed)).join('\n')
  for (const provider of ['ejh','nexovcc']) for (const auto of [false,true]) for (const available of [false,true]) {
   const calls=[]
@@ -18,13 +18,13 @@ for (const file of ['ProRechargeDialog.vue', 'ProAutoDialog.vue']) {
    if(path==='/api/pro-settings')return {card_provider:provider,ejh_auto_open:provider==='ejh'?auto:!auto,nexovcc_auto_open:provider==='nexovcc'?auto:!auto}
    if(path==='/api/gptpay/settings')return {provider:'tokenseek',plan_code:'pro5',key_present:true}
    if(path.startsWith('/api/gptpay/cards')){
-    assert.equal(new URL(path,'http://local').searchParams.get('card_provider'),'configured',file+' must filter the issuer before pagination')
+    assert.equal(new URL(path,'http://local').searchParams.get('card_provider'),file==='ProAutoDialog.vue'?settings.value.card_provider:'configured',file+' must filter the issuer before pagination')
     return {items:available?[{id:'existing'}]:[],total:available?1:0}
    }
    if(path.startsWith('/api/gptpay/orders'))return {items:[]}
    return {}
   }})
-  vm.runInContext(providerState+'\n'+methods+'\nthis.run={open,loadCards,autoCardLabel,'+(file==='ProAutoDialog.vue'?'start':'submit')+'}',ctx)
+  vm.runInContext(providerState+'\n'+methods+'\nthis.run={open,loadCards,autoCardLabel,'+(file==='ProAutoDialog.vue'?'start,changeProvider':'submit')+'}',ctx)
   await ctx.run.open({email:'local@example.com'})
   assert.equal(ctx.run.autoCardLabel.value,provider==='nexovcc'?'环球':'EJH')
   assert.equal(ctx.cardID.value,auto?'':available?'existing':'')
@@ -33,12 +33,24 @@ for (const file of ['ProRechargeDialog.vue', 'ProAutoDialog.vue']) {
   assert.equal(calls.find(c=>c.options)?.options.body.card_id,auto?'':available?'existing':'')
   await ctx.run.loadCards()
   assert.equal(ctx.cardID.value,auto?'':available?'existing':'')
+  if(file==='ProAutoDialog.vue') {
+   assert.equal(calls.find(c=>c.options)?.options.body.card_provider,provider)
+   const other=provider==='ejh'?'nexovcc':'ejh'
+   settings.value.card_provider=other
+   await ctx.run.changeProvider()
+   assert.equal(ctx.page.value,1)
+   assert.equal(ctx.run.autoCardLabel.value,other==='nexovcc'?'环球':'EJH')
+   assert.equal(ctx.cardID.value,!auto?'':available?'existing':'')
+   await ctx.run.start()
+   assert.equal(calls.filter(c=>c.options).at(-1).options.body.card_provider,other)
+   assert.equal(calls.filter(c=>c.path==='/api/pro-settings'&&c.options).length,0,'manual choice must not overwrite defaults')
+  }
  }
  assert.ok(source.includes('无可用卡时从 ${autoCardLabel} 补卡'))
  if(file==='ProAutoDialog.vue') {
   const names=['active','resumable','retryCurrent','restartable','canStart']
   const state=ref({restock_retry_available:true,steps:{}})
-  const ctx=vm.createContext({computed,state})
+  const ctx=vm.createContext({computed,state,quotaResumeAvailable:ref(false)})
   const flags=parsed.statements.filter(s=>ts.isVariableStatement(s)&&s.declarationList.declarations.some(d=>names.includes(d.name.getText(parsed)))).map(s=>s.getText(parsed)).join('\n')
   vm.runInContext(flags+'\nthis.flags={retryCurrent,restartable,canStart}',ctx)
   assert.equal(ctx.flags.retryCurrent.value,true,'pre-workflow failure needs explicit retry')

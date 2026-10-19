@@ -9,7 +9,9 @@ import (
 	"encoding/base32"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -38,25 +40,71 @@ type Error struct {
 	Message string
 	Unknown bool
 	Code    int
+	RetryAt time.Time
 }
 
 func (e *Error) Error() string { return e.Message }
-func IsUnknown(err error) bool { e, ok := err.(*Error); return !ok || e.Unknown }
+func IsUnknown(err error) bool { var e *Error; return !errors.As(err, &e) || e.Unknown }
 
 type Client struct {
-	mu             sync.Mutex
-	credentials    Credentials
-	cookie, userID string
-	until          time.Time
-	transport      Transport
-	now            func() time.Time
+	mu              sync.Mutex
+	credentials     Credentials
+	cookie, userID  string
+	until           time.Time
+	transport       Transport
+	now             func() time.Time
+	requestInterval time.Duration
+	nextRequest     time.Time
+	retryAt         time.Time
+	backoffFailures int
+	wait            func(context.Context, time.Duration) error
 }
 
 func New(c Credentials, transport Transport) *Client {
+	interval := time.Duration(0) // Injected transports own their test clock.
 	if transport == nil {
 		transport = PythonTransport
+		interval = 3 * time.Second
 	}
-	return &Client{credentials: c, transport: transport, now: time.Now}
+	return &Client{credentials: c, transport: transport, now: time.Now, requestInterval: interval, wait: waitRequest}
+}
+
+func waitRequest(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (c *Client) SetRequestInterval(delay time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requestInterval = delay
+}
+
+func (c *Client) RetryAt() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.retryAt
+}
+
+func (c *Client) coolingDown() error {
+	if c.now().Before(c.retryAt) {
+		seconds := int(c.retryAt.Sub(c.now()).Seconds()) + 1
+		return &Error{Message: fmt.Sprintf("环球接口冷却中，约 %d 秒后重试", seconds), Code: 429, RetryAt: c.retryAt}
+	}
+	return nil
+}
+
+func (c *Client) backoff() time.Time {
+	c.backoffFailures++
+	delay := 30 * time.Second * time.Duration(1<<min(c.backoffFailures-1, 4))
+	c.retryAt = c.now().Add(min(delay, 5*time.Minute))
+	return c.retryAt
 }
 func PythonTransport(ctx context.Context, r Request) (Response, error) {
 	var v Response
@@ -123,7 +171,30 @@ func (c *Client) safe(s string) string {
 	return s
 }
 func (c *Client) call(ctx context.Context, path string, body map[string]any) (any, error) {
+	if err := c.coolingDown(); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, &Error{Message: err.Error()}
+	}
+	if delay := c.nextRequest.Sub(c.now()); delay > 0 {
+		if err := c.wait(ctx, delay); err != nil {
+			return nil, &Error{Message: err.Error()}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, &Error{Message: err.Error()}
+	}
+	if path == "/api/verifyGoogleCode" {
+		// Generate after pacing; a code prepared before the wait can expire.
+		otp, err := TOTP(c.credentials.TOTPSecret, c.now())
+		if err != nil {
+			return nil, &Error{Message: err.Error()}
+		}
+		body["verify_code"] = otp
+	}
 	r, e := c.transport(ctx, Request{path, body, c.cookie})
+	c.nextRequest = c.now().Add(c.requestInterval)
 	if e != nil {
 		return nil, &Error{Message: c.safe(e.Error()), Unknown: true}
 	}
@@ -131,7 +202,12 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 		return nil, &Error{Message: c.safe(r.Error), Unknown: r.Uncertain}
 	}
 	if r.Status < 200 || r.Status >= 300 {
-		return nil, &Error{Message: fmt.Sprintf("环球接口 HTTP %d", r.Status), Unknown: true}
+		err := &Error{Message: fmt.Sprintf("环球接口 HTTP %d", r.Status), Unknown: true}
+		if r.Status == 429 || r.Status == 522 {
+			err.RetryAt = c.backoff()
+		}
+		slog.Warn("环球接口请求失败", "path", path, "http_status", r.Status)
+		return nil, err
 	}
 	var v map[string]any
 	dec := json.NewDecoder(strings.NewReader(r.Body))
@@ -148,10 +224,21 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 		if msg == "" {
 			msg = text(v["msg"])
 		}
-		return nil, &Error{Message: fmt.Sprintf("环球 %d：%s", code, c.safe(msg)), Code: code}
+		err := &Error{Message: fmt.Sprintf("环球 %d：%s", code, c.safe(msg)), Code: code}
+		lower := strings.ToLower(msg)
+		if code == 429 || strings.Contains(msg, "频繁") || strings.Contains(lower, "too many") || strings.Contains(lower, "rate limit") {
+			err.RetryAt = c.backoff()
+		}
+		slog.Warn("环球接口业务失败", "path", path, "code", code, "retry_at", err.RetryAt)
+		return nil, err
 	}
 	if r.Cookie != "" {
 		c.cookie = r.Cookie
+	}
+	// A login alone does not prove the rate-limited business endpoint recovered.
+	if path != "/api/login" && path != "/api/verifyGoogleCode" {
+		c.backoffFailures = 0
+		c.retryAt = time.Time{}
 	}
 	return v["data"], nil
 }
@@ -161,7 +248,7 @@ func (c *Client) login(ctx context.Context) error {
 	c.until = time.Time{}
 	data, e := c.call(ctx, "/api/login", map[string]any{"tel": c.credentials.Login, "password": c.credentials.Password})
 	if e != nil {
-		return &Error{Message: "环球登录失败：" + e.Error()}
+		return fmt.Errorf("环球登录失败：%w", e)
 	}
 	m, ok := data.(map[string]any)
 	if !ok || text(m["user_id"]) == "" || c.cookie == "" {
@@ -169,12 +256,8 @@ func (c *Client) login(ctx context.Context) error {
 	}
 	c.userID = text(m["user_id"])
 	if flag(m["is_bind_ga"]) || flag(m["need_verify"]) {
-		otp, e := TOTP(c.credentials.TOTPSecret, c.now())
-		if e != nil {
-			return &Error{Message: e.Error()}
-		}
-		if _, e = c.call(ctx, "/api/verifyGoogleCode", map[string]any{"verify_code": otp, "is_login": true, "user_id": c.userID}); e != nil {
-			return &Error{Message: "环球谷歌验证失败"}
+		if _, e = c.call(ctx, "/api/verifyGoogleCode", map[string]any{"is_login": true, "user_id": c.userID}); e != nil {
+			return fmt.Errorf("环球谷歌验证失败：%w", e)
 		}
 	}
 	c.until = c.now().Add(20*time.Minute - 90*time.Second)
@@ -186,6 +269,9 @@ var paths = map[string]bool{"/api/getBalanceInfo": true, "/api/product/findUserP
 func (c *Client) Do(ctx context.Context, path string, body map[string]any) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.coolingDown(); err != nil {
+		return nil, err
+	}
 	if !paths[path] && path != "/api/findLogRecharge" && path != "/api/findLogCardTrades" && path != "/api/findLogWebFunds" && path != "/api/findLogReportCardDay" {
 		return nil, &Error{Message: "环球接口路径无效"}
 	}

@@ -50,6 +50,7 @@ console.log('Passed: template save with numeric/decimal amounts, zero fee buffer
 
 cfg.auto_withdraw_enabled=true
 cfg.batch_interval_seconds=7
+cfg.request_interval_seconds=4
 cfg.templates[0].product_ids=['268','267']
 await save()
 payload=requests.filter(r=>r.url==='/api/nexovcc/settings').at(-1).body
@@ -57,6 +58,7 @@ assert.deepEqual(payload.templates[0].product_ids,['268','267'])
 assert.equal(payload.templates[0].product_id,'268')
 assert.equal(payload.auto_withdraw_enabled,true)
 assert.equal(payload.batch_interval_seconds,7)
+assert.equal(payload.request_interval_seconds,4)
 assert.deepEqual(nexovcc.templateProductIDs({product_id:267}),['267'])
 assert.deepEqual(nexovcc.templateProductIDs({product_id:'267',product_ids:[]}),[])
 

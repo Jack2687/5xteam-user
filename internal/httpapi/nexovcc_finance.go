@@ -177,7 +177,6 @@ func (s *Server) startNexovccMonitor() {
 		defer s.nexovcc.wg.Done()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		var last time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -186,13 +185,6 @@ func (s *Server) startNexovccMonitor() {
 			}
 			cfg, _, err := s.store.NexovccSettings()
 			if err != nil || !cfg.Enabled {
-				continue
-			}
-			interval := time.Duration(cfg.PageRefreshSeconds) * time.Second
-			if interval < time.Minute {
-				interval = time.Minute
-			}
-			if time.Since(last) < interval {
 				continue
 			}
 			cases, err := s.store.NexovccCases()
@@ -222,7 +214,11 @@ func (s *Server) startNexovccMonitor() {
 				s.proCardAdmissionMu.Unlock()
 				continue
 			}
-			last = time.Now()
+			if message, err := s.nexovccSyncWait(cfg, true); err != nil || message != "" {
+				s.nexovcc.mu.Unlock()
+				s.proCardAdmissionMu.Unlock()
+				continue
+			}
 			s.nexovcc.jobMu.Lock()
 			if s.nexovcc.closed {
 				s.nexovcc.jobMu.Unlock()

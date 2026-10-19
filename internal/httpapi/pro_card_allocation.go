@@ -10,9 +10,19 @@ import (
 	"chatgpt-space-merge/internal/store"
 )
 
+// A manual start pins its explicit issuer for selection and optional issuance.
+// It never changes the default settings or overrides an automatic restock task.
+type proManualCardProviderKey struct{}
+
 func (s *Server) restockCardSettings(ctx context.Context, cfg model.ProSettings) (model.ProSettings, bool, error) {
 	id, _ := ctx.Value(proRestockContextKey{}).(string)
 	if id == "" {
+		if provider, _ := ctx.Value(proManualCardProviderKey{}).(string); provider != "" {
+			if provider != "ejh" && provider != "nexovcc" {
+				return cfg, false, fmt.Errorf("请选择 EJH 或环球卡台")
+			}
+			cfg.CardProvider = provider
+		}
 		return cfg, false, nil
 	}
 	task, err := s.store.ProRestockDispatchTask(id)
@@ -63,6 +73,10 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 		taskProvider, strictProvider = task.CardProvider, task.StrictCardProvider
 	} else {
 		cfg, _, _, err := s.store.ProSettings()
+		if err != nil {
+			return card, secret, err
+		}
+		cfg, _, err = s.restockCardSettings(ctx, cfg)
 		if err != nil {
 			return card, secret, err
 		}

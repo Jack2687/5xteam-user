@@ -18,19 +18,20 @@ type Credentials struct {
 	TOTPSecret   string `json:"totp_secret"`
 }
 type Settings struct {
-	Enabled              bool       `json:"enabled"`
-	LoginPresent         bool       `json:"login_present"`
-	PasswordPresent      bool       `json:"password_present"`
-	FundPasswordPresent  bool       `json:"fund_password_present"`
-	TOTPPresent          bool       `json:"totp_present"`
-	DefaultMaxAccounts   int        `json:"default_max_accounts"`
-	SingleActiveAccount  bool       `json:"single_active_account"`
-	PageRefreshSeconds   int        `json:"page_refresh_seconds"`
-	MaxOnlineCards       int        `json:"max_online_cards"`
-	AutoRecycleAt        int        `json:"auto_recycle_at"`
-	AutoWithdrawEnabled  bool       `json:"auto_withdraw_enabled"`
-	BatchIntervalSeconds int        `json:"batch_interval_seconds"`
-	Templates            []Template `json:"templates"`
+	Enabled                bool       `json:"enabled"`
+	LoginPresent           bool       `json:"login_present"`
+	PasswordPresent        bool       `json:"password_present"`
+	FundPasswordPresent    bool       `json:"fund_password_present"`
+	TOTPPresent            bool       `json:"totp_present"`
+	DefaultMaxAccounts     int        `json:"default_max_accounts"`
+	SingleActiveAccount    bool       `json:"single_active_account"`
+	PageRefreshSeconds     int        `json:"page_refresh_seconds"`
+	RequestIntervalSeconds int        `json:"request_interval_seconds"`
+	MaxOnlineCards         int        `json:"max_online_cards"`
+	AutoRecycleAt          int        `json:"auto_recycle_at"`
+	AutoWithdrawEnabled    bool       `json:"auto_withdraw_enabled"`
+	BatchIntervalSeconds   int        `json:"batch_interval_seconds"`
+	Templates              []Template `json:"templates"`
 }
 type Template struct {
 	ID         string   `json:"id"`
@@ -103,7 +104,7 @@ type Operation struct {
 
 func (o Operation) Terminal() bool { return o.Status == "succeeded" || o.Status == "failed" }
 func Defaults() Settings {
-	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, BatchIntervalSeconds: 3, Templates: []Template{}}
+	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, RequestIntervalSeconds: 3, BatchIntervalSeconds: 3, Templates: []Template{}}
 }
 
 var moneyPattern = regexp.MustCompile(`^\d{1,10}(\.\d{1,2})?$`)
@@ -127,6 +128,12 @@ func Cents(s string) (int64, error) {
 }
 func Money(n int64) string { return fmt.Sprintf("%d.%02d", n/100, n%100) }
 func Normalize(s Settings) (Settings, error) {
+	if s.RequestIntervalSeconds == 0 {
+		s.RequestIntervalSeconds = 3
+	}
+	if s.RequestIntervalSeconds < 1 || s.RequestIntervalSeconds > 30 {
+		return s, fmt.Errorf("接口请求间隔须为 1～30 秒")
+	}
 	if s.BatchIntervalSeconds == 0 {
 		s.BatchIntervalSeconds = 3 // Existing clients/configurations omit this field.
 	}

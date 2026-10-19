@@ -53,6 +53,8 @@ func TestProConfiguredCardListFiltersBeforePagination(t *testing.T) {
 	}
 	list("enabled=true&card_provider=configured&page_size=10&page=1", 11, want[:10])
 	list("enabled=true&card_provider=configured&page_size=10&page=2", 11, want[10:])
+	list("enabled=true&card_provider=ejh&page_size=10", 1, []string{"earliest-other"})
+	list("enabled=true&card_provider=nexovcc&page_size=10&page=2", 11, want[10:])
 	list("enabled=true&page_size=10", 12, append([]string{"earliest-other"}, want[:9]...)) // General bank management still includes all issuers.
 	allocationAccount(t, s, "stale-dialog@example.com")
 	if _, _, err := s.reserveProStartCard(context.Background(), "stale-dialog@example.com", "earliest-other", false, false); err == nil {
@@ -68,6 +70,11 @@ func TestProConfiguredCardListFiltersBeforePagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	list("enabled=true&card_provider=configured&page_size=10", 1, []string{"earliest-other"})
+	list("enabled=true&card_provider=nexovcc&page_size=10", 10, want[1:])
+	manual := context.WithValue(context.Background(), proManualCardProviderKey{}, "nexovcc")
+	if _, _, err := s.reserveProStartCard(manual, "stale-dialog@example.com", "earliest-other", false, false); err == nil {
+		t.Fatal("manual issuer allowed a mismatched card")
+	}
 	if f.opens.Load() != 0 {
 		t.Fatal("listing caused issuance")
 	}

@@ -144,6 +144,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		StopVersion    *uint64 `json:"expected_stop_version"`
 		RetryCurrent   bool    `json:"retry_current"`
 		CardID         string  `json:"card_id"`
+		CardProvider   string  `json:"card_provider"`
 		PlanCode       string  `json:"plan_code"`
 		Provider       string  `json:"provider"`
 		Country        *string `json:"country"`
@@ -214,6 +215,17 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pro, subPassword, _, err := s.proAccountPushSettings(p)
+	if err == nil && !automatic {
+		provider := input.CardProvider
+		if provider == "" {
+			provider = pro.AutoCardProvider()
+		}
+		if provider != "ejh" && provider != "nexovcc" {
+			writeAPI(w, 400, nil, "请选择 EJH 或环球卡台")
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), proManualCardProviderKey{}, provider))
+	}
 	if err == nil {
 		pro, _, err = s.restockCardSettings(r.Context(), pro)
 	}

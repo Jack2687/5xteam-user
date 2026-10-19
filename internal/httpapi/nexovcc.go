@@ -84,19 +84,20 @@ type nexovccRuntime struct {
 	monitorCancel context.CancelFunc
 }
 type nexovccInput struct {
-	CapacityRecycle bool     `json:"-"`
-	AutoWithdraw    bool     `json:"-"`
-	Action          string   `json:"action"`
-	RequestID       string   `json:"request_id"`
-	CardID          string   `json:"card_id"`
-	CardIDs         []string `json:"card_ids,omitempty"`
-	TemplateID      string   `json:"template_id"`
-	Amount          string   `json:"amount"`
-	Remark          string   `json:"remark"`
-	Confirm         bool     `json:"confirm"`
-	Serial          string   `json:"serial_no"`
-	Outcome         string   `json:"outcome"`
-	Evidence        string   `json:"evidence"`
+	AutomaticRefresh bool     `json:"automatic_refresh,omitempty"`
+	CapacityRecycle  bool     `json:"-"`
+	AutoWithdraw     bool     `json:"-"`
+	Action           string   `json:"action"`
+	RequestID        string   `json:"request_id"`
+	CardID           string   `json:"card_id"`
+	CardIDs          []string `json:"card_ids,omitempty"`
+	TemplateID       string   `json:"template_id"`
+	Amount           string   `json:"amount"`
+	Remark           string   `json:"remark"`
+	Confirm          bool     `json:"confirm"`
+	Serial           string   `json:"serial_no"`
+	Outcome          string   `json:"outcome"`
+	Evidence         string   `json:"evidence"`
 }
 
 func (s *Server) nexovccRoutes(m *http.ServeMux) {
@@ -158,7 +159,6 @@ func (s *Server) saveNexovccSettings(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, e.Error())
 		return
 	}
-	s.nexovcc.client = nil
 	writeAPI(w, 200, cfg, "")
 }
 func (s *Server) nexovccClientLocked() (*nexovcc.Client, nexovcc.Settings, error) {
@@ -174,6 +174,9 @@ func (s *Server) nexovccClientLocked() (*nexovcc.Client, nexovcc.Settings, error
 	if s.nexovcc.client == nil || fingerprint != s.nexovcc.fingerprint {
 		s.nexovcc.client = nexovcc.New(k, s.nexovcc.transport)
 		s.nexovcc.fingerprint = fingerprint
+	}
+	if s.nexovcc.transport == nil {
+		s.nexovcc.client.SetRequestInterval(time.Duration(cfg.RequestIntervalSeconds) * time.Second)
 	}
 	return s.nexovcc.client, cfg, nil
 }
@@ -221,7 +224,17 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取交易标记失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "finance_error": financeError}, "")
+	cfg, _, e := s.store.NexovccSettings()
+	if e != nil {
+		writeAPI(w, 500, nil, "读取环球配置失败")
+		return
+	}
+	syncState, e := s.nexovccSyncState(cfg)
+	if e != nil {
+		writeAPI(w, 500, nil, "读取环球刷新状态失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "finance_error": financeError, "sync": syncState}, "")
 }
 func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Lock()
@@ -249,8 +262,34 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.nexovcc.mu.TryLock() {
+		if in.Action == "sync" {
+			s.nexovcc.jobMu.Lock()
+			job := s.nexovcc.job
+			s.nexovcc.jobMu.Unlock()
+			if job.Status != "running" {
+				job = nexovccJob{Status: "completed", Message: "环球正在处理其他操作，显示已保存的数据"}
+			}
+			writeAPI(w, 202, job, "")
+			return
+		}
 		writeAPI(w, 409, nil, "环球正在执行操作，请等待当前操作完成")
 		return
+	}
+	if in.Action == "sync" {
+		cfg, _, err := s.store.NexovccSettings()
+		var message string
+		if err == nil {
+			message, err = s.nexovccSyncWait(cfg, in.AutomaticRefresh)
+		}
+		if err != nil || message != "" {
+			s.nexovcc.mu.Unlock()
+			if err != nil {
+				writeAPI(w, 500, nil, "读取环球刷新状态失败")
+				return
+			}
+			writeAPI(w, 200, nexovccJob{Status: "completed", Message: message}, "")
+			return
+		}
 	}
 	if _, _, e := s.nexovccClientLocked(); e != nil {
 		s.nexovcc.mu.Unlock()
@@ -331,7 +370,7 @@ func (s *Server) nexovccBalanceLocked(ctx context.Context) error {
 	}
 	return s.store.NexovccCache("balance", v)
 }
-func (s *Server) syncNexovccLocked(ctx context.Context) error {
+func (s *Server) fetchNexovccLocked(ctx context.Context) error {
 	// Reconcile completed deletions before unrelated supplier queries. A
 	// temporary balance/product/ledger outage must not hide proof already saved.
 	priorOps, err := s.store.NexovccOperations()
@@ -354,7 +393,7 @@ func (s *Server) syncNexovccLocked(ctx context.Context) error {
 		return e
 	}
 	s.nexovccProgress("同步产品 / BIN", 1, 3)
-	if _, e = s.syncNexovccProductsLocked(ctx); e != nil {
+	if e = s.syncNexovccProductsIfDueLocked(ctx); e != nil {
 		return e
 	}
 	s.nexovccProgress("分页同步卡片", 2, 3)
@@ -566,8 +605,10 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	}
 	amount, _ := nexovcc.Cents(t.Amount)
 	taskID, _ := ctx.Value(proRestockContextKey{}).(string)
+	manualProvider, _ := ctx.Value(proManualCardProviderKey{}).(string)
+	admission := store.NexovccOpenAdmission{RestockID: taskID, ManualProvider: manualProvider}
 	if cfg.MaxOnlineCards > 0 || cfg.AutoRecycleAt > 0 {
-		if e = s.store.CheckNexovccOpen(nexovcc.Operation{Action: "open", Amount: t.Amount, Automatic: automatic, CreatedAt: time.Now()}, taskID); e != nil {
+		if e = s.store.CheckNexovccOpen(nexovcc.Operation{Action: "open", Amount: t.Amount, Automatic: automatic, CreatedAt: time.Now()}, admission); e != nil {
 			return op, e
 		}
 		if e = s.ensureNexovccOnlineSlotLocked(ctx, id, cfg, checks...); e != nil {
@@ -603,7 +644,7 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 		return op, fmt.Errorf("环球账户余额不足以覆盖开卡金额和预留费用")
 	}
 	op = nexovcc.Operation{ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if e = s.store.BeginNexovccOperation(op, taskID); e != nil {
+	if e = s.store.BeginNexovccOperation(op, admission); e != nil {
 		return op, e
 	}
 	pid, _ := strconv.ParseInt(product.ID, 10, 64)
