@@ -4,6 +4,7 @@ import (
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/store"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -358,6 +359,11 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if e != nil {
 		return e
 	}
+	selectedPay, _, purchaseErr := s.store.GPTPaySettings()
+	purchasePro := p
+	if purchaseErr == nil {
+		purchasePro, selectedPay, purchaseErr = s.resolveProPurchase(p, selectedPay, c, time.Now())
+	}
 	sampleCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var snap restock.Snapshot
@@ -376,6 +382,9 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 			last.Valid, last.LoadValid, last.Error = false, false, snap.Error
 			snap = last
 		}
+	}
+	if purchaseErr == nil && purchasePro.PurchaseRoute != nil {
+		snap.NewPlan = restockPlan(selectedPay.Provider, selectedPay.PlanCode, selectedPay.Country, selectedPay.CreditQuantity)
 	}
 	if snap.ID == "" {
 		snap.ID = randomRegistrationID()
@@ -445,7 +454,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if takeoverBlock != "" {
 		d.Suggested, d.Reason = 0, takeoverBlock
 	}
-	d.CardProvider, d.CardSchedule = c.EffectiveCardProvider(now, p.AutoCardProvider()), c.CardSchedule(now)
+	d.CardProvider, d.CardSchedule = purchasePro.AutoCardProvider(), c.CardSchedule(now)
 	d.ID = randomRegistrationID()
 	for i, t := range tasks {
 		if t.Status == "reserved" && (d.NoRestockActive || takeoverBlock != "" || t.TakeoverToken != snap.TakeoverToken) {
@@ -455,16 +464,15 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 			tasks[i].Status, tasks[i].ETA = "cancelled", nil
 			continue
 		}
-		if t.Status == "reserved" && (!c.Enabled || c.Mode != "auto" || t.Version != c.Version || t.Binding != snap.Binding || t.GroupID != snap.GroupID || (snap.Valid && t.Plan != snap.NewPlan) || (t.ForceMergeSource != "" && !c.ForceMergeEnabled)) {
+		if t.Status == "reserved" && (!c.Enabled || c.Mode != "auto" || t.Version != c.Version || t.Binding != snap.Binding || t.GroupID != snap.GroupID || (snap.Valid && t.Plan != snap.NewPlan) || !store.SameProPurchase(t.PurchaseRoute, purchasePro.PurchaseRoute) || (t.ForceMergeSource != "" && !c.ForceMergeEnabled)) {
 			if err := s.store.CancelProRestock(t, "配置变化或暂停，撤销未启动预留"); err != nil {
 				return err
 			}
 			tasks[i].Status, tasks[i].ETA = "cancelled", nil
 		}
 	}
-	payConfig, _, purchaseErr := s.store.GPTPaySettings()
 	if purchaseErr == nil {
-		purchaseErr = gptpay.ValidatePurchase(payConfig)
+		purchaseErr = gptpay.ValidatePurchase(selectedPay)
 	}
 	if purchaseErr != nil {
 		d.Suggested, d.Reason = 0, purchaseErr.Error()
@@ -524,7 +532,11 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		return
 	}
 	for _, t := range tasks {
-		if t.Status != "reserved" || t.Version != c.Version || t.Binding != snap.Binding || t.GroupID != snap.GroupID || t.Plan != restockPlan(pay.Provider, pay.PlanCode, pay.Country, pay.CreditQuantity) {
+		taskPay, routeErr := applyPurchasePay(pay, t.PurchaseRoute)
+		if routeErr != nil {
+			continue
+		}
+		if t.Status != "reserved" || t.Version != c.Version || t.Binding != snap.Binding || t.GroupID != snap.GroupID || t.Plan != restockPlan(taskPay.Provider, taskPay.PlanCode, taskPay.Country, taskPay.CreditQuantity) {
 			continue
 		}
 		profile, _, readErr := s.store.MailAccountCredential(t.Email)
@@ -556,8 +568,15 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		if policy.Blocked {
 			return
 		}
-		current.CardProvider = c.EffectiveCardProvider(time.Now(), current.AutoCardProvider())
-		t.CardProvider, t.StrictCardProvider = current.CardProvider, policy.Provider != ""
+		current, _, e = s.resolveProPurchase(current, pay, c, time.Now())
+		if e != nil {
+			return
+		}
+		if !store.SameProPurchase(t.PurchaseRoute, current.PurchaseRoute) {
+			_ = s.store.CancelProRestock(t, "分时套餐或模板变化，重新评估")
+			continue
+		}
+		t.CardProvider, t.StrictCardProvider = current.CardProvider, current.PurchaseRoute != nil || policy.Provider != ""
 		cards, e := s.automaticProCards(current, t.StrictCardProvider)
 		if e != nil {
 			return
@@ -581,7 +600,7 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		if e = s.store.ClaimProRestockDispatch(t); e != nil {
 			return
 		}
-		body, _ := json.Marshal(map[string]any{"provider": pay.Provider, "plan_code": pay.PlanCode, "card_id": card, "country": pay.Country, "credit_quantity": pay.CreditQuantity})
+		body, _ := json.Marshal(map[string]any{"provider": taskPay.Provider, "plan_code": taskPay.PlanCode, "card_id": card, "country": taskPay.Country, "credit_quantity": taskPay.CreditQuantity})
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body))).WithContext(context.WithValue(ctx, proRestockContextKey{}, t.ID))
 		r.SetPathValue("email", t.Email)
 		w := httptest.NewRecorder()

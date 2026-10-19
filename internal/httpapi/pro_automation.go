@@ -215,6 +215,13 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pro, subPassword, _, err := s.proAccountPushSettings(p)
+	if err == nil && automatic {
+		var ctx context.Context
+		ctx, cfg, err = s.purchaseContext(r.Context(), pro, cfg)
+		if err == nil {
+			r = r.WithContext(ctx)
+		}
+	}
 	if err == nil && !automatic {
 		provider := input.CardProvider
 		if provider == "" {

@@ -233,6 +233,15 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool, restoc
 		if e != nil {
 			return e
 		}
+		if task.PurchaseRoute != nil {
+			matches, e := s.proTemplateCards(tx, task.CardProvider, task.PurchaseRoute.TemplateID, task.PurchaseRoute.PlanCode)
+			if e != nil {
+				return e
+			}
+			if !matches[card.ID] {
+				return errors.New("银行卡不属于本次分时开通模板")
+			}
+		}
 		if !RestockCardMatches(card, task.CardProvider, task.StrictCardProvider) {
 			return errors.New("银行卡不属于本次补货指定卡台")
 		}

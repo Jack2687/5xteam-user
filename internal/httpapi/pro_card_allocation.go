@@ -17,6 +17,9 @@ type proManualCardProviderKey struct{}
 func (s *Server) restockCardSettings(ctx context.Context, cfg model.ProSettings) (model.ProSettings, bool, error) {
 	id, _ := ctx.Value(proRestockContextKey{}).(string)
 	if id == "" {
+		if route, _ := ctx.Value(proPurchaseContextKey{}).(*model.ProPurchaseRoute); route != nil {
+			return cfg.WithPurchaseRoute(route), true, nil
+		}
 		if provider, _ := ctx.Value(proManualCardProviderKey{}).(string); provider != "" {
 			if provider != "ejh" && provider != "nexovcc" {
 				return cfg, false, fmt.Errorf("请选择 EJH 或环球卡台")
@@ -29,6 +32,7 @@ func (s *Server) restockCardSettings(ctx context.Context, cfg model.ProSettings)
 	if err != nil {
 		return cfg, false, err
 	}
+	cfg = cfg.WithPurchaseRoute(task.PurchaseRoute)
 	cfg.CardProvider = task.CardProvider
 	return cfg, task.StrictCardProvider, nil
 }
@@ -37,12 +41,25 @@ func (s *Server) restockCardSettings(ctx context.Context, cfg model.ProSettings)
 // chosen issuer even when buying new cards is disabled. Other manual cards
 // retain their historical compatibility with the default EJH selection.
 func (s *Server) automaticProCards(cfg model.ProSettings, strictProvider ...bool) ([]gptpay.Card, error) {
+	if err := s.validatePurchaseTemplate(cfg.PurchaseRoute); err != nil {
+		return nil, err
+	}
 	cards, _, err := s.store.GPTPayCards(int(^uint(0)>>1), 0, true)
 	if err != nil {
 		return nil, err
 	}
+	var matches map[string]bool
+	if cfg.PurchaseRoute != nil {
+		matches, err = s.store.ProTemplateCards(cfg.AutoCardProvider(), cfg.PurchaseRoute.TemplateID, cfg.PurchaseRoute.PlanCode)
+		if err != nil {
+			return nil, err
+		}
+	}
 	filtered := make([]gptpay.Card, 0, len(cards))
 	for _, card := range cards {
+		if matches != nil && !matches[card.ID] {
+			continue
+		}
 		if store.RestockCardMatches(card, cfg.AutoCardProvider(), len(strictProvider) > 0 && strictProvider[0]) {
 			filtered = append(filtered, card)
 		}
@@ -163,6 +180,23 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 	}
 	if err = ctx.Err(); err != nil {
 		return card, secret, err
+	}
+	cfg, _, _, e := s.store.ProSettings()
+	if e != nil {
+		return card, secret, e
+	}
+	cfg, _, e = s.restockCardSettings(ctx, cfg)
+	if e != nil {
+		return card, secret, e
+	}
+	if cfg.PurchaseRoute != nil {
+		matches, e := s.store.ProTemplateCards(cfg.AutoCardProvider(), cfg.PurchaseRoute.TemplateID, cfg.PurchaseRoute.PlanCode)
+		if e != nil {
+			return card, secret, e
+		}
+		if !matches[card.ID] {
+			return card, secret, fmt.Errorf("银行卡与本次分时套餐模板不匹配")
+		}
 	}
 	err = s.store.ReserveProCard(email, card.ID, enforceMaximum, taskID)
 	return card, secret, err

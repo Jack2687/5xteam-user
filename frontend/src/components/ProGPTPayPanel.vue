@@ -73,7 +73,7 @@ async function changeProvider(event) {
   })
   event.target.value = settings.provider
 }
-const automation = reactive({ scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
+const automation = reactive({ purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 const selectedAdmin = computed(() => props.adminAccounts.find(a => a.id === automation.target_admin_id))
 Object.assign(automation,{card_provider:'ejh',nexovcc_auto_open:false,nexovcc_template_id:'',nexovcc_daily_open_limit:1,nexovcc_daily_amount_limit:'',ejh_auto_open:false,ejh_template_id:'',ejh_daily_open_limit:1,ejh_daily_amount_limit:'',force_merge_enabled:false,force_merge_minutes:60})
 const nexovccTemplates=ref([])
@@ -82,6 +82,13 @@ function showCardAccounts(card){if(card.card_type==='nexovcc')nexovccCasesDialog
 const ejhTemplates=ref([]),cardCases=ref([]),cardDetail=ref(null)
 function associated(card){return cardCases.value.filter(c=>cardHasCase(card,c)||c.nexovcc?.card_id===card.id)}
 function cardHint(card){return associated(card).slice(0,30).map(caseSummary).join('\n')||'暂无关联账号'}
+const purchasePlans = [{code:'pro5',label:'5x'},{code:'pro20',label:'20x'}]
+function matchingTemplates(provider,plan){ return (provider==='ejh'?ejhTemplates.value:nexovccTemplates.value).filter(t=>t.plan_code===plan) }
+function addPurchaseWindow(){ automation.purchase_windows.push({start:'17:00',end:'20:50',card_provider:automation.card_provider||'ejh',plan_code:'pro5'}) }
+function purchaseTemplateName(w){const id=(w.card_provider==='ejh'?automation.ejh_plan_templates:automation.nexovcc_plan_templates)?.[w.plan_code];return matchingTemplates(w.card_provider,w.plan_code).find(t=>t.id===id)?.name||'请在银行卡与补卡选择对应模板'}
+watch(()=>automation.ejh_plan_templates,v=>{if(!v)automation.ejh_plan_templates={}},{immediate:true})
+watch(()=>automation.nexovcc_plan_templates,v=>{if(!v)automation.nexovcc_plan_templates={}},{immediate:true})
+watch(()=>automation.purchase_windows,v=>{if(!v)automation.purchase_windows=[]},{immediate:true})
 const configSection = ref('purchase')
 const configSections = [
   { id: 'purchase', label: '开通设置', hint: '供应商、套餐与国家', icon: CreditCard },
@@ -234,6 +241,19 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         </div>
         <div class="catalog-status wide" aria-live="polite"><span v-if="catalogLoading">正在读取国家、货币与套餐…</span><span v-else-if="catalogError" class="danger-text">目录读取失败：{{ catalogError }}<span v-if="settings.provider === 'tokenseek'"> 当前显示文档选项，实际可购买套餐以账户报价为准。</span></span><span v-else-if="catalog">已读取 {{ availableCountries.length }} 个国家/地区。<span v-if="catalogSelectionInvalid" class="danger-text">请选择目录内的国家和可用套餐，并检查点数数量。</span></span><button class="btn ghost compact" type="button" :disabled="busy || catalogLoading" @click="loadCatalog">刷新国家与套餐</button></div>
 </div>
+            <div class="config-divider"><h4>分时开通</h4><p>用于自动补货与定时全自动；手动开通自行选择。时段外使用默认套餐和卡台。</p></div>
+            <label class="toggle-row"><div><strong>启用分时开通</strong><small>北京时间，支持跨天；每日禁补规则仍独立生效。</small></div><input v-model="automation.purchase_schedule_enabled" type="checkbox"/><i></i></label>
+            <div v-for="(w,i) in automation.purchase_windows" :key="i" class="purchase-window">
+              <div class="settings-fields">
+                <label class="field"><span>开始时间</span><input v-model="w.start" type="time" required/></label>
+                <label class="field"><span>结束时间</span><input v-model="w.end" type="time" required/><small v-if="w.end<w.start">次日结束</small></label>
+                <label class="field"><span>卡台</span><select v-model="w.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select></label>
+                <label class="field"><span>开通套餐</span><select v-model="w.plan_code"><option value="pro5">5x</option><option value="pro20">20x</option></select><small>模板：{{purchaseTemplateName(w)}}</small></label>
+              </div>
+              <button class="btn ghost compact danger-text" type="button" @click="automation.purchase_windows.splice(i,1)">删除时段</button>
+            </div>
+            <button class="btn ghost compact" type="button" :disabled="automation.purchase_windows.length>=32" @click="addPurchaseWindow">添加时段</button>
+            <p class="muted">供应商与支付国家沿用上方配置。时段不可重叠；禁补允许指定卡台时，用该卡台的同套餐模板，完全禁补时暂停。</p>
           </section>
           <section v-show="configSection === 'schedule'" data-config-section="schedule">
             <div class="settings-fields">        <label class="toggle-row wide"><div><strong>定时执行全自动 Pro</strong><small>从 Pro 管理选择未开通过的新账号，自动选择有名额的银行卡，登录 → 开通 → RT/AT → Sub2 → 刷新额度。</small></div><input v-model="automation.scheduled_enabled" type="checkbox"/><i></i></label>
@@ -246,16 +266,18 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
             <div class="settings-fields">        <label class="field"><span>银行卡默认最大开通数</span><input v-model.number="settings.card_account_limit" type="number" min="1" max="10000" required/><small>未单独设置的卡沿用此上限，默认 3 个。成功开通与在途占位共同计数，同一卡号共用上限。</small></label>
 </div>
             <div class="config-divider"><h4>自动补卡</h4><p>按所选卡台优先使用最早开出的可用卡，无可用卡时补卡。各卡台单独保存模板和预算。</p></div>
-            <label class="field"><span>默认卡台</span><select v-model="automation.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select><small>手动开通可临时切换；自动补货按禁补时段规则选择。</small></label>
+            <label class="field"><span>默认卡台</span><select v-model="automation.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select><small>手动开通可临时切换；自动任务优先按分时开通规则选择，禁补规则独立限制。</small></label>
             <div class="config-divider"><h4>EJH 补卡设置</h4></div>
             <div class="settings-fields">        <label class="toggle-row wide"><div><strong>无可用卡时自动从 EJH 开卡</strong><small>优先使用现有可用卡；新卡加入银行卡信息。结果未知时停止等待核实，不重复扣款。</small></div><input v-model="automation.ejh_auto_open" type="checkbox"/><i></i></label>
-        <label class="field"><span>EJH 开卡模板</span><select v-model="automation.ejh_template_id" :required="automation.ejh_auto_open"><option value="">请先到 EJH 卡台保存模板</option><option v-for="t in ejhTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.cardAmount}} {{t.cardCurrency}}</option></select></label>
+        <label v-for="plan in purchasePlans" :key="'ejh-'+plan.code" class="field"><span>EJH {{plan.label}} 模板（分时）</span><select v-model="automation.ejh_plan_templates[plan.code]"><option value="">请选择已标记的 {{plan.label}} 模板</option><option v-for="t in matchingTemplates('ejh',plan.code)" :key="t.id" :value="t.id">{{t.name}}</option></select><small>到 EJH 卡台 → 开卡模板设置“适用套餐”。</small></label>
+              <label class="field"><span>EJH 开卡模板</span><select v-model="automation.ejh_template_id" :required="automation.ejh_auto_open"><option value="">请先到 EJH 卡台保存模板</option><option v-for="t in ejhTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.cardAmount}} {{t.cardCurrency}}</option></select></label>
         <label class="field"><span>自动开卡每日数量上限</span><input v-model.number="automation.ejh_daily_open_limit" type="number" min="1" max="1000" :required="automation.ejh_auto_open"/></label>
         <label class="field wide"><span>自动开卡每日刷卡额度预算（模板币种）</span><input v-model="automation.ejh_daily_amount_limit" :required="automation.ejh_auto_open" placeholder="例如 100"/><small>累计新卡额度，不含手续费和汇率差，不是实际扣款上限；按北京时间每日计算。</small></label>
 </div>
             <div class="config-divider"><h4>环球补卡设置</h4><p>手动选环球或时段允许环球时，使用这里的模板和预算。</p></div>
             <div class="settings-fields">
               <label class="toggle-row wide"><div><strong>无可用卡时自动从环球开卡</strong><small>优先使用环球可用卡；原开卡结果待核实时停止补卡，查询原卡继续导入。</small></div><input v-model="automation.nexovcc_auto_open" type="checkbox"/><i></i></label>
+              <label v-for="plan in purchasePlans" :key="'nexovcc-'+plan.code" class="field"><span>环球 {{plan.label}} 模板（分时）</span><select v-model="automation.nexovcc_plan_templates[plan.code]"><option value="">请选择已标记的 {{plan.label}} 模板</option><option v-for="t in matchingTemplates('nexovcc',plan.code)" :key="t.id" :value="t.id">{{t.name}}</option></select><small>到环球卡台 → 开卡模板设置“适用套餐”。</small></label>
               <label class="field"><span>环球开卡模板</span><select v-model="automation.nexovcc_template_id" :required="automation.nexovcc_auto_open"><option value="">请先到环球卡台保存模板</option><option v-for="t in nexovccTemplates" :key="t.id" :value="t.id">{{t.name}} · {{t.amount}} USD</option></select></label>
               <label class="field"><span>自动开卡每日数量上限</span><input v-model.number="automation.nexovcc_daily_open_limit" type="number" min="1" max="1000" :required="automation.nexovcc_auto_open"/></label>
               <label class="field wide"><span>自动开卡每日充值金额预算（USD）</span><input v-model="automation.nexovcc_daily_amount_limit" :required="automation.nexovcc_auto_open" placeholder="例如 100"/><small>累计新卡充值金额；按北京时间每日计算。平台手续费另计。</small></label>
@@ -342,6 +364,8 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 </template>
 
 <style scoped>
+.purchase-window{padding:18px 0;border-bottom:1px solid var(--line);margin-bottom:16px}.purchase-window .settings-fields{margin-bottom:12px}
+
 .cmsnav-terms{display:flex;align-items:flex-start;gap:8px;margin:16px 0;font-size:13px;line-height:1.6}.cmsnav-terms input{width:16px;height:16px;margin-top:3px;flex-shrink:0}.cmsnav-terms a{color:var(--green-strong);text-decoration:underline}
 .gptpay-panel .field { margin-bottom: 14px; }
 .gptpay-panel .settings-fields { margin-top: 16px; }

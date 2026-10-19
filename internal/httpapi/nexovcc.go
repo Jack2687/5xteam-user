@@ -594,6 +594,19 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if t == nil {
 		return op, fmt.Errorf("请选择已保存的环球开卡模板")
 	}
+	if automatic {
+		pro, _, _, err := s.store.ProSettings()
+		if err != nil {
+			return op, err
+		}
+		pro, _, err = s.restockCardSettings(ctx, pro)
+		if err != nil {
+			return op, err
+		}
+		if pro.PurchaseRoute != nil && (t.ID != pro.PurchaseRoute.TemplateID || t.PlanCode != pro.PurchaseRoute.PlanCode) {
+			return op, fmt.Errorf("环球模板适用套餐已变化，未开卡")
+		}
+	}
 	// Query current availability; a cached product may have been delisted.
 	products, e := s.syncNexovccProductsLocked(ctx)
 	if e != nil {
@@ -606,6 +619,9 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	amount, _ := nexovcc.Cents(t.Amount)
 	taskID, _ := ctx.Value(proRestockContextKey{}).(string)
 	manualProvider, _ := ctx.Value(proManualCardProviderKey{}).(string)
+	if route, _ := ctx.Value(proPurchaseContextKey{}).(*model.ProPurchaseRoute); route != nil {
+		manualProvider = route.CardProvider
+	}
 	admission := store.NexovccOpenAdmission{RestockID: taskID, ManualProvider: manualProvider}
 	if cfg.MaxOnlineCards > 0 || cfg.AutoRecycleAt > 0 {
 		if e = s.store.CheckNexovccOpen(nexovcc.Operation{Action: "open", Amount: t.Amount, Automatic: automatic, CreatedAt: time.Now()}, admission); e != nil {
@@ -643,7 +659,7 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if available < amount+buffer {
 		return op, fmt.Errorf("环球账户余额不足以覆盖开卡金额和预留费用")
 	}
-	op = nexovcc.Operation{ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	op = nexovcc.Operation{PlanCode: t.PlanCode, ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if e = s.store.BeginNexovccOperation(op, admission); e != nil {
 		return op, e
 	}
@@ -895,7 +911,15 @@ func (s *Server) ensureProviderCard(ctx context.Context, checks ...func() error)
 func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) (gptpay.Card, error) {
 	s.nexovcc.mu.Lock()
 	defer s.nexovcc.mu.Unlock()
-	cards, _, e := s.store.GPTPayCards(int(^uint(0)>>1), 0, true)
+	p, _, _, e := s.store.ProSettings()
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	p, strict, e := s.restockCardSettings(ctx, p)
+	if e != nil {
+		return gptpay.Card{}, e
+	}
+	cards, e := s.automaticProCards(p, strict)
 	if e != nil {
 		return gptpay.Card{}, e
 	}
@@ -904,7 +928,10 @@ func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) 
 			return card, nil
 		}
 	}
-	p, _, _, e := s.store.ProSettings()
+	p, _, _, e = s.store.ProSettings()
+	if e == nil {
+		p, _, e = s.restockCardSettings(ctx, p)
+	}
 	if e != nil {
 		return gptpay.Card{}, e
 	}

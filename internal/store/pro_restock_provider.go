@@ -24,7 +24,12 @@ func restockCardProvider(q proCapacityQuery, c restock.Config, now time.Time) (s
 			return "", false, err
 		}
 	}
-	return c.EffectiveCardProvider(now, p.AutoCardProvider()), c.CardSchedule(now).Provider != "", nil
+	provider := p.AutoCardProvider()
+	_, routed := p.PurchaseWindow(now)
+	if w, ok := p.PurchaseWindow(now); ok {
+		provider = w.CardProvider
+	}
+	return c.EffectiveCardProvider(now, provider), routed || c.CardSchedule(now).Provider != "", nil
 }
 
 // Only a claimed intent may override global card settings. The durable choice

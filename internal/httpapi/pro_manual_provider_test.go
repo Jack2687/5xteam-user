@@ -50,6 +50,9 @@ func TestManualProCanSelectEitherIssuerRegardlessOfWindow(t *testing.T) {
 				})
 				p, _, _, _ := s.store.ProSettings()
 				p.CardProvider = "ejh"
+				// Automatic routing must not affect manual choices, even if its templates are not configured.
+				p.PurchaseScheduleEnabled = true
+				p.PurchaseWindows = []model.ProPurchaseWindow{activePurchaseWindow("nexovcc", "pro20")}
 				cardID := ""
 				if issuer == "ejh" {
 					p.CardProvider = "nexovcc"

@@ -3,6 +3,8 @@ package ejh
 import "time"
 
 type Operation struct {
+	PlanCode    string     `json:"plan_code,omitempty"`
+	TemplateID  string     `json:"template_id,omitempty"`
 	ID          string     `json:"id"`
 	Method      string     `json:"method"`
 	CardID      string     `json:"card_id"`

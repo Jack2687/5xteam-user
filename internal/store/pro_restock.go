@@ -123,6 +123,13 @@ func (s *Store) ClaimProRestockDispatch(t restock.Task) error {
 	if err != nil {
 		return err
 	}
+	route, err := readProPurchase(tx, c, now)
+	if err != nil {
+		return err
+	}
+	if !SameProPurchase(route, t.PurchaseRoute) {
+		return errors.New("分时套餐或模板已变化，等待重新评估")
+	}
 	if t.CardProvider != provider || t.StrictCardProvider != strict {
 		return errors.New("补货卡台或时段已变化，等待按当前规则重新派发")
 	}
@@ -210,6 +217,16 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	if err != nil {
 		return nil, err
 	}
+	route, err := readProPurchase(tx, c, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if route != nil {
+		plan := fmt.Sprintf("%s:%s:%s:%d", route.PaymentProvider, route.PlanCode, route.Country, route.CreditQuantity)
+		if plan != d.Snapshot.NewPlan {
+			return nil, errors.New("分时套餐已变化，等待刷新监控后重新评估")
+		}
+	}
 	d.CardProvider, d.CardSchedule = provider, c.CardSchedule(time.Now())
 	l, err := restockLimits(tx, d.At)
 	if err != nil {
@@ -296,7 +313,7 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 		t := restock.Task{ID: fmt.Sprintf("%s-%d", d.ID, i+1), Plan: d.Snapshot.NewPlan, DecisionID: d.ID, Email: email, Version: c.Version, GroupID: c.GroupID, Binding: d.Snapshot.Binding, Status: "reserved", Stage: "queued", Cost: c.UnitCost, CreatedAt: d.At, UpdatedAt: d.At, Stages: map[string]time.Time{"reserved": d.At}}
 		t.TakeoverToken = d.Snapshot.TakeoverToken
 		t.EmptyGroupStartup = d.EmptyGroupOnly()
-		t.CardProvider, t.StrictCardProvider = provider, strict
+		t.CardProvider, t.StrictCardProvider, t.PurchaseRoute = provider, strict, route
 		t.ForceMergeTracked = true
 		if d.Trace != nil {
 			t.Capacity = d.Trace.NewAccountCapacity

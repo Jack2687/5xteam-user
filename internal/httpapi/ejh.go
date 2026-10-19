@@ -288,7 +288,7 @@ func maskEJH(n string) string {
 	}
 	return "****"
 }
-func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInput, automatic bool) (ejh.Operation, error) {
+func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInput, automatic bool, templateIDs ...string) (ejh.Operation, error) {
 	c, k, e := s.ejhConfig()
 	if e != nil {
 		return ejh.Operation{}, e
@@ -320,6 +320,14 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 		}
 	}
 	op := ejh.Operation{ID: id, Method: "open", Status: "submitting", Amount: input.CardAmount, Currency: input.CardCurrency, Automatic: automatic, CreatedAt: time.Now(), UpdatedAt: time.Now(), Request: input}
+	if len(templateIDs) > 0 {
+		op.TemplateID = templateIDs[0]
+		for _, t := range c.Templates {
+			if t.ID == op.TemplateID {
+				op.PlanCode = t.PlanCode
+			}
+		}
+	}
 	if e = s.store.EJHBeginOperation(op); e != nil {
 		return op, e
 	}
@@ -367,8 +375,9 @@ func definiteEJHReject(code string) bool {
 }
 func (s *Server) openEJH(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		ID    string        `json:"request_id"`
-		Input ejh.OpenInput `json:"input"`
+		ID         string        `json:"request_id"`
+		Input      ejh.OpenInput `json:"input"`
+		TemplateID string        `json:"template_id"`
 	}
 	if decodeJSON(w, r, &in, 32<<10) != nil {
 		return
@@ -379,7 +388,7 @@ func (s *Server) openEJH(w http.ResponseWriter, r *http.Request) {
 	}
 	s.ejh.mu.Lock()
 	defer s.ejh.mu.Unlock()
-	op, e := s.ejhOpenLocked(r.Context(), in.ID, in.Input, false)
+	op, e := s.ejhOpenLocked(r.Context(), in.ID, in.Input, false, in.TemplateID)
 	if e != nil {
 		writeAPI(w, 400, nil, e.Error())
 		return
@@ -718,7 +727,7 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 	if e != nil {
 		return gptpay.Card{}, e
 	}
-	cards, _, e := s.store.GPTPayCards(10000, 0, true)
+	cards, e := s.automaticProCards(pro, strict)
 	if e != nil {
 		return gptpay.Card{}, e
 	}
@@ -762,6 +771,9 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 		if t.ID == pro.EJHTemplateID {
 			template = t
 		}
+	}
+	if pro.PurchaseRoute != nil && template.PlanCode != pro.PurchaseRoute.PlanCode {
+		return gptpay.Card{}, fmt.Errorf("EJH 模板适用套餐已变化，未开卡")
 	}
 	input := template.Input(time.Now())
 	if e = ejh.ValidateOpen(input, time.Now()); e != nil {
@@ -833,7 +845,7 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 			return gptpay.Card{}, err
 		}
 	}
-	op, e := s.ejhOpenLocked(ctx, id, input, true)
+	op, e := s.ejhOpenLocked(ctx, id, input, true, template.ID)
 	if e != nil {
 		return gptpay.Card{}, e
 	}

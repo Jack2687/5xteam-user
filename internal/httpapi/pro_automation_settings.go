@@ -25,6 +25,8 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	// Older clients omit the new field; retain its saved value. Explicit zero
 	// still fails validation after decoding.
 	input.Automation.MergeConcurrency = current.MergeConcurrency
+	input.Automation.PurchaseScheduleEnabled, input.Automation.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
+	input.Automation.EJHPlanTemplates, input.Automation.NexovccPlanTemplates = current.EJHPlanTemplates, current.NexovccPlanTemplates
 	if err := decodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
@@ -59,6 +61,10 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	}
 	pay, err := gptpay.NormalizeSettings(input.GPTPay.Settings)
 	if err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
+	if err = s.validateProPurchaseConfig(v, pay); err != nil {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}

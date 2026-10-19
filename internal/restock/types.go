@@ -2,6 +2,7 @@
 package restock
 
 import (
+	"chatgpt-space-merge/internal/model"
 	"errors"
 	"time"
 )
@@ -189,33 +190,34 @@ type Snapshot struct {
 	Accounts            []Account   `json:"accounts"`
 }
 type Task struct {
-	TakeoverToken      string               `json:"takeover_token,omitempty"`
-	CardProvider       string               `json:"card_provider,omitempty"`
-	StrictCardProvider bool                 `json:"strict_card_provider,omitempty"`
-	Capacity           int                  `json:"capacity,omitempty"`
-	ManagedExternally  bool                 `json:"managed_externally,omitempty"`
-	ForceMergeSource   string               `json:"force_merge_source,omitempty"`
-	EmptyGroupStartup  bool                 `json:"empty_group_startup,omitempty"`
-	Plan               string               `json:"plan"`
-	ID                 string               `json:"id"`
-	DecisionID         string               `json:"decision_id"`
-	Email              string               `json:"email"`
-	Version            int                  `json:"version"`
-	GroupID            int64                `json:"group_id"`
-	Binding            string               `json:"binding"`
-	Status             string               `json:"status"`
-	Stage              string               `json:"stage"`
-	Message            string               `json:"message"`
-	OrderID            string               `json:"order_id"`
-	CardID             string               `json:"card_id"`
-	AccountID          int64                `json:"account_id"`
-	Cost               int64                `json:"cost"`
-	CreatedAt          time.Time            `json:"created_at"`
-	UpdatedAt          time.Time            `json:"updated_at"`
-	SubmittedAt        *time.Time           `json:"submitted_at,omitempty"`
-	ReadyAt            *time.Time           `json:"ready_at,omitempty"`
-	ETA                *time.Time           `json:"eta,omitempty"`
-	Stages             map[string]time.Time `json:"stages"`
+	PurchaseRoute      *model.ProPurchaseRoute `json:"purchase_route,omitempty"`
+	TakeoverToken      string                  `json:"takeover_token,omitempty"`
+	CardProvider       string                  `json:"card_provider,omitempty"`
+	StrictCardProvider bool                    `json:"strict_card_provider,omitempty"`
+	Capacity           int                     `json:"capacity,omitempty"`
+	ManagedExternally  bool                    `json:"managed_externally,omitempty"`
+	ForceMergeSource   string                  `json:"force_merge_source,omitempty"`
+	EmptyGroupStartup  bool                    `json:"empty_group_startup,omitempty"`
+	Plan               string                  `json:"plan"`
+	ID                 string                  `json:"id"`
+	DecisionID         string                  `json:"decision_id"`
+	Email              string                  `json:"email"`
+	Version            int                     `json:"version"`
+	GroupID            int64                   `json:"group_id"`
+	Binding            string                  `json:"binding"`
+	Status             string                  `json:"status"`
+	Stage              string                  `json:"stage"`
+	Message            string                  `json:"message"`
+	OrderID            string                  `json:"order_id"`
+	CardID             string                  `json:"card_id"`
+	AccountID          int64                   `json:"account_id"`
+	Cost               int64                   `json:"cost"`
+	CreatedAt          time.Time               `json:"created_at"`
+	UpdatedAt          time.Time               `json:"updated_at"`
+	SubmittedAt        *time.Time              `json:"submitted_at,omitempty"`
+	ReadyAt            *time.Time              `json:"ready_at,omitempty"`
+	ETA                *time.Time              `json:"eta,omitempty"`
+	Stages             map[string]time.Time    `json:"stages"`
 	// Retain assignment history after the source departs, so a ready account
 	// cannot be recycled as the replacement for another original lifecycle.
 	ForceMergeAssigned bool `json:"force_merge_assigned,omitempty"`

@@ -34,6 +34,7 @@ type Settings struct {
 	Templates              []Template `json:"templates"`
 }
 type Template struct {
+	PlanCode   string   `json:"plan_code,omitempty"`
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
 	ProductID  string   `json:"product_id"`
@@ -77,6 +78,7 @@ type PrivateCard struct {
 	Month, Year int
 }
 type Operation struct {
+	PlanCode             string    `json:"plan_code,omitempty"`
 	ID                   string    `json:"id"`
 	Action               string    `json:"action"`
 	CardID               string    `json:"card_id"`
@@ -158,6 +160,9 @@ func Normalize(s Settings) (Settings, error) {
 	seen := map[string]bool{}
 	for i := range s.Templates {
 		t := &s.Templates[i]
+		if t.PlanCode != "" && t.PlanCode != "pro5" && t.PlanCode != "pro20" {
+			return s, fmt.Errorf("模板适用套餐须为 5x 或 20x")
+		}
 		t.Name = strings.TrimSpace(t.Name)
 		t.ProductIDs = t.OrderedProductIDs()
 		amount, ae := Cents(t.Amount)

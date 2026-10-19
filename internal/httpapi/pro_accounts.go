@@ -682,6 +682,8 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	input.NexovccAutoOpen, input.NexovccTemplateID, input.NexovccDailyOpenLimit, input.NexovccDailyAmountLimit = current.NexovccAutoOpen, current.NexovccTemplateID, current.NexovccDailyOpenLimit, current.NexovccDailyAmountLimit
 	input.ForceMergeEnabled, input.ForceMergeMinutes = current.ForceMergeEnabled, current.ForceMergeMinutes
 	input.MergeConcurrency = current.MergeConcurrency
+	input.PurchaseScheduleEnabled, input.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
+	input.EJHPlanTemplates, input.NexovccPlanTemplates = current.EJHPlanTemplates, current.NexovccPlanTemplates
 	now := time.Now()
 	input.LastQuotaSweepAt = current.LastQuotaSweepAt
 	if input.QuotaEnabled {

@@ -144,6 +144,10 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	if payErr != nil {
 		return snap, payErr
 	}
+	_, pay, payErr = s.resolveProPurchase(p, pay, c, time.Now())
+	if payErr != nil {
+		return snap, payErr
+	}
 	snap.NewPlan = restockPlan(pay.Provider, pay.PlanCode, pay.Country, pay.CreditQuantity)
 
 	// Compare server timestamps with collection completion, not request start.

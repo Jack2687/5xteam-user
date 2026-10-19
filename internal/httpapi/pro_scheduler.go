@@ -179,6 +179,23 @@ func (s *Server) tickProSchedule(force bool) {
 		_ = s.store.SaveProScheduleRun(run)
 	}
 	pay, key, err := s.store.GPTPaySettings()
+	var purchaseCtx context.Context
+	if err == nil {
+		policy, e := s.store.ProRestockConfig()
+		if e != nil {
+			err = e
+		} else if reason := policy.NoRestockReason(time.Now()); reason != "" {
+			finish("skipped", reason)
+			return
+		} else {
+			cfg, pay, err = s.resolveProPurchase(cfg, pay, policy, time.Now())
+		}
+	}
+	purchaseCtx = context.WithValue(context.Background(), proScheduledContextKey{}, true)
+	purchaseCtx = context.WithValue(purchaseCtx, proManualCardProviderKey{}, cfg.AutoCardProvider())
+	if cfg.PurchaseRoute != nil {
+		purchaseCtx = context.WithValue(purchaseCtx, proPurchaseContextKey{}, cfg.PurchaseRoute)
+	}
 	if err == nil {
 		if purchaseErr := gptpay.ValidatePurchase(pay); purchaseErr != nil {
 			finish("failed", purchaseErr.Error())
@@ -232,8 +249,8 @@ func (s *Server) tickProSchedule(force bool) {
 		if e = s.store.SaveProScheduleRun(run); e != nil {
 			return
 		}
-		body, _ := json.Marshal(map[string]string{"provider": pay.Provider, "card_id": card.ID, "plan_code": pay.PlanCode})
-		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body))).WithContext(context.WithValue(context.Background(), proScheduledContextKey{}, true))
+		body, _ := json.Marshal(map[string]any{"provider": pay.Provider, "card_id": card.ID, "plan_code": pay.PlanCode, "country": pay.Country, "credit_quantity": pay.CreditQuantity})
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body))).WithContext(purchaseCtx)
 		r.SetPathValue("email", email)
 		w := httptest.NewRecorder()
 		s.startProAutomation(w, r)

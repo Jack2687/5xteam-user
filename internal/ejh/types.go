@@ -25,6 +25,7 @@ type Settings struct {
 	Templates           []Template `json:"templates"`
 }
 type Template struct {
+	PlanCode  string `json:"plan_code,omitempty"`
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	ValidDays int    `json:"valid_days"`
@@ -172,6 +173,9 @@ func Normalize(v Settings) (Settings, error) {
 	seen := map[string]bool{}
 	for i := range v.Templates {
 		t := &v.Templates[i]
+		if t.PlanCode != "" && t.PlanCode != "pro5" && t.PlanCode != "pro20" {
+			return v, fmt.Errorf("模板适用套餐须为 5x 或 20x")
+		}
 		if t.ID == "" || seen[t.ID] || t.Name == "" || t.ValidDays < 1 || t.ValidDays > 3650 {
 			return v, fmt.Errorf("模板 ID、名称和有效天数无效")
 		}
