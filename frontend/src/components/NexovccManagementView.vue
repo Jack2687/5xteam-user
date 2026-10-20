@@ -163,7 +163,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer);clearTimeout(privateT
 async function tradePurposeUpdated(group){
  const index=data.groups.findIndex(g=>g.id===group.id)
  if(index>=0)data.groups[index]=group
- try{await load()}catch(e){show('付款标记已保存，刷新失败：'+e.message,'error')}
+ try{await load()}catch(e){show('处理已保存，刷新失败：'+e.message,'error')}
 }
 </script>
 
@@ -176,7 +176,7 @@ async function tradePurposeUpdated(group){
   <div class="overview"><article><span>账户余额</span><strong>{{savedEnabled?amount(data.balance.amount):'---'}} <small>USD</small></strong><button class="text-link" :disabled="running" @click="perform({action:'balance'})">查询余额</button></article><article><span>冻结金额</span><strong>{{savedEnabled?amount(data.balance.frozen):'---'}} <small>USD</small></strong><small>平台实时返回 · 与卡余额不叠加</small></article><article><span>卡片余额</span><strong>{{savedEnabled?(typeof cardTotal==='number'?cardTotal.toFixed(2):cardTotal):'---'}} <small>USD</small></strong><small>正常及销卡处理中 {{savedEnabled?activeCards.length:'---'}} 张</small></article><article><span>可用于开通</span><strong>{{savedEnabled?selectable:'---'}} <small>张卡</small></strong><small>满足开通上限与占用要求</small></article></div>
   <NexovccReconciliationBar :masked="!savedEnabled" :syncing="running" :data="data" :refresh-seconds="cfg.page_refresh_seconds" @details="inspect($event)"/>
   <NexovccFinanceSummary :data="data" :masked="!savedEnabled" @details="inspect($event)"/>
-  <div class="sync-line"><span>财务更新 {{at(data.finance?.at)}}</span><span v-if="data.sync?.error||data.finance_error" class="danger-text">保留上次数据：{{data.sync?.error||data.finance_error}}<template v-if="data.sync?.retry_after"> · {{at(data.sync.retry_after)}} 后重试</template></span><button class="text-link" @click="inspect({type:'recharges'})">充值记录</button><button class="text-link" @click="inspect({type:'funds'})">资金明细</button><button class="text-link" @click="inspect({type:'days'})">平台日汇总</button></div>
+  <div class="sync-line"><span>财务更新 {{at(data.finance?.at)}}</span><span v-if="data.sync?.error||data.finance_error" class="danger-text">保留上次数据：{{data.sync?.error||data.finance_error}}<template v-if="data.sync?.retry_after"> · {{at(data.sync.retry_after)}} 后重试</template></span><button class="text-link" @click="inspect({type:'recharges'})">充值记录</button><button class="text-link" @click="inspect({type:'funds'})">资金明细</button><button class="text-link" @click="inspect({type:'days'})">平台日汇总</button><button class="text-link" @click="inspect({type:'reviews'})">交易核实</button></div>
   <nav class="tabs"><button v-for="item in tabs" :key="item.id" :class="{selected:tab===item.id}" @click="tab=item.id">{{item.name}}</button></nav>
   <div v-if="!ready" class="panel empty">正在读取环球卡台…</div>
   <template v-else-if="tab!=='settings'">

@@ -23,7 +23,7 @@ export function cardFunding(data, row) {
  const totals = financeTotals(data, serial)
  // Active/closing cards still belong to card assets. Only a closed card's
  // uncredited residual can explain a missing transfer, never a new expense.
- const closurePending = ready && closed && !totals.unverified ? Math.max(0, funded - withdrawn - returned - totals.cardLoss - totals.settlement - totals.pending) : null
+ const closurePending = ready && closed && !totals.unverified && !totals.staleReviews ? Math.max(0, funded - withdrawn - returned - totals.cardLoss - totals.settlement - totals.pending - totals.manualFees) : null
  const settled = ready && closed && closurePending === 0 && !waiting
  return {ready, funded:ready ? funded : null, withdrawn:ready ? withdrawn : null, returned:ready ? returned : null,
   difference:settled ? funded - withdrawn - returned : null, additions:additions.length,
@@ -62,6 +62,7 @@ export function reconciliation(data, now = Date.now(), freshnessSeconds = 120) {
  if (moneyMissing) reasons.push('账户或卡片余额缺失')
  if (data.finance_error) reasons.push('本次同步未完成，使用上次流水')
  if (totals.unverified || totals.foreign || totals.unknownFunds || allFunds.some(f => !hasAmount(f.amount))) reasons.push('部分流水金额、币种或类型待核实')
+ if (totals.staleReviews) reasons.push('人工核实涉及的流水已变化，请重新核实')
  if (summaries.some(s => !s.ready)) reasons.push('部分卡片入金流水缺失')
  if (cards.some(r => r.card.error)) reasons.push('部分卡片查询异常')
  const serials = new Set(cards.map(r => r.card.serial_no))

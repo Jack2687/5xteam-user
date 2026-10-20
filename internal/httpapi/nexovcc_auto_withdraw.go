@@ -51,7 +51,10 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 	if err = s.store.NexovccCached("finance", &finance); err != nil {
 		return err
 	}
-	groups := nexovcc.Groups(finance)
+	groups, err := s.store.NexovccTradeGroups(finance)
+	if err != nil {
+		return err
+	}
 	sort.Slice(cards, func(i, j int) bool {
 		if cards[i].CreatedAt.Equal(cards[j].CreatedAt) {
 			return cards[i].ID < cards[j].ID

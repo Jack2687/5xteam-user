@@ -15,7 +15,6 @@ func nexovccTradeGroups(q ejhCaseQuery, f nexovcc.Finance) ([]nexovcc.TradeGroup
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	type purpose struct {
 		nonPro   bool
 		revision int
@@ -25,14 +24,21 @@ func nexovccTradeGroups(q ejhCaseQuery, f nexovcc.Finance) ([]nexovcc.TradeGroup
 		var id string
 		var p purpose
 		if err = rows.Scan(&id, &p.nonPro, &p.revision); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		marks[id] = p
 	}
-	if err = rows.Err(); err != nil {
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
 		return nil, err
 	}
-	groups := nexovcc.Groups(f)
+	reviews, err := nexovccTradeReviews(q)
+	if err != nil {
+		return nil, err
+	}
+	groups, _ := nexovcc.ReviewedGroups(f, reviews)
 	for i := range groups {
 		p := marks[groups[i].ID]
 		groups[i].NonPro, groups[i].PurposeRevision = p.nonPro, p.revision

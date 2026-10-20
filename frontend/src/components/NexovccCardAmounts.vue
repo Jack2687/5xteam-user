@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { money, rmb } from '../nexovcc-finance'
 const props=defineProps({totals:{type:Object,required:true}})
 defineEmits(['details'])
-const incomplete=computed(()=>!props.totals.ready||props.totals.unknownRevenue||props.totals.unmatchedCases||props.totals.unmatched||props.totals.unverified||props.totals.foreign||props.totals.unknownFunds)
+const incomplete=computed(()=>!props.totals.ready||props.totals.unknownRevenue||props.totals.unmatchedCases||props.totals.unmatched||props.totals.unverified||props.totals.staleReviews||props.totals.foreign||props.totals.unknownFunds)
 const usd=v=>props.totals.ready?money(v):'—'
 const r=v=>props.totals.ready?rmb(v):'—'
 const fees=computed(()=>[

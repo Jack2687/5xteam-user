@@ -283,6 +283,26 @@ func (s *Store) MatchNexovccCase(id, groupID, reason string) error {
 }
 
 func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase) error {
+	// Recompute interpretations from the current cached evidence, including
+	// parser corrections, without waiting for another supplier request.
+	var financeRaw string
+	var currentGroups map[string]nexovcc.TradeGroup
+	if err := q.QueryRow(`SELECT profile FROM nexovcc_cache WHERE kind='finance'`).Scan(&financeRaw); err == nil {
+		var f nexovcc.Finance
+		if err = json.Unmarshal([]byte(financeRaw), &f); err != nil {
+			return err
+		}
+		groups, err := nexovccTradeGroups(q, f)
+		if err != nil {
+			return err
+		}
+		currentGroups = map[string]nexovcc.TradeGroup{}
+		for _, g := range groups {
+			currentGroups[g.ID] = g
+		}
+	} else if err != sql.ErrNoRows {
+		return err
+	}
 	revenues := map[string]*float64{}
 	rows, e := q.Query(`SELECT email,sum(amount) FROM nexovcc_revenue GROUP BY email`)
 	if e != nil {
@@ -326,6 +346,13 @@ func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase)
 			var m NexovccMatch
 			if e = json.Unmarshal([]byte(raw), &m); e != nil {
 				return e
+			}
+			if currentGroups != nil {
+				g, ok := currentGroups[m.Group.ID]
+				if !ok {
+					continue
+				}
+				m.Group = g
 			}
 			c.Match = &m
 			var override string

@@ -194,7 +194,7 @@ func TestFinanceResidualSettlementRequiresEvidence(t *testing.T) {
 			r := Trade{ID: "unverified", Serial: g.Serial, Authorization: g.Authorization, Currency: "USD", Amount: "0.05", MerchantAmount: "0.05", MerchantCurrency: "USD", Status: "COMPLETE", At: g.ReturnedAt.Add(time.Hour)}
 			switch mode {
 			case "amount mismatch":
-				r.Amount = "0.04"
+				r.Amount = "0.03"
 			case "early settlement":
 				r.At = g.At
 			case "partial merchant return":

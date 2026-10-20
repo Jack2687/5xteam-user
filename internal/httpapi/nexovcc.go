@@ -118,6 +118,7 @@ func (s *Server) nexovccRoutes(m *http.ServeMux) {
 	m.HandleFunc("DELETE /api/nexovcc/cases/unopened", s.deleteNexovccUnopenedCases)
 	m.HandleFunc("PUT /api/nexovcc/cases/{id}/match", s.nexovccCaseMatch)
 	m.HandleFunc("PUT /api/nexovcc/trades/{id}/purpose", s.nexovccTradePurpose)
+	m.HandleFunc("PUT /api/nexovcc/trade-reviews/{id}", s.nexovccTradeReview)
 }
 func (s *Server) stopNexovcc() {
 	s.nexovcc.jobMu.Lock()
@@ -234,7 +235,12 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取环球刷新状态失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "finance_error": financeError, "sync": syncState}, "")
+	reviewGroups, reviews, e := s.store.NexovccReviewData(finance)
+	if e != nil {
+		writeAPI(w, 500, nil, "读取交易核实记录失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState}, "")
 }
 func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Lock()

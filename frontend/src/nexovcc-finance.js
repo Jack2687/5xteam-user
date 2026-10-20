@@ -6,6 +6,10 @@ export function cents(value) { return value===null||value===undefined||value==='
 export function money(value) { return value===null||value===undefined||!Number.isFinite(value) ? '—' : (value/100).toFixed(2) }
 export function rCents(usdCents) { return Math.sign(usdCents)*Math.round(Math.abs(usdCents)*67/10) }
 export function rmb(usdCents) { return usdCents===null||usdCents===undefined ? '—' : money(rCents(usdCents)) }
+export function manualOtherFees(data,serial='') { return (data.groups||[]).filter(g=>(!serial||g.serial_no===serial)&&g.other_expense?.applied).map(g=>({...g.other_expense,serial_no:g.serial_no,group_id:g.id})) }
+export function ledgerFunds(data) {
+ return [...(data.finance?.funds||[]),...manualOtherFees(data).map(r=>({id:'review:'+r.group_id,kind:'manual-other',serial_no:r.serial_no,last4:(data.finance?.trades||[]).find(t=>t.serial_no===r.serial_no)?.last4,amount:'-'+r.amount,currency:'USD',at:r.updated_at,link:r.group_id,reason:r.reason,manual:true}))]
+}
 export function caseAmounts(row) {
  const g=row.match?.group,known=g?.valid
  const cost=known?cents(g.cost):null, revenue=row.revenue_r==null?null:cents(row.revenue_r)
@@ -24,11 +28,13 @@ export function financeTotals(data,serial='') {
  const valid=groups.filter(g=>g.valid),revenue=sum(cases,c=>cents(c.revenue_r))
  const cardLoss=sum(valid.filter(g=>g.fully_returned),g=>cents(g.difference))
  const settlement=sum(valid.filter(g=>g.settled&&!g.fully_returned),g=>cents(g.difference))
- const cost=sum(funds.filter(r=>feeKinds.includes(r.kind)&&r.currency==='USD'),r=>-cents(r.amount))+cardLoss+settlement+rechargeFee
+ const manualFees=sum(manualOtherFees(data,serial),r=>cents(r.amount))
+ const cost=sum(funds.filter(r=>feeKinds.includes(r.kind)&&r.currency==='USD'),r=>-cents(r.amount))+cardLoss+settlement+rechargeFee+manualFees
  const linked=new Set(cases.map(c=>c.match?.group?.id).filter(Boolean))
- return {ready,gross,received:serial?0:sum(recharges,r=>cents(r.received)),rechargeFee,opening:fees[3003]+fees[5001],service:fees[3004]+fees[3005],reversal:fees[2003]+fees[5004],transaction:fees[2007]+fees[5008],otherFees:Object.entries(fees).filter(([k])=>![3003,3004,3005,5001,2003,5004,2007,5008].includes(Number(k))).reduce((s,[,v])=>s+v,0),cardLoss,settlement,cost,revenue,profit:revenue-rCents(cost),
+ return {ready,gross,received:serial?0:sum(recharges,r=>cents(r.received)),rechargeFee,opening:fees[3003]+fees[5001],service:fees[3004]+fees[3005],reversal:fees[2003]+fees[5004],transaction:fees[2007]+fees[5008],otherFees:Object.entries(fees).filter(([k])=>![3003,3004,3005,5001,2003,5004,2007,5008].includes(Number(k))).reduce((s,[,v])=>s+v,0)+manualFees,manualFees,cardLoss,settlement,cost,revenue,profit:revenue-rCents(cost),
   paid:sum(valid,g=>cents(g.payment)),returned:sum(valid,g=>cents(g.returned)),pending:sum(valid.filter(g=>!g.fully_returned&&!g.settled),g=>Math.max(0,cents(g.difference))),
-  unknownRevenue:cases.filter(c=>c.revenue_r==null).length,unmatchedCases:cases.filter(c=>!c.match).length,unmatched:groups.filter(g=>!g.non_pro&&cents(g.payment)>0&&!linked.has(g.id)).length,unverified:groups.filter(g=>!g.valid).length,
+  unknownRevenue:cases.filter(c=>c.revenue_r==null).length,unmatchedCases:cases.filter(c=>!c.match).length,unmatched:groups.filter(g=>!g.non_pro&&!g.other_expense?.applied&&cents(g.payment)>0&&!linked.has(g.id)).length,unverified:groups.filter(g=>!g.valid&&!g.other_expense?.applied).length,
+  staleReviews:(data.trade_reviews||[]).filter(r=>!r.voided&&!r.applied&&(!serial||(data.review_groups||[]).some(g=>g.id===r.group_id&&g.serial_no===serial))).length,
   foreign:funds.filter(r=>r.currency!=='USD').length+(serial?0:(f.recharges||[]).filter(r=>r.status==='1'&&r.currency!=='USD').length),
   unknownFunds:funds.filter(r=>!fundNames[r.kind]).length}
 }

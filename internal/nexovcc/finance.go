@@ -59,25 +59,26 @@ type Finance struct {
 	Error     string     `json:"error"`
 }
 type TradeGroup struct {
-	NonPro           bool      `json:"non_pro,omitempty"`
-	PurposeRevision  int       `json:"purpose_revision"`
-	ID               string    `json:"id"`
-	Serial           string    `json:"serial_no"`
-	Authorization    string    `json:"authorization"`
-	Payment          string    `json:"payment"`
-	Returned         string    `json:"returned"`
-	Difference       string    `json:"difference"`
-	Cost             string    `json:"cost"`
-	Fees             string    `json:"fees"`
-	MerchantAmount   string    `json:"merchant_amount"`
-	MerchantCurrency string    `json:"merchant_currency"`
-	FullyReturned    bool      `json:"fully_returned"`
-	Settled          bool      `json:"settled"`
-	Valid            bool      `json:"valid"`
-	Problem          string    `json:"problem"`
-	At               time.Time `json:"at"`
-	ReturnedAt       time.Time `json:"returned_at"`
-	TradeIDs         []string  `json:"trade_ids"`
+	NonPro           bool         `json:"non_pro,omitempty"`
+	PurposeRevision  int          `json:"purpose_revision"`
+	OtherExpense     *TradeReview `json:"other_expense,omitempty"`
+	ID               string       `json:"id"`
+	Serial           string       `json:"serial_no"`
+	Authorization    string       `json:"authorization"`
+	Payment          string       `json:"payment"`
+	Returned         string       `json:"returned"`
+	Difference       string       `json:"difference"`
+	Cost             string       `json:"cost"`
+	Fees             string       `json:"fees"`
+	MerchantAmount   string       `json:"merchant_amount"`
+	MerchantCurrency string       `json:"merchant_currency"`
+	FullyReturned    bool         `json:"fully_returned"`
+	Settled          bool         `json:"settled"`
+	Valid            bool         `json:"valid"`
+	Problem          string       `json:"problem"`
+	At               time.Time    `json:"at"`
+	ReturnedAt       time.Time    `json:"returned_at"`
+	TradeIDs         []string     `json:"trade_ids"`
 }
 
 func SignedMoney(n int64) string {
@@ -380,8 +381,12 @@ func Groups(f Finance) []TradeGroup {
 				returnCurrencyMatches = false
 			}
 		}
-		residualSettlement := payments == 1 && completeCount == 1 && returned > 0 && settled > 0 &&
-			paid == returned+settled && fullReturnEvidence && returnCurrencyMatches &&
+		// The issuer rounds the residual settlement independently. Permit one
+		// cent only with a full merchant-currency reversal and later settlement;
+		// the actual paid-returned difference remains the cost, never rounded away.
+		residualDelta := paid - returned - settled
+		residualSettlement := payments == 1 && completeCount == 1 && returned > 0 && settled > 0 && paid > returned &&
+			residualDelta >= -1 && residualDelta <= 1 && fullReturnEvidence && returnCurrencyMatches &&
 			merchantPaid > 0 && merchantPaid == merchantReturned &&
 			!g.ReturnedAt.IsZero() && !completedAt.Before(g.ReturnedAt)
 		if completeCount == 1 && !residualSettlement {
