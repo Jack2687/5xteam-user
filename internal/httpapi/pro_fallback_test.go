@@ -31,6 +31,8 @@ type fallbackMock struct {
 	sourceFailure    bool
 	sourceMissing    bool
 	sourceIncomplete bool
+	sourceCounts     map[int64]int
+	sourceErrors     map[int64]bool
 	server           *httptest.Server
 }
 
@@ -63,21 +65,31 @@ func newFallbackMock(t *testing.T) *fallbackMock {
 			if !m.sourceMissing {
 				groups = append(groups, map[string]any{"id": 9, "name": "main", "platform": "openai"})
 			}
+			for id := range m.sourceCounts {
+				if id != 9 {
+					groups = append(groups, map[string]any{"id": id, "name": fmt.Sprintf("monitor-%d", id), "platform": "openai"})
+				}
+			}
 			write(groups)
 			return
 		case "/api/v1/admin/accounts":
-			if r.URL.Query().Get("group") == "9" {
-				if m.sourceFailure {
+			sourceID, _ := strconv.ParseInt(r.URL.Query().Get("group"), 10, 64)
+			sourceCount, extraSource := m.sourceCounts[sourceID]
+			if sourceID == 9 {
+				sourceCount = m.sourceCount
+			}
+			if sourceID == 9 || extraSource {
+				if (sourceID == 9 && m.sourceFailure) || m.sourceErrors[sourceID] {
 					w.WriteHeader(503)
 					return
 				}
 				items := []any{}
 				if !m.sourceIncomplete {
-					for i := 0; i < m.sourceCount; i++ {
-						items = append(items, map[string]any{"id": 100 + i, "platform": "openai", "group_ids": []int64{9}})
+					for i := 0; i < sourceCount; i++ {
+						items = append(items, map[string]any{"id": 100 + i, "platform": "openai", "group_ids": []int64{sourceID}})
 					}
 				}
-				write(map[string]any{"items": items, "total": m.sourceCount})
+				write(map[string]any{"items": items, "total": sourceCount})
 				return
 			}
 

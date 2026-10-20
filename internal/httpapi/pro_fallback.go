@@ -20,6 +20,7 @@ type proFallbackRuntime struct {
 	lastError     string
 	observation   restock.FallbackObservation
 	source        string
+	rules         []fallbackRuleState
 	tick          sync.Mutex
 	clients       map[string]*sub2.Client
 	next          time.Time
@@ -105,33 +106,21 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 			s.proFallback.next = s.fallbackNow().Add(time.Duration(f.CheckSeconds) * time.Second)
 		}
 	}()
-	observation := restock.FallbackObservation{GroupID: c.GroupID}
-	source := ""
-	if f.Enabled {
-		if err = f.Validate(); err != nil {
-			return err
-		}
-		sampleCtx, stop := context.WithTimeout(parent, 5*time.Second)
-		observation, source = s.collectFallbackSource(sampleCtx, c)
-		stop()
-		s.proFallback.mu.Lock()
-		// Retain the last valid sample for display only; Error prevents decisions.
-		old := s.proFallback.observation
-		if observation.Error != "" && source == s.proFallback.source && old.Count != nil {
-			observation.Count, observation.At, observation.GroupName = old.Count, old.At, old.GroupName
-		}
-		s.proFallback.observation, s.proFallback.source = observation, source
-		s.proFallback.mu.Unlock()
+	if err = f.Validate(); err != nil {
+		return err
 	}
-	plan := f.Plan(s.fallbackNow(), observation)
-	if plan.Hold {
-		return errors.New(plan.Reason)
+	rows := s.collectFallbackRules(parent, f, c)
+	s.proFallback.mu.Lock()
+	s.proFallback.rules = rows
+	if len(rows) > 0 {
+		s.proFallback.observation, s.proFallback.source = rows[0].Monitor, rows[0].Source
 	}
+	s.proFallback.mu.Unlock()
 	bindings, err := s.store.ProFallbackBindings()
 	if err != nil {
 		return err
 	}
-	managed := f.Enabled
+	managed := f.Enabled && len(f.AccountIDs) > 0
 	selected := map[int64]bool{}
 	var target model.DownstreamTarget
 	if managed {
@@ -198,7 +187,7 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 				clientKey = targetID
 			}
 		}
-		b.Desired = current && plan.Active
+		b.Desired = false
 		if current {
 			b.GroupID = f.GroupID
 		}
@@ -224,34 +213,40 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 			if !a.Supported() {
 				b.Error = "账号已不是 OpenAI API Key / OAuth 类型，请人工检查"
 			} else {
-				b.Desired = current && plan.Active
-				member := false
-				for _, groupID := range f.SelectedGroupIDs() {
-					if a.InGroup(groupID) {
-						member = true
-						if current {
-							b.GroupID = groupID
-						}
-						break
+				hold := false
+				if current {
+					var group int64
+					b.Desired, hold, group, b.Error = fallbackAccountPlan(f, rows, b.AccountID, &a, s.fallbackNow())
+					if group > 0 {
+						b.GroupID = group
+					}
+					if hold {
+						b.Desired = *a.Schedulable
 					}
 				}
-				if b.Desired && !member {
-					b.Desired = false
-					b.Error = "账号已离开兜底分组，停止开启并关闭其调度；请重新选择"
-				}
-				if *a.Schedulable != b.Desired {
-					if managed {
+				if !hold && *a.Schedulable != b.Desired {
+					if current {
 						latest, e := s.store.ProRestockConfig()
 						if e != nil {
 							return e
 						}
-						freshPlan := f.Plan(s.fallbackNow(), observation)
-						if latest.Version != c.Version || freshPlan.Hold || freshPlan.Phase != plan.Phase || freshPlan.Active != plan.Active {
+						fresh, wait, _, _ := fallbackAccountPlan(f, rows, b.AccountID, &a, s.fallbackNow())
+						if latest.Version != c.Version || wait || fresh != b.Desired {
 							return errors.New("配置或主组快照已变化，等待下轮核验")
 						}
 						p, password, _, pe := s.store.ProSettings()
-						if pe != nil || fallbackSourceKey(latest, p, password) != source {
-							return errors.New("主监控配置已变更，保持调度等待新采集")
+						if pe != nil {
+							return pe
+						}
+						for _, row := range rows {
+							if !row.Rule.Enabled {
+								continue
+							}
+							policy := latest
+							policy.GroupID = row.Rule.MonitorGroupID
+							if fallbackSourceKey(policy, p, password) != row.Source {
+								return errors.New("主监控配置已变更，保持调度等待新采集")
+							}
 						}
 					}
 					// Write-ahead intent survives an ambiguous POST or a process crash.
@@ -289,6 +284,12 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 	var wg sync.WaitGroup
 	var resultMu sync.Mutex
 	var firstErr error
+	for _, row := range rows {
+		if row.Plan.Hold {
+			firstErr = errors.New(row.Plan.Reason)
+			break
+		}
+	}
 	for i := 0; i < min(8, len(bindings)); i++ {
 		wg.Add(1)
 		go func() {

@@ -21,6 +21,7 @@ func (s *Server) registerProFallback(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/pro-restock/fallback", s.saveProFallback)
 	mux.HandleFunc("POST /api/pro-restock/fallback/groups", s.fallbackGroups)
 	mux.HandleFunc("POST /api/pro-restock/fallback/accounts", s.fallbackAccounts)
+	mux.HandleFunc("GET /api/pro-restock/fallback/monitor-groups", s.fallbackMonitorGroups)
 	mux.HandleFunc("POST /api/pro-restock/fallback/retry", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.tickProFallback(r.Context(), true); err != nil {
 			writeAPI(w, 409, nil, err.Error())
@@ -45,20 +46,40 @@ func (s *Server) getProFallback(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	accounts := []map[string]any{}
-	for _, b := range bindings {
-		accounts = append(accounts, map[string]any{"id": b.AccountID, "name": b.Name, "group_id": b.GroupID, "desired": b.Desired, "observed": b.Observed, "error": b.Error, "checked_at": b.CheckedAt, "old_connection": b.ConnectionID != target})
-	}
 	now := s.fallbackNow()
 	s.proFallback.mu.Lock()
 	checked, lastError := s.proFallback.lastCheck, s.proFallback.lastError
-	observation, source := s.proFallback.observation, s.proFallback.source
+	saved := append([]fallbackRuleState(nil), s.proFallback.rules...)
 	s.proFallback.mu.Unlock()
-	p, password, _, pe := s.store.ProSettings()
-	if pe != nil || source != fallbackSourceKey(c, p, password) {
-		observation = restock.FallbackObservation{GroupID: c.GroupID}
+	p, password, _, _ := s.store.ProSettings()
+	rows := fallbackRowsForDisplay(f, c, p, password, saved, now)
+	accounts := []map[string]any{}
+	for _, b := range bindings {
+		desired, hold, _, _ := fallbackAccountPlan(f, rows, b.AccountID, nil, now)
+		accounts = append(accounts, map[string]any{"id": b.AccountID, "name": b.Name, "group_id": b.GroupID, "desired": b.Desired, "planned": desired && b.ConnectionID == target, "hold": hold, "observed": b.Observed, "error": b.Error, "checked_at": b.CheckedAt, "old_connection": b.ConnectionID != target})
 	}
-	writeAPI(w, 200, map[string]any{"config": f, "plan": f.Plan(now, observation), "monitor": observation, "accounts": accounts, "server_time": now, "checked_at": checked, "error": lastError}, "")
+	observation := restock.FallbackObservation{}
+	if len(rows) > 0 {
+		observation = rows[0].Monitor
+	}
+	f.Rules = f.EffectiveRules(c.GroupID)
+	writeAPI(w, 200, map[string]any{"config": f, "plan": fallbackSummary(f, rows), "monitor": observation, "rules": rows, "accounts": accounts, "server_time": now, "checked_at": checked, "error": lastError}, "")
+}
+
+func (s *Server) fallbackMonitorGroups(w http.ResponseWriter, r *http.Request) {
+	p, password, _, err := s.store.ProSettings()
+	if err != nil || p.Provider != "sub2" || p.Sub2.URL == "" || p.Sub2.Email == "" || password == "" {
+		writeAPI(w, 400, nil, "请先配置 Pro 推送的主 Sub2 连接")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	groups, err := s.fallbackClient("primary").Groups(ctx, p.Sub2, password)
+	if err != nil {
+		writeAPI(w, 400, nil, fallbackError("读取监控分组", err))
+		return
+	}
+	writeAPI(w, 200, groups, "")
 }
 func (s *Server) readFallbackInput(w http.ResponseWriter, r *http.Request) (fallbackInput, model.DownstreamTarget, bool) {
 	v := fallbackInput{FallbackConfig: restock.DefaultFallbackConfig()}
@@ -161,28 +182,57 @@ func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if v.Enabled {
+	if v.Enabled && len(v.AccountIDs) > 0 {
 		c, e := s.store.ProRestockConfig()
 		p, password, _, pe := s.store.ProSettings()
-		if e != nil || pe != nil || c.GroupID <= 0 || p.Provider != "sub2" || p.Sub2.URL == "" || p.Sub2.Email == "" || password == "" {
-			writeAPI(w, 400, nil, "请先配置 Pro 推送 Sub2 连接和自动补货监控分组")
+		if e != nil || pe != nil || p.Provider != "sub2" || p.Sub2.URL == "" || p.Sub2.Email == "" || password == "" {
+			writeAPI(w, 400, nil, "请先配置 Pro 推送的主 Sub2 连接")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
+		monitors, err := s.fallbackClient("primary").Groups(ctx, p.Sub2, password)
+		if err != nil {
+			writeAPI(w, 400, nil, fallbackError("读取监控分组", err))
+			return
+		}
+		monitorIDs := map[int64]bool{}
+		for _, g := range monitors {
+			monitorIDs[g.ID] = true
+		}
 		accounts, err := fallbackList(ctx, sub2.New(), v, t)
 		if err != nil {
 			writeAPI(w, 400, nil, err.Error())
 			return
 		}
-		found := map[int64]bool{}
+		found := map[int64]sub2.FallbackAccount{}
 		for _, a := range accounts {
-			found[a.ID] = true
+			found[a.ID] = a
 		}
-		for _, id := range v.AccountIDs {
-			if !found[id] {
-				writeAPI(w, 400, nil, "所选账号已不在所选分组或不是 OpenAI API Key / OAuth 类型，请刷新账号列表")
+		for _, rule := range v.EffectiveRules(c.GroupID) {
+			if !rule.Enabled {
+				continue
+			}
+			if !monitorIDs[rule.MonitorGroupID] {
+				writeAPI(w, 400, nil, "所选监控分组不存在或不是 OpenAI 分组，请重新读取")
 				return
+			}
+			for _, id := range rule.AccountIDs {
+				a, ok := found[id]
+				member := false
+				for _, group := range rule.GroupIDs {
+					if a.InGroup(group) {
+						member = true
+					}
+				}
+				if !ok || !member {
+					writeAPI(w, 400, nil, "所选账号已不在该条规则的兜底分组或不是 OpenAI API Key / OAuth 类型，请刷新账号列表")
+					return
+				}
+				if demandServerKey(p.Sub2.URL) == demandServerKey(t.Sub2.URL) && a.InGroup(rule.MonitorGroupID) {
+					writeAPI(w, 400, nil, "兜底账号不能同时属于本条规则在同一 Sub2 的监控分组，否则会反复开关调度")
+					return
+				}
 			}
 		}
 	}

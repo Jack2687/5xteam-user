@@ -69,6 +69,21 @@ func TestRestockDemandSelectedFallbackAccounts(t *testing.T) {
 	if !g.Valid || g.MonitorUsed != 8 || g.FallbackUsed != 15 || g.TotalUsed != 23 {
 		t.Fatal("unselected or duplicate counted", g)
 	}
+	// Multiple fallback rules feed the same demand gate; shared accounts are
+	// counted once, and a disabled rule cannot add its otherwise busy account.
+	f, _, _ = st.ProFallbackConfig()
+	f.Rules = []restock.FallbackRule{
+		{Enabled: true, MonitorGroupID: 10, GroupIDs: []int64{7}, AccountIDs: []int64{1}},
+		{Enabled: true, MonitorGroupID: 11, GroupIDs: []int64{7, 8}, AccountIDs: []int64{1, 2}},
+		{Enabled: false, MonitorGroupID: 12, GroupIDs: []int64{8}, AccountIDs: []int64{3}},
+	}
+	if _, err = st.SaveProFallbackConfig(f, id); err != nil {
+		t.Fatal(err)
+	}
+	g = s.sampleRestockDemand(context.Background(), c, p, snap)
+	if !g.Valid || g.TotalUsed != 23 || g.FallbackAccounts != 2 {
+		t.Fatal("multiple fallback rules changed demand accounting", g)
+	}
 	p.Sub2.URL = "https://another.example"
 	g = s.sampleRestockDemand(context.Background(), c, p, snap)
 	if !g.Valid || g.TotalUsed != 31 {

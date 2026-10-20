@@ -4,21 +4,46 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
 
 // FallbackConfig contains no credentials. It is separate from replenishment decisions.
 type FallbackConfig struct {
-	Version         int     `json:"version"`
-	Enabled         bool    `json:"enabled"`
-	URL             string  `json:"url"`
-	Email           string  `json:"email"`
-	PasswordPresent bool    `json:"password_present"`
-	GroupID         int64   `json:"group_id"`
-	GroupIDs        []int64 `json:"group_ids"`
-	AccountIDs      []int64 `json:"account_ids"`
-	CheckSeconds    int     `json:"check_seconds"`
+	Rules           []FallbackRule `json:"rules"`
+	Version         int            `json:"version"`
+	Enabled         bool           `json:"enabled"`
+	URL             string         `json:"url"`
+	Email           string         `json:"email"`
+	PasswordPresent bool           `json:"password_present"`
+	GroupID         int64          `json:"group_id"`
+	GroupIDs        []int64        `json:"group_ids"`
+	AccountIDs      []int64        `json:"account_ids"`
+	CheckSeconds    int            `json:"check_seconds"`
+}
+
+// Nil rules retain the legacy binding to the replenishment monitor. An explicit
+// empty list means no rules and must never restore old account selections.
+type FallbackRule struct {
+	Enabled        bool    `json:"enabled"`
+	MonitorGroupID int64   `json:"monitor_group_id"`
+	GroupIDs       []int64 `json:"group_ids"`
+	AccountIDs     []int64 `json:"account_ids"`
+}
+
+func (c FallbackConfig) EffectiveRules(monitor int64) []FallbackRule {
+	if c.Rules != nil {
+		return c.Rules
+	}
+	return []FallbackRule{{Enabled: true, MonitorGroupID: monitor, GroupIDs: c.SelectedGroupIDs(), AccountIDs: c.AccountIDs}}
+}
+
+func (c FallbackConfig) RuleConfig(r FallbackRule) FallbackConfig {
+	c.Rules = nil
+	c.Enabled = c.Enabled && r.Enabled
+	c.GroupID, c.GroupIDs, c.AccountIDs = 0, r.GroupIDs, r.AccountIDs
+	return c
 }
 
 func DefaultFallbackConfig() FallbackConfig {
@@ -38,6 +63,24 @@ func (c FallbackConfig) SelectedGroupIDs() []int64 {
 }
 
 func (c *FallbackConfig) NormalizeGroups() {
+	if c.Rules != nil {
+		c.GroupIDs, c.AccountIDs = []int64{}, []int64{}
+		for _, r := range c.Rules {
+			if !r.Enabled {
+				continue
+			}
+			for _, id := range r.GroupIDs {
+				if !slices.Contains(c.GroupIDs, id) {
+					c.GroupIDs = append(c.GroupIDs, id)
+				}
+			}
+			for _, id := range r.AccountIDs {
+				if !slices.Contains(c.AccountIDs, id) {
+					c.AccountIDs = append(c.AccountIDs, id)
+				}
+			}
+		}
+	}
 	c.GroupIDs = append([]int64{}, c.SelectedGroupIDs()...)
 	c.GroupID = 0
 	if len(c.GroupIDs) > 0 {
@@ -46,6 +89,26 @@ func (c *FallbackConfig) NormalizeGroups() {
 }
 
 func (c FallbackConfig) Validate() error {
+	if c.Rules != nil {
+		if len(c.Rules) > 50 {
+			return errors.New("兜底规则最多设置 50 条")
+		}
+		seen := map[int64]bool{}
+		for i, r := range c.Rules {
+			if r.MonitorGroupID < 0 || (c.Enabled && r.Enabled && r.MonitorGroupID == 0) {
+				return fmt.Errorf("兜底规则 %d：请选择监控分组", i+1)
+			}
+			if r.MonitorGroupID > 0 && seen[r.MonitorGroupID] {
+				return errors.New("同一监控分组请配置在一条规则内")
+			}
+			seen[r.MonitorGroupID] = true
+			row := c.RuleConfig(r)
+			if err := row.Validate(); err != nil {
+				return fmt.Errorf("兜底规则 %d：%w", i+1, err)
+			}
+		}
+		c.NormalizeGroups()
+	}
 	if c.CheckSeconds < 2 || c.CheckSeconds > 300 {
 		return errors.New("兜底检查／失败重试周期应为 2～300 秒")
 	}
@@ -59,7 +122,7 @@ func (c FallbackConfig) Validate() error {
 		}
 	}
 	groups := c.SelectedGroupIDs()
-	if c.Enabled && (len(groups) == 0 || len(c.AccountIDs) == 0) {
+	if c.Rules == nil && c.Enabled && (len(groups) == 0 || len(c.AccountIDs) == 0) {
 		return errors.New("请选择兜底分组及至少一个 OpenAI 账号")
 	}
 	if len(groups) > 100 {
