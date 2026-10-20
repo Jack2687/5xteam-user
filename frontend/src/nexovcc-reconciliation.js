@@ -49,6 +49,26 @@ export function cardBalanceDisplay(data, row) {
  return {amount:'—',note:funding.closurePending > 0?'余款待退回':'余款待核实'}
 }
 
+// The headline is normal-card money still outside the card balance, not the
+// supplier's aggregate (which may retain deleted-card and released holds).
+// Reuse the existing balance-recovery estimate; never change refund evidence,
+// costs, occupancy, withdrawal, or closure rules to produce this display.
+export function frozenBalanceDisplay(data) {
+ const raw=data.balance?.frozen
+ const platform=hasAmount(raw)&&cents(raw)>=0?cents(raw):null
+ const cards=(data.cards||[]).map(row=>({row,totals:financeTotals(data,row.card.serial_no)}))
+ const active=cards.filter(({row})=>row.card.status!=='4')
+ const rows=cards.filter(({row,totals})=>row.card.status==='4'&&totals.pending>0).map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:totals.pending,returned:cardFunding(data,row).returned}))
+ const recoveredRows=active.filter(({totals})=>totals.balanceRecoveredPending>0).map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:totals.balanceRecoveredPending}))
+ const pendingRows=active.map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:Math.max(0,totals.pending-totals.balanceRecoveredPending)})).filter(row=>row.amount>0)
+ const historical=sum(rows,row=>row.amount),recovered=sum(recoveredRows,row=>row.amount)
+ const knownSerials=new Set(cards.map(({row})=>row.card.serial_no))
+ const ready=Number.isFinite(timestamp(data.finance?.at))&&active.every(({totals})=>!totals.unverified&&!totals.staleReviews)&&
+  !(data.groups||[]).some(g=>!knownSerials.has(g.serial_no))
+ const current=ready?sum(pendingRows,row=>row.amount):null
+ return {platform,historical,recovered,current,rows,recoveredRows,pendingRows}
+}
+
 export function cardReturnCounts(cases) {
  const counts = {unopened:0, opened:0, waiting:0, returned:0}
  for (const row of cases || []) if (Object.hasOwn(counts, row.state)) counts[row.state]++

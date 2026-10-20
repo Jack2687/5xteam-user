@@ -19,7 +19,7 @@ import NexovccCardFunding from './NexovccCardFunding.vue'
 import NexovccCardReturns from './NexovccCardReturns.vue'
 import NexovccCardAmounts from './NexovccCardAmounts.vue'
 import { sortReturnCases } from '../nexovcc-case-details'
-import { cardBalanceDisplay } from '../nexovcc-reconciliation'
+import { cardBalanceDisplay, frozenBalanceDisplay } from '../nexovcc-reconciliation'
 
 const props=defineProps({defaultPageSize:{type:Number,default:10},entry:{type:Object,default:null}})
 const emit=defineEmits(['entry-applied'])
@@ -53,6 +53,7 @@ const dialogBlocked=computed(()=>saving.value||(dialog.value?.type==='open'?open
 const activeCards=computed(()=>data.cards.filter(r=>r.card.status!=='4'))
 const cardTotal=computed(()=>{const rows=activeCards.value;if(!rows.length)return '0.00';if(rows.some(r=>r.card.balance===''))return '待同步';return rows.reduce((s,r)=>s+Math.round(Number(r.card.balance)*100),0)/100})
 const selectable=computed(()=>activeCards.value.filter(r=>r.local?.available).length)
+const frozenBalance=computed(()=>frozenBalanceDisplay(data))
 const filtered=computed(()=>{
  const rows=tab.value==='cards'?data.cards.filter(r=>targetCardID.value?r.card.id===targetCardID.value:filter.value==='closed'?r.card.status==='4':r.card.status!=='4'):tab.value==='returns'?sortReturnCases(returnCases.value.filter(c=>returnCategory.value==='unopened'?c.state==='unopened':c.state!=='unopened'&&(!returnFilter.value||c.state===returnFilter.value))):(withdrawAttentionOnly.value?withdrawAttention.value:data.operations)
  const q=search.value.trim().toLowerCase();return rows.filter(r=>!q||[r.card?.serial_no,r.card?.last4,r.card?.remark,r.email,r.id,r.last4,r.serial_no,r.card_name].some(v=>String(v||'').toLowerCase().includes(q)))
@@ -189,7 +190,8 @@ async function tradePurposeUpdated(group){
   <MessageBar :message="message"/>
   <NexovccProgress :job="job" :batch="batch" :busy="busy"/>
   <p v-if="!savedEnabled&&ready" class="note">卡台已关闭，可手动查询和操作。</p>
-  <div class="overview"><article><span>账户余额</span><strong>{{savedEnabled?amount(data.balance.amount):'---'}} <small>USD</small></strong><button class="text-link" :disabled="running" @click="perform({action:'balance'})">查询余额</button></article><article><span>冻结金额</span><strong>{{savedEnabled?amount(data.balance.frozen):'---'}} <small>USD</small></strong><small>平台实时返回 · 与卡余额不叠加</small></article><article><span>卡片余额</span><strong>{{savedEnabled?(typeof cardTotal==='number'?cardTotal.toFixed(2):cardTotal):'---'}} <small>USD</small></strong><small>正常及销卡处理中 {{savedEnabled?activeCards.length:'---'}} 张</small></article><article><span>可用于开通</span><strong>{{savedEnabled?selectable:'---'}} <small>张卡</small></strong><small>满足开通上限与占用要求</small></article></div>
+  <div class="overview"><article><span>账户余额</span><strong>{{savedEnabled?amount(data.balance.amount):'---'}} <small>USD</small></strong><button class="text-link" :disabled="running" @click="perform({action:'balance'})">查询余额</button></article><article><span>卡片冻结金额</span><strong>{{savedEnabled?(frozenBalance.current===null?'待核对':money(frozenBalance.current)):'---'}} <small>USD</small></strong><small>正常卡未回款 · 已回到卡余额的不重复计入</small>
+   <details v-if="savedEnabled" class="frozen-breakdown"><summary>查看冻结明细</summary><p>按正常卡未回款流水核算，扣除余额已恢复部分；已销卡不计入。</p><p>平台冻结总额 {{money(frozenBalance.platform)}} USD（仅供核对）</p><p v-if="frozenBalance.current===null">本卡流水或匹配信息不完整，暂不能计算。</p><div v-for="row in frozenBalance.pendingRows" :key="row.serial"><p>尾号 {{row.last4}} · 当前冻结 {{money(row.amount)}} USD</p><button class="text-link" @click="inspect({type:'trades'},row.serial)">查看交易</button></div><template v-if="frozenBalance.recovered"><p>余额已恢复、流水待确认 {{money(frozenBalance.recovered)}} USD<br/>已从冻结金额剔除，回款状态仍等流水确认。</p><div v-for="row in frozenBalance.recoveredRows" :key="row.serial"><button class="text-link" @click="inspect({type:'trades'},row.serial)">尾号 {{row.last4}} · {{money(row.amount)}} USD · 查看交易</button></div></template><template v-if="frozenBalance.historical"><p>已销卡历史授权 {{money(frozenBalance.historical)}} USD / {{rmb(frozenBalance.historical)}} R<br/>不作为正常卡冻结款或可继续回款余额。</p><div v-for="row in frozenBalance.rows" :key="row.serial"><p>尾号 {{row.last4}} · 历史授权 {{money(row.amount)}} USD<br/>销卡已退回主账户 {{money(row.returned)}} USD</p><button class="text-link" @click="inspect({type:'trades'},row.serial)">查看交易</button> · <button class="text-link" @click="inspect({type:'funds',kind:'card-transfers'},row.serial)">查看退回流水</button></div></template><p>仅分开展示，不改原始流水、不重复计成本；冻结金额不再叠加到卡片余额。</p></details></article><article><span>卡片余额</span><strong>{{savedEnabled?(typeof cardTotal==='number'?cardTotal.toFixed(2):cardTotal):'---'}} <small>USD</small></strong><small>正常及销卡处理中 {{savedEnabled?activeCards.length:'---'}} 张</small></article><article><span>可用于开通</span><strong>{{savedEnabled?selectable:'---'}} <small>张卡</small></strong><small>满足开通上限与占用要求</small></article></div>
   <NexovccReconciliationBar :masked="!savedEnabled" :syncing="running" :data="data" :refresh-seconds="cfg.page_refresh_seconds" @details="inspect($event)"/>
   <NexovccFinanceSummary :data="data" :masked="!savedEnabled" @details="inspect($event)"/>
   <div class="sync-line"><span>财务更新 {{at(data.finance?.at)}}</span><span v-if="data.sync?.error||data.finance_error" class="danger-text">保留上次数据：{{data.sync?.error||data.finance_error}}<template v-if="data.sync?.retry_after"> · {{at(data.sync.retry_after)}} 后重试</template></span><button class="text-link" @click="inspect({type:'recharges'})">充值记录</button><button class="text-link" @click="inspect({type:'funds'})">资金明细</button><button class="text-link" @click="inspect({type:'days'})">平台日汇总</button><button class="text-link" @click="inspect({type:'reviews'})">交易核实</button></div>
@@ -234,6 +236,8 @@ async function tradePurposeUpdated(group){
 </template>
 
 <style scoped>
+.frozen-breakdown{font-size:11px;line-height:1.7;color:var(--muted);margin-top:8px}.frozen-breakdown summary{cursor:pointer;width:fit-content}.frozen-breakdown p{margin:8px 0}.frozen-breakdown .text-link{font-size:11px;padding:0}
+
 .template-row{align-items:start}
 .return-filters{display:flex;align-items:center;gap:8px}.return-filters select{padding:9px 12px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:7px;font-size:12px}
 

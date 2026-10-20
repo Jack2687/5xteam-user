@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { cardBalanceDisplay, cardFunding, cardReturnCounts, reconciliation } from '../src/nexovcc-reconciliation.js'
+import { cardBalanceDisplay, cardFunding, cardReturnCounts, frozenBalanceDisplay, reconciliation } from '../src/nexovcc-reconciliation.js'
 import { cardReturnNotice, caseReturnNotice } from '../src/nexovcc-return-notice.js'
 const now=Date.parse('2026-10-19T12:00:00+08:00'),at=new Date(now).toISOString()
 const raw=JSON.parse(readFileSync(new URL('../../internal/nexovcc/testdata/finance.json',import.meta.url),'utf8'))
@@ -170,6 +170,30 @@ assert.equal(check(laterReversal).closedAuthorization,0)
 assert.equal(check(laterReversal).totals.pending,0)
 assert.equal(check(laterReversal).totals.cost,13223)
 assert.equal(check(laterReversal).gap,62,'a later release after the balance was returned does not create another asset')
+
+// Separate the closed-card authorization from the headline freeze without
+// writing off money which the supplier has already returned on card deletion.
+const freeze=structuredClone(deletedBeforeRefund)
+freeze.balance.frozen='425.49'
+freeze.cards[0].card.last4='0450'
+const freezeBefore=structuredClone(freeze),beforeReport=check(freeze)
+assert.deepEqual(frozenBalanceDisplay(freeze),{platform:42549,historical:14183,recovered:0,current:0,rows:[{serial:'pending',last4:'0450',amount:14183,returned:16976}],recoveredRows:[],pendingRows:[]})
+assert.deepEqual(freeze,freezeBefore,'display must preserve balances, ledger, and payment/refund states')
+assert.deepEqual(check(freeze),beforeReport,'display must not change assets or count an imaginary loss')
+for(const raw of ['0.00','100.00','',null,undefined,'invalid','-1.00']){
+ const d=structuredClone(freeze);d.balance.frozen=raw
+ assert.equal(frozenBalanceDisplay(d).current,0,'platform aggregate must not define the normal-card amount: '+raw)
+}
+const noReceipt=structuredClone(freeze)
+noReceipt.finance.funds=noReceipt.finance.funds.filter(f=>f.kind!==3002||f.serial_no!=='pending')
+assert.equal(frozenBalanceDisplay(noReceipt).historical,14183,'deleted authorizations stay historical even when their final transfer is unconfirmed')
+assert.equal(frozenBalanceDisplay(noReceipt).current,0)
+const liveHold=structuredClone(freeze);liveHold.cards[0].card.status='1'
+assert.equal(frozenBalanceDisplay(liveHold).historical,0,'live cards remain in the headline')
+assert.equal(frozenBalanceDisplay(laterReversal).historical,0,'a later reversal clears the historical classification')
+assert.equal(frozenBalanceDisplay(laterSettlement).historical,0,'a later settlement is not a pending authorization')
+assert.equal(frozenBalanceDisplay({finance:{at},balance:{frozen:'0.00'}}).current,0)
+assert.equal(frozenBalanceDisplay({balance:{frozen:''}}).current,null)
 assert.deepEqual(cardReturnCounts([{state:'unopened'},{state:'opened'},{state:'waiting'},{state:'waiting'},{state:'returned'},{state:'invalid'}]),{unopened:1,opened:1,waiting:2,returned:1})
 
 // Informational balance/ledger mismatch must never fabricate refunds, clear
