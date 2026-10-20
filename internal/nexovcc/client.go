@@ -107,6 +107,9 @@ func (c *Client) coolingDown() error {
 		if c.retryCode == 522 {
 			reason = "环球连接超时，正在等待恢复"
 		}
+		if c.retryCode == 500 {
+			reason = "环球服务异常（HTTP 500），正在等待恢复"
+		}
 		if c.retryCode == 429 {
 			reason = "环球访问受限，正在等待解除"
 		}
@@ -208,9 +211,9 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 	if !retryableRead(path) || no522Retries(ctx) {
 		return value, err
 	}
-	for attempt := 1; ActualHTTP522(err) && attempt <= c.http522Retries; attempt++ {
+	for attempt := 1; RetryableHTTPStatus(err) != 0 && attempt <= c.http522Retries; attempt++ {
 		if c.retryProgress != nil {
-			c.retryProgress(fmt.Sprintf("HTTP 522 · %.0f 秒后重试 %d/%d", c.http522Interval.Seconds(), attempt, c.http522Retries))
+			c.retryProgress(fmt.Sprintf("HTTP %d · %.0f 秒后重试 %d/%d", RetryableHTTPStatus(err), c.http522Interval.Seconds(), attempt, c.http522Retries))
 		}
 		if waitErr := c.wait(ctx, c.http522Interval); waitErr != nil {
 			return nil, waitErr
@@ -218,15 +221,15 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 		// The configured retry wait replaces local pacing/backoff for this
 		// attempt only. It does not mark later automatic work as manual.
 		value, err = c.callOnce(WithImmediateRequests(ctx), path, body)
-		if err == nil && c.retryCode == 522 {
+		if err == nil && (c.retryCode == 500 || c.retryCode == 522) {
 			c.retryAt, c.retryCode, c.backoffFailures = time.Time{}, 0, 0
 		}
 	}
-	if ActualHTTP522(err) && c.http522Retries > 0 {
+	if RetryableHTTPStatus(err) != 0 && c.http522Retries > 0 {
 		var remote *Error
 		errors.As(err, &remote)
 		copy := *remote
-		copy.Message = fmt.Sprintf("HTTP 522，重试 %d 次后仍失败，已停止本次请求", c.http522Retries)
+		copy.Message = fmt.Sprintf("HTTP %d，重试 %d 次后仍失败，已停止本次请求", remote.Code, c.http522Retries)
 		err = &copy
 	}
 	return value, err
@@ -268,10 +271,13 @@ func (c *Client) callOnce(ctx context.Context, path string, body map[string]any)
 		if r.Status == 522 {
 			err.Message = "环球连接超时（HTTP 522），等待恢复后重试"
 		}
+		if r.Status == 500 {
+			err.Message = "环球服务异常（HTTP 500），等待恢复后重试"
+		}
 		if r.Status == 429 {
 			err.Message = "环球访问受限（HTTP 429），等待解除后重试"
 		}
-		if r.Status == 429 || r.Status == 522 {
+		if r.Status == 429 || r.Status == 500 || r.Status == 522 {
 			err.RetryAt = c.backoffResponse(r, r.Status)
 		}
 		slog.Warn("环球接口请求失败", "path", path, "http_status", r.Status, "duration_ms", r.DurationMS, "cf_ray", c.safe(r.RayID), "retry_at", err.RetryAt)

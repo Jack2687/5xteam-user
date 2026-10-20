@@ -486,7 +486,7 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 		s.nexovccProgress(fmt.Sprintf("同步正常卡余额 %d/%d · 尾号 %s", normalDone, normalCount, card.Last4), normalDone-1, normalCount)
 		if !card.Imported || card.Error != "" {
 			if _, e = s.refreshNexovccLocked(ctx, card.ID, ""); e != nil {
-				if nexovcc.ActualHTTP522(e) {
+				if nexovcc.RetryableHTTPStatus(e) != 0 {
 					return e
 				}
 				failures++
@@ -496,7 +496,7 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 			// balance endpoint after payments/refunds; an import is not a refresh.
 			updated, balanceErr := s.readNexovccCardBalanceLocked(ctx, card)
 			if balanceErr != nil {
-				if nexovcc.ActualHTTP522(balanceErr) {
+				if nexovcc.RetryableHTTPStatus(balanceErr) != 0 {
 					return balanceErr
 				}
 				updated.Error = "余额同步失败：" + balanceErr.Error()

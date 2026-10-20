@@ -198,8 +198,8 @@ func (s *Server) nexovccActionError(ctx context.Context, op nexovcc.Operation, e
 	if saveErr := s.store.SaveNexovccOperation(op); saveErr != nil {
 		return op, saveErr
 	}
-	if nexovcc.ActualHTTP522(err) {
-		return s.recoverNexovcc522Locked(ctx, op)
+	if code := nexovcc.RetryableHTTPStatus(err); code != 0 {
+		return s.recoverNexovccHTTPErrorLocked(ctx, op, code)
 	}
 	return op, nil
 }

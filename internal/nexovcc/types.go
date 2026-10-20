@@ -27,7 +27,7 @@ type Settings struct {
 	SingleActiveAccount         bool       `json:"single_active_account"`
 	PageRefreshSeconds          int        `json:"page_refresh_seconds"`
 	PageAutoRefresh             bool       `json:"page_auto_refresh"`
-	HTTP522RetrySeconds         int        `json:"http_522_retry_seconds"`
+	HTTP522RetrySeconds         int        `json:"http_522_retry_seconds"` // Shared by HTTP 500/522; preserve saved keys.
 	HTTP522Retries              int        `json:"http_522_retries"`
 	RequestIntervalSeconds      int        `json:"request_interval_seconds"`
 	MaxOnlineCards              int        `json:"max_online_cards"`
@@ -139,7 +139,7 @@ func Normalize(s Settings) (Settings, error) {
 		s.HTTP522RetrySeconds = 5
 	}
 	if s.HTTP522RetrySeconds < 1 || s.HTTP522RetrySeconds > 300 || s.HTTP522Retries < 0 || s.HTTP522Retries > 10 {
-		return s, fmt.Errorf("522 重试间隔须为 1～300 秒，重试次数须为 0～10 次")
+		return s, fmt.Errorf("500 / 522 重试间隔须为 1～300 秒，重试次数须为 0～10 次")
 	}
 	if s.AutoWithdrawIntervalSeconds == 0 {
 		s.AutoWithdrawIntervalSeconds = 60

@@ -85,7 +85,7 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 			e = s.store.SaveNexovccFinance(f)
 		}
 		if e != nil {
-			if nexovcc.ActualHTTP522(e) {
+			if nexovcc.RetryableHTTPStatus(e) != 0 {
 				return e
 			}
 			failures = append(failures, e)
@@ -117,7 +117,7 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 			}
 		}
 		if e != nil {
-			if nexovcc.ActualHTTP522(e) {
+			if nexovcc.RetryableHTTPStatus(e) != 0 {
 				return fmt.Errorf("尾号 %s：%w", card.Last4, e)
 			}
 			failures = append(failures, fmt.Errorf("尾号 %s：%w", card.Last4, e))

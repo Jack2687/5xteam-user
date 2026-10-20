@@ -44,7 +44,7 @@ func TestRequestSpacingIncludesLoginAndPagination(t *testing.T) {
 }
 
 func TestProviderRetryAfterAndTimeoutClassification(t *testing.T) {
-	for _, code := range []int{429, 522} {
+	for _, code := range []int{429, 500, 522} {
 		for _, header := range []string{"90", time.Unix(1090, 0).UTC().Format(http.TimeFormat), "invalid", "-1"} {
 			now := time.Unix(1000, 0)
 			calls := 0
@@ -75,7 +75,7 @@ func TestProviderRetryAfterAndTimeoutClassification(t *testing.T) {
 }
 
 func TestRateLimitAnd522DoNotReplayAndBackOff(t *testing.T) {
-	for _, response := range []Response{{Status: 200, Body: `{"code":500,"message":"请求过于频繁，稍后重试"}`}, {Status: 429}, {Status: 522}} {
+	for _, response := range []Response{{Status: 200, Body: `{"code":500,"message":"请求过于频繁，稍后重试"}`}, {Status: 429}, {Status: 500}, {Status: 522}} {
 		now := time.Unix(1000, 0)
 		calls := 0
 		c := New(Credentials{}, func(_ context.Context, r Request) (Response, error) { calls++; return response, nil })
@@ -87,7 +87,7 @@ func TestRateLimitAnd522DoNotReplayAndBackOff(t *testing.T) {
 			if !errors.As(err, &remote) || !remote.RetryAt.Equal(now.Add(delay)) || calls != attempt+1 {
 				t.Fatal("wrong backoff or replay", calls, err, c.RetryAt())
 			}
-			if response.Status == 522 && !IsUnknown(err) {
+			if (response.Status == 500 || response.Status == 522) && !IsUnknown(err) {
 				t.Fatal("uncertain write became definite")
 			}
 			if _, err = c.Do(context.Background(), "/api/getBalanceInfo", nil); err == nil || calls != attempt+1 {

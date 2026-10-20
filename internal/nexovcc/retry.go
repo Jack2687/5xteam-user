@@ -6,12 +6,16 @@ import (
 	"time"
 )
 
-// ActualHTTP522 excludes a local cooldown and a business response numbered 522.
-func ActualHTTP522(err error) bool {
+// RetryableHTTPStatus excludes local cooldowns and JSON business error codes.
+func RetryableHTTPStatus(err error) int {
 	var remote *Error
-	return errors.As(err, &remote) && remote.Code == 522 && remote.Unknown
+	if errors.As(err, &remote) && remote.Unknown && (remote.Code == 500 || remote.Code == 522) {
+		return remote.Code
+	}
+	return 0
 }
 
+// SetHTTP522Retry retains the saved setting's name; it covers both 500 and 522.
 func (c *Client) SetHTTP522Retry(count int, interval time.Duration, progress func(string)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
