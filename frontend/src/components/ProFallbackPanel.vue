@@ -1,13 +1,15 @@
 <script setup>
-import {ref,reactive,computed,onMounted,onUnmounted} from 'vue'
+import {ref,reactive,computed,watch,onMounted,onUnmounted} from 'vue'
 import {api} from '../api'
 import {createLatestRequest} from '../latestRequest'
 
-defineProps({settings:Boolean,compact:Boolean})
+const props=defineProps({settings:Boolean,compact:Boolean})
 const detailDialog=ref(null),fetchError=ref(''),state=ref(null),form=reactive({rules:[]}),password=ref(''),groups=ref([]),monitorGroups=ref([])
+const groupsLoading=ref(false),monitorLoading=ref(false),groupsLoaded=ref(false),monitorLoaded=ref(false),groupsError=ref(''),monitorError=ref('')
+const groupRequest=createLatestRequest(v=>groupsLoading.value=v),monitorRequest=createLatestRequest(v=>monitorLoading.value=v)
 const busy=ref(false),error=ref(''),notice=ref(''),dirty=ref(false)
 const request=createLatestRequest(),clock=ref(Date.now()),clockOffset=ref(0)
-let timer,disposed=false,revision=0,ruleKey=0
+let timer,disposed=false,revision=0,ruleKey=0,groupRevision=0
 const selectedGroups=c=>[...(c.group_ids??(c.group_id?[c.group_id]:[]))]
 const draftRule=r=>({...r,enabled:r.enabled!==false,group_ids:selectedGroups(r),account_ids:[...(r.account_ids||[])],_key:++ruleKey,_accounts:[],_loaded:false,_search:''})
 function setDraft(c,monitor){Object.assign(form,c);form.rules=(c.rules??[{enabled:true,monitor_group_id:monitor?.group_id||0,group_ids:selectedGroups(c),account_ids:c.account_ids||[]}]).map(draftRule)}
@@ -35,11 +37,20 @@ async function refresh(initial=false,background=false){
 async function action(fn){if(busy.value||disposed)return;busy.value=true;revision++;error.value='';notice.value='';try{await fn()}catch(e){if(!disposed)error.value=e.message}finally{busy.value=false}}
 function input(preview=false,row=null){return {version:form.version,enabled:preview?false:form.enabled,url:form.url,email:form.email,check_seconds:form.check_seconds,password:password.value,group_id:row?.group_ids[0]||0,group_ids:row?[...row.group_ids]:[],account_ids:row?[...row.account_ids]:[],rules:preview?null:form.rules.map(r=>({enabled:r.enabled,monitor_group_id:Number(r.monitor_group_id)||0,group_ids:[...r.group_ids],account_ids:[...r.account_ids]}))}}
 function resetGroup(row){row._accounts=[];row.account_ids=[];row._loaded=false;dirty.value=true}
-function resetConnection(){groups.value=[];for(const r of form.rules){resetGroup(r);r.group_ids=[]}password.value='';dirty.value=true}
+function resetConnection(){groupRevision++;groups.value=[];groupsLoaded.value=false;groupsError.value='';for(const r of form.rules){resetGroup(r);r.group_ids=[]}password.value='';dirty.value=true}
 function addRule(){form.rules.push(draftRule({enabled:true,monitor_group_id:0,group_ids:[],account_ids:[]}));dirty.value=true}
 function removeRule(row){form.rules=form.rules.filter(r=>r!==row);dirty.value=true}
-async function loadGroups(){await action(async()=>{const data=await api('/api/pro-restock/fallback/groups',{method:'POST',body:input(true)});if(disposed)return;groups.value=data;notice.value='已读取兜底 Sub2 的 OpenAI 分组，各条规则共用。'})}
-async function loadMonitorGroups(){await action(async()=>{const data=await api('/api/pro-restock/fallback/monitor-groups');if(disposed)return;monitorGroups.value=data;notice.value='已读取 Pro 推送的主 Sub2 分组，请分别选择每条规则要监控的分组。'})}
+async function loadGroups(force=true){
+ if(disposed||(!force&&(groupsLoaded.value||groupsLoading.value||!form.url||!form.email||(!password.value&&!form.password_present))))return
+ const version=groupRevision,body=input(true);groupsError.value=''
+ try{await groupRequest.run(signal=>api('/api/pro-restock/fallback/groups',{method:'POST',body,signal}),data=>{if(!disposed&&version===groupRevision){groups.value=data;groupsLoaded.value=true}})}catch(e){if(!disposed&&version===groupRevision)groupsError.value=e.message}
+}
+async function loadMonitorGroups(force=true){
+ if(disposed||(!force&&(monitorLoaded.value||monitorLoading.value)))return
+ monitorError.value=''
+ try{await monitorRequest.run(signal=>api('/api/pro-restock/fallback/monitor-groups',{signal}),data=>{if(!disposed){monitorGroups.value=data;monitorLoaded.value=true}})}catch(e){if(!disposed)monitorError.value=e.message}
+}
+function loadOptions(force=false){return Promise.all([loadMonitorGroups(force),loadGroups(force)])}
 async function loadAccounts(row){await action(async()=>{const data=await api('/api/pro-restock/fallback/accounts',{method:'POST',body:input(true,row)});if(disposed)return;row._accounts=data;row._loaded=true;notice.value='已读取本规则的 '+data.length+' 个兜底账号，读取不会切换调度。'})}
 const filtered=row=>row._accounts.filter(a=>(a.name+' '+a.id+' '+a.type).toLowerCase().includes(row._search.toLowerCase()))
 function selectVisible(row){row.account_ids=[...new Set([...row.account_ids,...filtered(row).map(a=>a.id)])];dirty.value=true}
@@ -49,9 +60,10 @@ async function save(){await action(async()=>{
  setDraft(c,state.value?.monitor);password.value='';dirty.value=false;await refresh();notice.value='兜底规则已保存：每条按自己的监控组空组开启、有号关闭；共享账号只要一条规则需要就保持开启。'
 })}
 async function retry(){await action(async()=>{try{const data=await api('/api/pro-restock/fallback/retry',{method:'POST'});if(!disposed){state.value=data;notice.value='核验完成。'}}finally{await refresh()}})}
-async function reload(){await action(async()=>{await refresh(true);groups.value=[];monitorGroups.value=[]})}
-onMounted(async()=>{await refresh(true);if(!disposed)timer=setInterval(()=>{clock.value=Date.now();refresh(false,true)},5000)})
-onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose()})
+async function reload(){await action(async()=>{await refresh(true)});if(!disposed&&props.settings)await loadOptions(true)}
+watch(()=>props.settings,visible=>{if(visible&&state.value)loadOptions(true)})
+onMounted(async()=>{await refresh(true);if(disposed)return;if(props.settings)loadOptions();timer=setInterval(()=>{clock.value=Date.now();refresh(false,true)},5000)})
+onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose();groupRequest.dispose();monitorRequest.dispose()})
 </script>
 <template>
 <article v-if="compact" class="fallback-card" aria-label="兜底调度"><span>兜底调度</span><strong>{{cardStatus}}</strong><p>{{state?.config?.rules?.length||0}} 条规则 · 已选 {{state?.config?.account_ids?.length||0}} 个账号（去重）</p><p>{{fetchError||state?.error||state?.plan?.reason||'正在读取状态'}}</p><button type="button" aria-haspopup="dialog" @click="detailDialog?.showModal()">查看兜底详情</button></article>
@@ -79,11 +91,13 @@ onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose()
     <label>管理员密码<input v-model="password" type="password" autocomplete="new-password" :placeholder="form.password_present?'已加密保存，留空保留':'请输入管理员密码'"></label>
     <label>兜底检查／失败重试周期（秒）<input v-model.number="form.check_seconds" type="number" min="2" max="300" step="1" required></label>
    </div>
-   <div class="toolbar"><button type="button" @click="loadMonitorGroups">读取监控分组</button><button type="button" @click="loadGroups">连接检查／读取兜底分组</button></div>
+   <div class="toolbar"><button type="button" :disabled="monitorLoading" @click="loadMonitorGroups()">{{monitorLoading?'正在读取监控分组…':'刷新监控分组'}}</button><button type="button" :disabled="groupsLoading" @click="loadGroups()">{{groupsLoading?'正在读取兜底分组…':'连接检查／刷新兜底分组'}}</button><span v-if="monitorLoaded">监控分组 {{monitorGroups.length}} 个</span></div>
+   <p v-if="monitorError" class="alert error" role="alert">监控分组读取失败：{{monitorError}}。当前保留已选分组，请点击“刷新监控分组”重试。</p>
+   <p v-if="groupsError" class="alert error" role="alert">兜底分组读取失败：{{groupsError}}。请检查连接后重试。</p>
    <section v-for="(row,index) in form.rules" :key="row._key" class="rule-editor" :aria-label="'兜底规则 '+(index+1)">
     <header><b>规则 {{index+1}}</b><div class="toolbar"><label class="check"><input v-model="row.enabled" type="checkbox">启用本规则</label><button type="button" @click="removeRule(row)">删除规则</button></div></header>
-    <label>监控分组<select v-model.number="row.monitor_group_id" :required="form.enabled&&row.enabled"><option :value="0" disabled>请选择一个监控分组</option><option v-for="g in monitorOptions" :key="g.id" :value="g.id">{{g.name}} · #{{g.id}}</option></select></label>
-    <div class="group-selection"><span>兜底分组 · 已选 {{row.group_ids.length}} 个</span><div class="group-list"><label v-for="g in groupOptions" :key="g.id" class="check"><input v-model="row.group_ids" type="checkbox" :value="g.id" @change="resetGroup(row)">{{g.name}} · #{{g.id}}</label><p v-if="!groupOptions.length">先读取兜底分组，再勾选一个或多个。</p></div></div>
+    <label>监控分组<select v-model.number="row.monitor_group_id" :required="form.enabled&&row.enabled" @focus="loadMonitorGroups(false)"><option :value="0" disabled>{{monitorLoading?'正在读取监控分组…':'请选择一个监控分组'}}</option><option v-for="g in monitorOptions" :key="g.id" :value="g.id">{{g.name}} · #{{g.id}}</option></select></label>
+    <div class="group-selection"><span>兜底分组 · 已选 {{row.group_ids.length}} 个</span><div class="group-list"><label v-for="g in groupOptions" :key="g.id" class="check"><input v-model="row.group_ids" type="checkbox" :value="g.id" @change="resetGroup(row)">{{g.name}} · #{{g.id}}</label><p v-if="!groupOptions.length">{{groupsLoading?'正在读取兜底分组…':'请连接读取兜底分组，再勾选一个或多个。'}}</p></div></div>
     <div class="toolbar"><button type="button" :disabled="!row.group_ids.length" @click="loadAccounts(row)">读取／刷新本规则账号</button><b>已选 {{row.account_ids.length}} 个账号</b><button type="button" :disabled="!row._loaded" @click="selectVisible(row)">选中搜索结果</button><button type="button" @click="row.account_ids=[];dirty=true">清空账号</button></div>
     <label>搜索兜底账号<input v-model="row._search" type="search" placeholder="账号名称、ID 或类型"></label>
     <div class="account-list"><label v-for="a in filtered(row)" :key="a.id" class="account check"><input v-model="row.account_ids" type="checkbox" :value="a.id"><span><b>{{a.name||'未命名'}} #{{a.id}}</b><small>{{a.type==='apikey'?'API Key':'OAuth'}} · {{a.status}} · 调度{{a.schedulable?'开启':'关闭'}}</small></span></label></div>

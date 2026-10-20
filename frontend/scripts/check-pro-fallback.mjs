@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import vm from 'node:vm'
-import {ref,reactive,computed} from 'vue'
+import {ref,reactive,computed,watch} from 'vue'
 import {createLatestRequest} from '../src/latestRequest.js'
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 const source=readFileSync(new URL('../src/components/ProFallbackPanel.vue',import.meta.url),'utf8')
 const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
-function fixture(){
- const requests=[],timers=new Set();let mount,unmount
- const context=vm.createContext({ref,reactive,computed,createLatestRequest,defineProps(){},onMounted(fn){mount=fn},onUnmounted(fn){unmount=fn},setInterval(fn){timers.add(fn);return fn},clearInterval(fn){timers.delete(fn)},api(url,options={}){let resolve,reject;const promise=new Promise((ok,fail)=>{resolve=ok;reject=fail});requests.push({url,options,resolve,reject});return promise}})
- vm.runInContext(code+'\nglobalThis.exposed={state,form,password,groups,monitorGroups,dirty,notice,error,refresh,save,retry,resetConnection,resetGroup,loadAccounts,loadGroups,loadMonitorGroups,selectVisible,input,groupOptions,monitorOptions,addRule,removeRule,allIDs};',context)
- return {...context.exposed,requests,timers,mount:()=>mount(),unmount:()=>unmount()}
+function fixture(settings=false){
+ const requests=[],timers=new Set(),watches=[],props=reactive({settings,compact:!settings});let mount,unmount
+ const context=vm.createContext({ref,reactive,computed,watch(...args){const stop=watch(...args);watches.push(stop);return stop},createLatestRequest,defineProps(){return props},onMounted(fn){mount=fn},onUnmounted(fn){unmount=fn},setInterval(fn){timers.add(fn);return fn},clearInterval(fn){timers.delete(fn)},api(url,options={}){let resolve,reject;const promise=new Promise((ok,fail)=>{resolve=ok;reject=fail});requests.push({url,options,resolve,reject});return promise}})
+ vm.runInContext(code+'\nglobalThis.exposed={state,form,password,groups,monitorGroups,dirty,notice,error,refresh,save,retry,reload,resetConnection,resetGroup,loadAccounts,loadGroups,loadMonitorGroups,selectVisible,input,groupOptions,monitorOptions,monitorLoading,monitorError,groupsLoading,groupsError,addRule,removeRule,allIDs};',context)
+ return {...context.exposed,props,requests,timers,mount:()=>mount(),unmount:()=>{unmount();watches.forEach(stop=>stop())}}
 }
 const config=()=>({version:1,enabled:true,url:'https://example.test',email:'test@example.test',password_present:true,group_id:7,account_ids:[1,2],check_seconds:3})
 const state=(c=config())=>({config:c,monitor:{group_id:9},plan:{phase:'active',active:true},accounts:[],checked_at:new Date().toISOString()})
@@ -61,4 +61,36 @@ async function initial(f,c=config()){const p=f.refresh(true);await tick();f.requ
  assert.equal(f.monitorOptions.value.length,2)
  f.unmount()
 }
-console.log('Passed: independent fallback rule drafts, shared account deduplication, isolated previews, legacy migration, empty rules, stale responses and credential handling')
+{
+ const f=fixture(true),mounted=f.mount();await tick()
+ f.requests[0].resolve(state({...config(),rules:[{enabled:true,monitor_group_id:4,group_ids:[7],account_ids:[1,2]}]}));await mounted;await tick()
+ assert.equal(f.requests.length,3,'opening settings must load both complete group lists automatically')
+ const monitor=f.requests.find(r=>r.url.endsWith('/monitor-groups')),groups=f.requests.find(r=>r.url.endsWith('/groups'))
+ assert.equal(f.monitorLoading.value,true);assert.equal(f.groupsLoading.value,true)
+ await f.loadMonitorGroups(false);assert.equal(f.requests.length,3,'focusing a loading selector duplicated the request')
+ f.addRule();f.form.rules[1].monitor_group_id=5;f.dirty.value=true
+ monitor.resolve([{id:4,name:'0.2'},{id:5,name:'0.15'},{id:6,name:'6a'}]);groups.resolve([{id:7,name:'fallback'},{id:8,name:'second fallback'}]);await tick()
+ assert.deepEqual([...f.monitorOptions.value.map(g=>g.name)],['0.2','0.15','6a'])
+ assert.equal(f.groupOptions.value.length,2);assert.equal(f.monitorLoading.value,false)
+ assert.equal(f.form.rules.length,2);assert.equal(f.form.rules[1].monitor_group_id,5);assert.equal(f.dirty.value,true,'loading choices reset unsaved edits')
+ await f.loadMonitorGroups(false);assert.equal(f.requests.length,3,'opening another selector must reuse loaded choices')
+ f.unmount()
+}
+{
+ const f=fixture();await initial(f);assert.equal(f.requests.length,1,'dashboard must not fetch settings group catalogs')
+ f.props.settings=true;await tick()
+ assert.equal(f.requests.length,3,'switching to settings on the same mounted panel did not load groups')
+ f.requests.find(r=>r.url.endsWith('/monitor-groups')).reject(new Error('temporarily offline'))
+ f.requests.find(r=>r.url.endsWith('/groups')).resolve([{id:7,name:'fallback'}]);await tick()
+ assert.equal(f.monitorError.value,'temporarily offline');assert.equal(f.form.rules[0].monitor_group_id,9)
+ const retry=f.loadMonitorGroups(false);await tick();f.requests.at(-1).resolve([{id:9,name:'renamed'},{id:10,name:'new group'}]);await retry
+ assert.equal(f.monitorError.value,'');assert.equal(f.monitorOptions.value.length,2)
+ const reload=f.reload();await tick();f.requests.at(-1).resolve(state());await tick()
+ assert.equal(f.requests.at(-2).url,'/api/pro-restock/fallback/monitor-groups')
+ f.requests.at(-2).resolve([{id:9,name:'new name'},{id:10,name:'new group'}]);f.requests.at(-1).resolve([{id:7,name:'fallback'}]);await reload
+ assert.equal(f.monitorOptions.value[0].name,'new name','reload discarded choices instead of refreshing them')
+ const loading=f.loadGroups();await tick();const old=f.requests.at(-1);f.resetConnection();old.resolve([{id:99,name:'old connection'}]);await loading
+ assert.equal(f.groups.value.length,0,'stale connection choices were applied')
+ f.unmount()
+}
+console.log('Passed: automatic group loading on mount/tab entry/reload, complete selector choices, loading/error/retry states, unchanged drafts, independent fallback rules, deduplication and credential handling')
