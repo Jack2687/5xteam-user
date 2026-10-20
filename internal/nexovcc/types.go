@@ -18,20 +18,21 @@ type Credentials struct {
 	TOTPSecret   string `json:"totp_secret"`
 }
 type Settings struct {
-	Enabled                bool       `json:"enabled"`
-	LoginPresent           bool       `json:"login_present"`
-	PasswordPresent        bool       `json:"password_present"`
-	FundPasswordPresent    bool       `json:"fund_password_present"`
-	TOTPPresent            bool       `json:"totp_present"`
-	DefaultMaxAccounts     int        `json:"default_max_accounts"`
-	SingleActiveAccount    bool       `json:"single_active_account"`
-	PageRefreshSeconds     int        `json:"page_refresh_seconds"`
-	RequestIntervalSeconds int        `json:"request_interval_seconds"`
-	MaxOnlineCards         int        `json:"max_online_cards"`
-	AutoRecycleAt          int        `json:"auto_recycle_at"`
-	AutoWithdrawEnabled    bool       `json:"auto_withdraw_enabled"`
-	BatchIntervalSeconds   int        `json:"batch_interval_seconds"`
-	Templates              []Template `json:"templates"`
+	Enabled                     bool       `json:"enabled"`
+	LoginPresent                bool       `json:"login_present"`
+	PasswordPresent             bool       `json:"password_present"`
+	FundPasswordPresent         bool       `json:"fund_password_present"`
+	TOTPPresent                 bool       `json:"totp_present"`
+	DefaultMaxAccounts          int        `json:"default_max_accounts"`
+	SingleActiveAccount         bool       `json:"single_active_account"`
+	PageRefreshSeconds          int        `json:"page_refresh_seconds"`
+	RequestIntervalSeconds      int        `json:"request_interval_seconds"`
+	MaxOnlineCards              int        `json:"max_online_cards"`
+	AutoRecycleAt               int        `json:"auto_recycle_at"`
+	AutoWithdrawEnabled         bool       `json:"auto_withdraw_enabled"`
+	AutoWithdrawIntervalSeconds int        `json:"auto_withdraw_interval_seconds"`
+	BatchIntervalSeconds        int        `json:"batch_interval_seconds"`
+	Templates                   []Template `json:"templates"`
 }
 type Template struct {
 	PlanCode   string   `json:"plan_code,omitempty"`
@@ -107,7 +108,7 @@ type Operation struct {
 
 func (o Operation) Terminal() bool { return o.Status == "succeeded" || o.Status == "failed" }
 func Defaults() Settings {
-	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, RequestIntervalSeconds: 3, BatchIntervalSeconds: 3, Templates: []Template{}}
+	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, RequestIntervalSeconds: 3, AutoWithdrawIntervalSeconds: 60, BatchIntervalSeconds: 3, Templates: []Template{}}
 }
 
 var moneyPattern = regexp.MustCompile(`^\d{1,10}(\.\d{1,2})?$`)
@@ -131,6 +132,12 @@ func Cents(s string) (int64, error) {
 }
 func Money(n int64) string { return fmt.Sprintf("%d.%02d", n/100, n%100) }
 func Normalize(s Settings) (Settings, error) {
+	if s.AutoWithdrawIntervalSeconds == 0 {
+		s.AutoWithdrawIntervalSeconds = 60
+	}
+	if s.AutoWithdrawIntervalSeconds < 30 || s.AutoWithdrawIntervalSeconds > 86400 {
+		return s, fmt.Errorf("自动提现检查间隔须为 30～86400 秒")
+	}
 	if s.RequestIntervalSeconds == 0 {
 		s.RequestIntervalSeconds = 3
 	}

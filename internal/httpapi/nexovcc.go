@@ -239,12 +239,17 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取环球刷新状态失败")
 		return
 	}
+	withdrawState, e := s.nexovccWithdrawState(cfg)
+	if e != nil {
+		writeAPI(w, 500, nil, "读取环球提现检查状态失败")
+		return
+	}
 	reviewGroups, reviews, e := s.store.NexovccReviewData(finance)
 	if e != nil {
 		writeAPI(w, 500, nil, "读取交易核实记录失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState}, "")
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState, "withdraw": withdrawState}, "")
 }
 func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Lock()

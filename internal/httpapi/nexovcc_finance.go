@@ -333,6 +333,7 @@ func (s *Server) startNexovccMonitor() {
 	s.nexovcc.monitorCancel = cancel
 	s.nexovcc.wg.Add(1)
 	s.nexovcc.jobMu.Unlock()
+	s.startNexovccWithdrawMonitor(ctx)
 	go func() {
 		defer s.nexovcc.wg.Done()
 		ticker := time.NewTicker(30 * time.Second)
@@ -398,9 +399,6 @@ func (s *Server) startNexovccMonitor() {
 					s.nexovcc.jobMu.Unlock()
 					if sameJob {
 						err = s.autoRecycleNexovccLocked(workCtx)
-					}
-					if sameJob && err == nil {
-						err = s.autoWithdrawNexovccLocked(workCtx)
 					}
 					s.nexovcc.mu.Unlock()
 				}

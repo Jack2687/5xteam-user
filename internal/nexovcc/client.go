@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -29,11 +30,14 @@ type Request struct {
 	Cookie string         `json:"cookie"`
 }
 type Response struct {
-	Status    int    `json:"status"`
-	Body      string `json:"body"`
-	Cookie    string `json:"cookie"`
-	Error     string `json:"error"`
-	Uncertain bool   `json:"uncertain"`
+	Status     int    `json:"status"`
+	Body       string `json:"body"`
+	Cookie     string `json:"cookie"`
+	Error      string `json:"error"`
+	Uncertain  bool   `json:"uncertain"`
+	RetryAfter string `json:"retry_after,omitempty"`
+	RayID      string `json:"ray_id,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
 }
 type Transport func(context.Context, Request) (Response, error)
 type Error struct {
@@ -57,6 +61,7 @@ type Client struct {
 	nextRequest     time.Time
 	retryAt         time.Time
 	backoffFailures int
+	retryCode       int
 	wait            func(context.Context, time.Duration) error
 }
 
@@ -95,7 +100,14 @@ func (c *Client) RetryAt() time.Time {
 func (c *Client) coolingDown() error {
 	if c.now().Before(c.retryAt) {
 		seconds := int(c.retryAt.Sub(c.now()).Seconds()) + 1
-		return &Error{Message: fmt.Sprintf("环球接口冷却中，约 %d 秒后重试", seconds), Code: 429, RetryAt: c.retryAt}
+		reason := "环球接口冷却中"
+		if c.retryCode == 522 {
+			reason = "环球连接超时，正在等待恢复"
+		}
+		if c.retryCode == 429 {
+			reason = "环球访问受限，正在等待解除"
+		}
+		return &Error{Message: fmt.Sprintf("%s，约 %d 秒后重试", reason, seconds), Code: c.retryCode, RetryAt: c.retryAt}
 	}
 	return nil
 }
@@ -104,6 +116,24 @@ func (c *Client) backoff() time.Time {
 	c.backoffFailures++
 	delay := 30 * time.Second * time.Duration(1<<min(c.backoffFailures-1, 4))
 	c.retryAt = c.now().Add(min(delay, 5*time.Minute))
+	return c.retryAt
+}
+
+// Respect a provider supplied delay without inferring a requests/second quota
+// from a Cloudflare origin timeout. Never replay a money request here.
+func (c *Client) backoffResponse(r Response, code int) time.Time {
+	c.backoff()
+	c.retryCode = code
+	value := strings.TrimSpace(r.RetryAfter)
+	until := time.Time{}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 && seconds <= int64((365*24*time.Hour)/time.Second) {
+		until = c.now().Add(time.Duration(seconds) * time.Second)
+	} else if at, err := http.ParseTime(value); err == nil {
+		until = at
+	}
+	if until.After(c.retryAt) {
+		c.retryAt = until
+	}
 	return c.retryAt
 }
 func PythonTransport(ctx context.Context, r Request) (Response, error) {
@@ -202,11 +232,17 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 		return nil, &Error{Message: c.safe(r.Error), Unknown: r.Uncertain}
 	}
 	if r.Status < 200 || r.Status >= 300 {
-		err := &Error{Message: fmt.Sprintf("环球接口 HTTP %d", r.Status), Unknown: true}
-		if r.Status == 429 || r.Status == 522 {
-			err.RetryAt = c.backoff()
+		err := &Error{Message: fmt.Sprintf("环球接口 HTTP %d", r.Status), Code: r.Status, Unknown: true}
+		if r.Status == 522 {
+			err.Message = "环球连接超时（HTTP 522），等待恢复后重试"
 		}
-		slog.Warn("环球接口请求失败", "path", path, "http_status", r.Status)
+		if r.Status == 429 {
+			err.Message = "环球访问受限（HTTP 429），等待解除后重试"
+		}
+		if r.Status == 429 || r.Status == 522 {
+			err.RetryAt = c.backoffResponse(r, r.Status)
+		}
+		slog.Warn("环球接口请求失败", "path", path, "http_status", r.Status, "duration_ms", r.DurationMS, "cf_ray", c.safe(r.RayID), "retry_at", err.RetryAt)
 		return nil, err
 	}
 	var v map[string]any
@@ -227,7 +263,7 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 		err := &Error{Message: fmt.Sprintf("环球 %d：%s", code, c.safe(msg)), Code: code}
 		lower := strings.ToLower(msg)
 		if code == 429 || strings.Contains(msg, "频繁") || strings.Contains(lower, "too many") || strings.Contains(lower, "rate limit") {
-			err.RetryAt = c.backoff()
+			err.RetryAt = c.backoffResponse(r, 429)
 		}
 		slog.Warn("环球接口业务失败", "path", path, "code", code, "retry_at", err.RetryAt)
 		return nil, err
@@ -239,6 +275,7 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 	if path != "/api/login" && path != "/api/verifyGoogleCode" {
 		c.backoffFailures = 0
 		c.retryAt = time.Time{}
+		c.retryCode = 0
 	}
 	return v["data"], nil
 }

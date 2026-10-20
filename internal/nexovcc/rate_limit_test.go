@@ -3,6 +3,8 @@ package nexovcc
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +39,37 @@ func TestRequestSpacingIncludesLoginAndPagination(t *testing.T) {
 	for i := 1; i < len(calls); i++ {
 		if calls[i].Sub(calls[i-1]) < 3*time.Second {
 			t.Fatal("requests burst", calls)
+		}
+	}
+}
+
+func TestProviderRetryAfterAndTimeoutClassification(t *testing.T) {
+	for _, code := range []int{429, 522} {
+		for _, header := range []string{"90", time.Unix(1090, 0).UTC().Format(http.TimeFormat), "invalid", "-1"} {
+			now := time.Unix(1000, 0)
+			calls := 0
+			c := New(Credentials{}, func(context.Context, Request) (Response, error) {
+				calls++
+				return Response{Status: code, RetryAfter: header}, nil
+			})
+			c.now = func() time.Time { return now }
+			c.until = now.Add(time.Hour)
+			_, err := c.Do(context.Background(), "/api/card/userCardWithdraw", nil)
+			var remote *Error
+			delay := 90 * time.Second
+			if header == "invalid" || header == "-1" {
+				delay = 30 * time.Second
+			}
+			if !errors.As(err, &remote) || remote.Code != code || !remote.RetryAt.Equal(now.Add(delay)) || !IsUnknown(err) {
+				t.Fatal(remote, err)
+			}
+			_, err = c.Do(context.Background(), "/api/getBalanceInfo", nil)
+			if !errors.As(err, &remote) || remote.Code != code || calls != 1 {
+				t.Fatal("replayed during cooldown", calls, err)
+			}
+			if code == 522 && !strings.Contains(err.Error(), "连接超时") {
+				t.Fatal("522 mislabeled as rate limit", err)
+			}
 		}
 	}
 }

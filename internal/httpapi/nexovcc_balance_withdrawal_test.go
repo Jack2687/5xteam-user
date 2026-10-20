@@ -111,7 +111,7 @@ func TestNexovccAutoWithdrawBalanceBeforeRefund(t *testing.T) {
 					return nexReply(map[string]any{"list": rows, "total": len(rows), "page": 1}), nil
 				case "/api/card/lockUserCard", "/api/card/deleteUserCard":
 					t.Fatal("withdraw-only froze/closed a card")
-				case "/api/findLogCardTrades", "/api/card/findUserCardList":
+				case "/api/findLogCardTrades", "/api/card/findUserCardList", "/api/card/getUserCardDetail":
 					t.Fatal("withdrawal caused an unnecessary scan", r.Path)
 				}
 				return base(ctx, r)

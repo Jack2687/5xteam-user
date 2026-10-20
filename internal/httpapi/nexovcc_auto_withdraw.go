@@ -32,8 +32,9 @@ func nexovccAutoWithdrawID(card nexovcc.Card, f nexovcc.Finance) string {
 	return fmt.Sprintf("nex-wd-%x", h[:10])
 }
 
-// Called after a complete fresh sync, with both the Pro admission and issuer
-// mutexes held. Withdrawal-only never freezes or deletes a card.
+// Runs on its own persisted schedule with both Pro admission and issuer mutexes
+// held. Select from verified local records, then recheck live balance and
+// admission before submitting. Withdrawal-only never freezes or deletes a card.
 func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 	cfg, _, err := s.store.NexovccSettings()
 	if err != nil || !cfg.Enabled || !cfg.AutoWithdrawEnabled {

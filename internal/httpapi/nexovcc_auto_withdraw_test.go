@@ -61,6 +61,7 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 	}
 	base := s.nexovcc.transport
 	var writes []time.Time
+	failBalance := true
 	s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
 		serial, _ := r.Body["serial_no"].(string)
 		switch r.Path {
@@ -71,12 +72,16 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 			}
 			return nexReply(map[string]any{"list": rows, "total": len(rows), "page": 1}), nil
 		case "/api/card/getUserCardDetail":
-			for i, c := range cards {
-				if c.Serial == serial {
-					return nexReply(map[string]any{"serial_no": serial, "status": "1", "card_no": pans[i], "cvv": "123", "expire_at_str": "12/99"}), nil
-				}
+			t.Fatal("automatic withdrawal repeated card details")
+		case "/api/getBalanceInfo":
+			if len(writes) == 0 {
+				t.Fatal("unnecessary main balance before withdrawal")
 			}
 		case "/api/card/getUserCardBalance":
+			if failBalance {
+				failBalance = false
+				return nexovcc.Response{Status: 522}, nil
+			}
 			return nexReply(map[string]any{"balance": balances[serial]}), nil
 		case "/api/card/userCardWithdraw":
 			if (serial != cards[0].Serial && serial != cards[1].Serial && serial != cards[5].Serial) || r.Body["amount"] != "9.00" {
@@ -98,8 +103,32 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 	if _, err := s.store.SaveNexovccSettings(cfg, nexovcc.Credentials{}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.autoWithdrawNexovccLocked(context.Background()); err != nil || len(writes) != 2 {
-		t.Fatal(err, writes)
+	// Unrelated full-sync failures and a recent page refresh do not suppress
+	// withdrawals backed by valid same-card records and live balances.
+	if err := s.store.NexovccCache("sync_state", nexovccSyncState{LastSuccess: time.Now(), LastAttempt: time.Now(), Error: "other card HTTP 522", RetryAfter: time.Now().Add(5 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if ran, err := s.runNexovccWithdrawCheck(context.Background()); !ran || err == nil || len(writes) != 0 {
+		t.Fatal("522 before submission must not send money", ran, err, writes)
+	}
+	state, err := s.nexovccWithdrawState(cfg)
+	if err != nil || state.Failures != 1 || state.Error == "" || !state.RetryAfter.After(time.Now()) {
+		t.Fatal("missing retry state", state, err)
+	}
+	if ran, err := s.runNexovccWithdrawCheck(context.Background()); ran || err != nil {
+		t.Fatal("cooldown bypassed", ran, err)
+	}
+	// Expire the persisted delay and recreate the client to model a restart.
+	state.RetryAfter = time.Now().Add(-time.Second)
+	if err = s.store.NexovccCache("withdraw_state", state); err != nil {
+		t.Fatal(err)
+	}
+	s.nexovcc.client = nil
+	if ran, err := s.runNexovccWithdrawCheck(context.Background()); !ran || err != nil || len(writes) != 2 {
+		t.Fatal(ran, err, writes)
+	}
+	if ran, err := s.runNexovccWithdrawCheck(context.Background()); ran || err != nil {
+		t.Fatal("independent interval ignored", ran, err)
 	}
 	if writes[1].Sub(writes[0]) < time.Second {
 		t.Fatal("configured batch gap missing", writes)

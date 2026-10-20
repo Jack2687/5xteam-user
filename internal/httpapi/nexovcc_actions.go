@@ -34,7 +34,23 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	}
 	needsBalance := in.Action != "freeze" && in.Action != "unfreeze" && in.Action != "remark"
 	s.nexovccProgress("正在查询最新卡片状态", 0, 3)
-	card, err := s.refreshNexovccDetailsLocked(ctx, in.CardID, "", needsBalance)
+	var card nexovcc.Card
+	if in.AutoWithdraw && in.Action == "withdraw_all" {
+		// Automatic withdrawals select verified local card/finance records.
+		// Recheck the live spendable balance before transactional admission.
+		card, err = s.store.NexovccCard(in.CardID)
+		if err == nil && (!card.Imported || card.Status != "1" || card.Control == "frozen" || card.Error != "") {
+			err = fmt.Errorf("自动提现卡片状态待更新，请等待下一轮同步")
+		}
+		if err == nil {
+			card, err = s.readNexovccCardBalanceLocked(ctx, card)
+		}
+		if err == nil {
+			card, err = s.store.SaveNexovccCard(card, nil)
+		}
+	} else {
+		card, err = s.refreshNexovccDetailsLocked(ctx, in.CardID, "", needsBalance)
+	}
 	if err != nil {
 		return op, err
 	}
@@ -102,12 +118,20 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	}
 	var balance nexovcc.Balance
 	if needsBalance {
-		balance, err = client.Balance(ctx)
+		if in.AutoWithdraw {
+			// This is audit context only. Arrival is still proved exclusively by
+			// the same card's unique withdrawal receipt, never aggregate balance.
+			err = s.store.NexovccCached("balance", &balance)
+		} else {
+			balance, err = client.Balance(ctx)
+		}
 		if err != nil {
 			return op, err
 		}
-		if err = s.store.NexovccCache("balance", balance); err != nil {
-			return op, err
+		if !in.AutoWithdraw {
+			if err = s.store.NexovccCache("balance", balance); err != nil {
+				return op, err
+			}
 		}
 	}
 	op = nexovcc.Operation{ID: in.RequestID, Action: in.Action, CardID: card.ID, Serial: card.Serial, Amount: in.Amount, Remark: in.Remark, Status: "submitted", BeforeBalance: card.Balance, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
