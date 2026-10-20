@@ -111,6 +111,32 @@ func TestCancelledSpacingDoesNotSubmitPayment(t *testing.T) {
 	}
 }
 
+func TestManualRequestsBypassPacingAndBackoffOnlyForExplicitCall(t *testing.T) {
+	now := time.Unix(1000, 0)
+	calls, waits := 0, 0
+	c := New(Credentials{}, func(context.Context, Request) (Response, error) {
+		calls++
+		return Response{Status: 522, RetryAfter: "120"}, nil
+	})
+	c.now = func() time.Time { return now }
+	c.until = now.Add(time.Hour)
+	c.nextRequest, c.retryAt = now.Add(time.Hour), now.Add(time.Hour)
+	c.retryCode = 522
+	c.wait = func(context.Context, time.Duration) error { waits++; return nil }
+	_, err := c.Do(WithImmediateRequests(context.Background()), "/api/card/createUserCard", nil)
+	if err == nil || calls != 1 || waits != 0 || !IsUnknown(err) {
+		t.Fatal("manual request waited, replayed, or lost uncertainty", calls, waits, err)
+	}
+	if _, err = c.Do(context.Background(), "/api/getBalanceInfo", nil); err == nil || calls != 1 {
+		t.Fatal("manual request disabled background backoff", calls, err)
+	}
+	ctx, cancel := context.WithCancel(WithImmediateRequests(context.Background()))
+	cancel()
+	if _, err = c.Do(ctx, "/api/card/createUserCard", nil); err == nil || calls != 1 {
+		t.Fatal("manual bypass ignored cancellation", calls, err)
+	}
+}
+
 func TestPacedLoginGeneratesOTPAfterWaiting(t *testing.T) {
 	now := time.Unix(29, 0)
 	secret := "JBSWY3DPEHPK3PXP" // Public test fixture.

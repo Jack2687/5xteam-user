@@ -17,6 +17,7 @@ import (
 
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/nexovcc"
 	"chatgpt-space-merge/internal/workflow"
 )
 
@@ -159,6 +160,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
+	if !automatic {
+		r = r.WithContext(nexovcc.WithImmediateRequests(r.Context()))
+	}
 	if input.ResumeQuota {
 		if automatic || input.ExpectedFlowID != p.ProAuto.ID || input.StopVersion == nil || *input.StopVersion != p.ProAuto.StopVersion {
 			writeAPI(w, 409, nil, "账号停止状态或流程已变化，请刷新后重试")
@@ -365,6 +369,21 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if latest.ProRestockTaskID != "" && input.RetryCurrent {
+			if latest.ProAuto.ID == "" {
+				task, taskErr := s.store.ProRestockDispatchTask(latest.ProRestockTaskID)
+				if taskErr != nil {
+					lock.Unlock()
+					writeAPI(w, 500, nil, "读取原补货任务失败")
+					return
+				}
+				if task.CardProvider == "nexovcc" {
+					if err = s.recoverNexovccOpenForProRetry(r.Context()); err != nil {
+						lock.Unlock()
+						writeAPI(w, 409, nil, err.Error())
+						return
+					}
+				}
+			}
 			if !s.proRestock.tick.TryLock() {
 				lock.Unlock()
 				writeAPI(w, 409, nil, "补货记录正在更新，请稍后重试")
@@ -376,6 +395,13 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 				writeAPI(w, 409, nil, err.Error())
 				return
 			}
+			latest, _, err = s.store.MailAccountCredential(email)
+			if err != nil {
+				lock.Unlock()
+				writeAPI(w, 500, nil, "读取原补货推送分组失败，未继续开通")
+				return
+			}
+			pushTargetID, pushGroupIDs = latest.ProRestockTargetID, latest.ProAuto.Sub2PushGroupIDs
 		}
 		card, secret, err = s.reserveProStartCard(r.Context(), email, input.CardID, pro.AutoCardEnabled(), r.Context().Value(proScheduledContextKey{}) == true, func() error {
 			latest, _, err := s.store.MailAccountCredential(email)

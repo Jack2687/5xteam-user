@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -147,6 +148,12 @@ func TestProNexovccRestockCanRecoverBeforeWorkflowCreated(t *testing.T) {
 			if len(tasks) != 1 || tasks[0].Status != "attention" {
 				t.Fatal("startup not preserved", tasks)
 			}
+			// Reproduce a persisted scheduled task that failed before ProAuto was
+			// created. Its extra groups must survive both detachment and retries.
+			tasks[0].PurchaseRoute = &model.ProPurchaseRoute{Sub2GroupIDs: []int64{1, 15}}
+			if err := s.store.SaveProRestockTask(tasks[0]); err != nil {
+				t.Fatal(err)
+			}
 			message := tasks[0].Message
 			windowTick(t, s)
 			tasks, _ = s.store.ProRestockTasks()
@@ -185,6 +192,13 @@ func TestProNexovccRestockCanRecoverBeforeWorkflowCreated(t *testing.T) {
 					t.Fatal("original card recovery", op, err)
 				}
 			} else {
+				if w = retry(); w.Code != 409 {
+					t.Fatal("unchanged budget should still block opening", w.Code, w.Body.String())
+				}
+				profile, _, _ := s.store.MailAccountCredential(email)
+				if profile.ProRestockTaskID != "" || !slices.Equal(profile.ProAuto.Sub2PushGroupIDs, []int64{1, 15}) {
+					t.Fatal("second startup failure discarded original push groups", profile.ProAuto)
+				}
 				p.NexovccDailyAmountLimit = "10.00"
 				if _, err := s.store.SaveProSettings(p, "", ""); err != nil {
 					t.Fatal(err)
@@ -194,6 +208,9 @@ func TestProNexovccRestockCanRecoverBeforeWorkflowCreated(t *testing.T) {
 				t.Fatal("resolved startup could not continue", w.Code, w.Body.String())
 			}
 			profile := waitProAutoFinished(t, s, email)
+			if !slices.Equal(profile.ProAuto.Sub2PushGroupIDs, []int64{1, 15}) {
+				t.Fatal("manual retry lost the restock task's extra push groups", profile.ProAuto)
+			}
 			card, _, err := s.store.GPTPayCard(profile.ProAuto.CardID)
 			if err != nil || card.Source != "nexovcc" || profile.ProAuto.ID == "" || profile.ProRestockTaskID != "" || f.opens.Load() != 1 {
 				t.Fatal("retry lost account or original issued card", profile.ProAuto, err, f.opens.Load())

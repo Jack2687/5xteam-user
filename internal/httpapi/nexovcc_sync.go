@@ -45,6 +45,9 @@ func (s *Server) nexovccSyncState(cfg nexovcc.Settings) (nexovccSyncState, error
 }
 
 func (s *Server) nexovccSyncWait(cfg nexovcc.Settings, automatic bool) (string, error) {
+	if !automatic {
+		return "", nil
+	}
 	if automatic && !cfg.Enabled {
 		return "环球自动查询已关闭，显示已保存的数据", nil
 	}

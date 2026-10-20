@@ -87,8 +87,13 @@ func (s *Store) DetachFailedProRestock(email, flowID, orderID string) error {
 	if _, err = tx.Exec(`UPDATE pro_restock_tasks SET status=?,cost=?,payload=? WHERE id=?`, task.Status, task.Cost, mustJSON(task), task.ID); err != nil {
 		return err
 	}
+	// Issuance may fail before ProAuto exists. Preserve the task's group snapshot
+	// before detaching, including when the next card preparation also fails.
+	if len(p.ProAuto.Sub2PushGroupIDs) == 0 && task.PurchaseRoute != nil {
+		p.ProAuto.Sub2PushGroupIDs = append([]int64(nil), task.PurchaseRoute.Sub2GroupIDs...)
+	}
 	// Retain the original downstream target; only release ownership of the old intent.
-	if _, err = tx.Exec(`UPDATE mail_accounts SET profile=json_remove(profile,'$.pro_restock_task_id') WHERE email=?`, email); err != nil {
+	if _, err = tx.Exec(`UPDATE mail_accounts SET profile=json_set(json_remove(profile,'$.pro_restock_task_id'),'$.pro_auto.sub2_push_group_ids',json(?)) WHERE email=?`, mustJSON(p.ProAuto.Sub2PushGroupIDs), email); err != nil {
 		return err
 	}
 	return tx.Commit()

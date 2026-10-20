@@ -11,6 +11,7 @@ const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const emit=defineEmits(['updated'])
 const email=ref(''),opened=ref(false),busy=ref(false),error=ref(''),state=ref({}),settings=ref({}),cards=ref([]),cardID=ref(''),page=ref(1),pageSize=ref(props.defaultPageSize || 10),total=ref(0)
 const preparingCard=ref(false)
+const visibleError=computed(()=>busy.value?'':error.value||(state.value.error?(state.value.restock_retry_available?'上次开卡结果：':'')+state.value.error:''))
 const autoCardEnabled=computed(()=>settings.value.card_provider==='nexovcc'?settings.value.nexovcc_auto_open:settings.value.ejh_auto_open)
 const autoCardLabel=computed(()=>settings.value.card_provider==='nexovcc'?'环球':'EJH')
 const active=computed(()=>['running','waiting_quota'].includes(state.value.status))
@@ -67,7 +68,7 @@ defineExpose({open})
 <p v-if="quotaResumeAvailable">已开通并完成授权、推送，可恢复定时额度检测及后续合并。首次推送计时继续沿用。</p>
 <p v-if="state.status==='awaiting_push'">RT/AT 已保存，请推送当前下游，成功后自动恢复定时额度检测；也可点击“继续后续流程”。</p>
 <p v-if="state.proxy_name">登录代理：{{ state.proxy_name }}<span v-if="state.exit_ip"> · 首次记录 IP：{{ state.exit_ip }}</span></p>
-<p v-if="state.error" class="danger-text">{{ state.error }}</p><p v-if="error" role="alert" class="danger-text">{{ error }}</p>
+<p v-if="visibleError" role="alert" class="danger-text">{{ visibleError }}</p>
 <div v-if="(state.error||'').includes('占用')||(error||'').includes('占用')" class="occupancy-help"><button class="btn ghost" :disabled="busy||checkingOccupancy" @click="inspectOccupancy">{{checkingOccupancy?'正在读取占用…':'处理已删除账号占用'}}</button><p v-if="occupancyMessage" role="status">{{occupancyMessage}}</p><div v-for="card in blockedCards" :key="card.id"><strong>{{card.name}} · 尾号 {{card.last4}}</strong><CardOccupancy :card="card" @updated="occupancyResolved"/></div></div>
 <p v-if="(canStart||restartable)&&termsMissing" class="danger-text">请先到 Pro 全自动配置 → 开通设置确认并保存商户条款。</p><p v-if="state.payment_retry_blocked" class="danger-text">供应商不允许重试：{{state.payment_retry_hint || '请先联系供应商处理，并在开通订单中查询状态。'}}</p><template v-if="canStart||restartable"><p>供应商：{{ payProviderName(settings.provider) }}</p><p>套餐：{{ proPlanName(settings.plan_code) }}；7 天已用额度达到 {{ settings.quota_used_threshold || 100 }}% 后合并。</p>
 <p>开通国家：{{ paymentCountryLabel(settings.country) }}<span v-if="settings.plan_code === 'codex_point'">；购买点数：{{ settings.credit_quantity }}</span></p>

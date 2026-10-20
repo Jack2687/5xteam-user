@@ -327,6 +327,9 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), max(15*time.Minute, time.Duration(len(in.CardIDs))*2*time.Minute))
+	if !in.AutomaticRefresh {
+		ctx = nexovcc.WithImmediateRequests(ctx)
+	}
 	s.nexovcc.cancel = cancel
 	s.nexovcc.job = nexovccJob{ID: randomRegistrationID(), Status: "running", Message: "正在处理…", Total: 1}
 	job := s.nexovcc.job
@@ -879,7 +882,10 @@ func (s *Server) resolveNexovccLocked(ctx context.Context, in nexovccInput) (nex
 		}
 		if op.Action == "open" && op.Serial == "" {
 			if in.Serial == "" {
-				return op, fmt.Errorf("请先同步卡片，在环球后台核对操作编号备注后填写对应序列号")
+				in.Serial, e = s.findNexovccOpenSerialLocked(ctx, op)
+				if e != nil {
+					return op, e
+				}
 			}
 			card, e := s.refreshNexovccLocked(ctx, "", in.Serial)
 			if e != nil {
@@ -1065,7 +1071,7 @@ func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) 
 		if op.Action == "open" && !op.Terminal() {
 			return gptpay.Card{}, fmt.Errorf("存在未完成环球开卡，请在操作记录核实或同步原卡")
 		}
-		if op.Automatic && op.Status == "failed" && time.Since(op.UpdatedAt) < 5*time.Minute {
+		if op.Automatic && op.Status == "failed" && time.Since(op.UpdatedAt) < 5*time.Minute && !nexovcc.ImmediateRequests(ctx) {
 			return gptpay.Card{}, fmt.Errorf("环球开卡失败后冷却 5 分钟")
 		}
 	}

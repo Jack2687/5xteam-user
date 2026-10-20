@@ -62,7 +62,7 @@ func TestNexovccFailedSyncKeepsFinanceAndBlocksRepeatedAttempts(t *testing.T) {
 		t.Fatal("rate limit accepted")
 	}
 	count := calls
-	for _, automatic := range []string{"true", "false", "true"} {
+	for _, automatic := range []string{"true", "true", "true"} {
 		w := httptest.NewRecorder()
 		s.runNexovcc(w, httptest.NewRequest("POST", "/api/nexovcc/run", strings.NewReader(`{"action":"sync","automatic_refresh":`+automatic+`}`)))
 		if w.Code != 200 || calls != count {
@@ -82,8 +82,11 @@ func TestNexovccFailedSyncKeepsFinanceAndBlocksRepeatedAttempts(t *testing.T) {
 		t.Fatal(state, err)
 	}
 	restarted := &Server{store: s.store}
-	if message, err := restarted.nexovccSyncWait(cfg, false); err != nil || message == "" {
+	if message, err := restarted.nexovccSyncWait(cfg, true); err != nil || message == "" {
 		t.Fatal("restart cleared backoff", message, err)
+	}
+	if message, err := restarted.nexovccSyncWait(cfg, false); err != nil || message != "" {
+		t.Fatal("explicit manual action still waits for backoff", message, err)
 	}
 }
 

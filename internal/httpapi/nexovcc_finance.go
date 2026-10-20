@@ -84,7 +84,7 @@ func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...b
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if until := c.RetryAt(); time.Now().Before(until) {
+		if until := c.RetryAt(); time.Now().Before(until) && !nexovcc.ImmediateRequests(ctx) {
 			failures = append(failures, fmt.Errorf("环球接口冷却中，剩余卡片保留缓存"))
 			break
 		}

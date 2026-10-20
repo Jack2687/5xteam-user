@@ -3,6 +3,7 @@ package store
 import (
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
+	"slices"
 	"testing"
 	"time"
 )
@@ -65,5 +66,35 @@ func TestDetachFailedProRestock(t *testing.T) {
 				t.Fatal("unconfirmed task was detached", err)
 			}
 		})
+	}
+}
+
+func TestDetachFailedProRestockPreservesPushGroups(t *testing.T) {
+	for _, existing := range [][]int64{nil, {2, 4, 10}} {
+		s := transferStore(t)
+		email := "groups@example.com"
+		transferSource(t, s, email)
+		_, err := s.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+			p.ProRestockTaskID, p.ProRestockTargetID = "intent", "original-target"
+			p.ProAuto = model.ProAutoState{Sub2PushGroupIDs: existing}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := restock.Task{ID: "intent", Email: email, Status: "attention", CardProvider: "nexovcc", CreatedAt: time.Now(), PurchaseRoute: &model.ProPurchaseRoute{Sub2GroupIDs: []int64{4, 10, 15}}}
+		if _, err = s.db.Exec(`INSERT INTO pro_restock_tasks VALUES(?,?,?,?,?,?)`, task.ID, email, task.Status, formatTime(task.CreatedAt), 0, mustJSON(task)); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.DetachFailedProRestock(email, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		want := existing
+		if len(want) == 0 {
+			want = task.PurchaseRoute.Sub2GroupIDs
+		}
+		p, _, err := s.MailAccountCredential(email)
+		if err != nil || p.ProRestockTaskID != "" || p.ProRestockTargetID != "original-target" || !slices.Equal(p.ProAuto.Sub2PushGroupIDs, want) {
+			t.Fatal("lost persisted push intent", p.ProAuto, err)
+		}
 	}
 }

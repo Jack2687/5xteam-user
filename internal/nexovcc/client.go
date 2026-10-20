@@ -201,13 +201,13 @@ func (c *Client) safe(s string) string {
 	return s
 }
 func (c *Client) call(ctx context.Context, path string, body map[string]any) (any, error) {
-	if err := c.coolingDown(); err != nil {
+	if err := c.coolingDown(); err != nil && !ImmediateRequests(ctx) {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, &Error{Message: err.Error()}
 	}
-	if delay := c.nextRequest.Sub(c.now()); delay > 0 {
+	if delay := c.nextRequest.Sub(c.now()); delay > 0 && !ImmediateRequests(ctx) {
 		if err := c.wait(ctx, delay); err != nil {
 			return nil, &Error{Message: err.Error()}
 		}
@@ -306,7 +306,7 @@ var paths = map[string]bool{"/api/getBalanceInfo": true, "/api/product/findUserP
 func (c *Client) Do(ctx context.Context, path string, body map[string]any) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if err := c.coolingDown(); err != nil {
+	if err := c.coolingDown(); err != nil && !ImmediateRequests(ctx) {
 		return nil, err
 	}
 	if !paths[path] && path != "/api/findLogRecharge" && path != "/api/findLogCardTrades" && path != "/api/findLogWebFunds" && path != "/api/findLogReportCardDay" {
