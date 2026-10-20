@@ -102,5 +102,72 @@ assert.equal(check(latest).assets,49158)
 assert.equal(check(latest).totals.pending,9233)
 assert.equal(check(latest).gap,0)
 assert.equal(check(latest).state,'balanced')
+
+// Production amounts: a card was deleted before its 141.83 authorization was
+// reversed, but 169.76 of its 170.00 funding already went back to the account.
+// Aggregate unrelated settled cards; do not fabricate a refund or a write-off.
+const deletedBeforeRefund = {
+ balance:{amount:'1368.82',frozen:'141.85',at},operations:[],cases:[],
+ cards:['pending','small-a','small-b','settled-history'].map(serial=>({card:{id:serial,serial_no:serial,status:'4',balance:'1.00',balance_at:at,synced_at:at}})),
+ finance:{at,recharges:[{status:'1',currency:'USD',amount:'1501.67',received:'1486.65'}],funds:[
+  ...['pending','small-a','small-b'].map(serial_no=>({kind:3001,serial_no,currency:'USD',amount:'-170.00',at})),
+  {kind:3002,serial_no:'pending',currency:'USD',amount:'169.76',at},
+  {kind:4002,serial_no:'small-a',currency:'USD',amount:'168.96',at},
+  {kind:3002,serial_no:'small-a',currency:'USD',amount:'1.00',at},
+  {kind:4002,serial_no:'small-b',currency:'USD',amount:'168.66',at},
+  {kind:3002,serial_no:'small-b',currency:'USD',amount:'1.00',at},
+  {kind:3001,serial_no:'settled-history',currency:'USD',amount:'-100.00',at},
+  {kind:3002,serial_no:'settled-history',currency:'USD',amount:'48.97',at},
+  {kind:2007,currency:'USD',amount:'-66.18',at},
+ ]},
+ groups:[
+  {id:'pending-payment',serial_no:'pending',valid:true,fully_returned:false,settled:false,payment:'141.83',returned:'0.00',difference:'141.83'},
+  {id:'returned-history',serial_no:'settled-history',valid:true,fully_returned:true,settled:true,payment:'100.00',returned:'95.73',difference:'4.27'},
+  {id:'settled-history',serial_no:'settled-history',valid:true,fully_returned:false,settled:true,payment:'46.76',returned:'0.00',difference:'46.76'},
+ ],
+}
+const unchanged=structuredClone(deletedBeforeRefund), corrected=check(deletedBeforeRefund)
+assert.equal(corrected.pendingAssets,0)
+assert.equal(corrected.closedAuthorization,14183)
+assert.equal(corrected.totals.pending,14183,'the original payment is still awaiting refund/settlement')
+assert.equal(corrected.assets,136882)
+assert.equal(corrected.totals.cost,13223,'no invented expense or refund')
+assert.equal(corrected.gap,62,'the old -141.21 difference must be corrected, not hidden')
+assert.equal(corrected.closurePending,62,'all unexplained closure residuals remain visible')
+assert.equal(corrected.unexplained,0)
+assert.equal(cardFunding(deletedBeforeRefund,deletedBeforeRefund.cards[0]).closurePending,24)
+assert.deepEqual(deletedBeforeRefund,unchanged,'reconciliation must not mutate raw financial evidence or account state')
+
+for (const variation of ['active','no-return','zero-return','old-balance','unknown-return-time','in-progress','invalid-trade','stale-review']) {
+ const d=structuredClone(deletedBeforeRefund),card=d.cards[0].card,refund=d.finance.funds.find(f=>f.kind===3002&&f.serial_no==='pending')
+ if(variation==='active')card.status='1'
+ if(variation==='no-return')d.finance.funds=d.finance.funds.filter(f=>f!==refund)
+ if(variation==='zero-return')refund.amount='0.00'
+ if(variation==='old-balance')d.balance.at=new Date(now-1000).toISOString()
+ if(variation==='unknown-return-time')delete refund.at
+ if(variation==='in-progress')d.operations=[{card_id:card.id,action:'cancel',status:'processing'}]
+ if(variation==='invalid-trade')d.groups.push({id:'unknown',serial_no:'pending',valid:false,payment:'0.00',returned:'0.00',difference:'0.00'})
+ if(variation==='stale-review'){d.trade_reviews=[{group_id:'pending-payment',applied:false,voided:false}];d.review_groups=d.groups}
+ assert.equal(check(d).pendingAssets,14183,variation+' cannot prove a completed transfer to the account')
+ assert.equal(check(d).closedAuthorization,0,variation)
+}
+const partialReturn=structuredClone(deletedBeforeRefund)
+partialReturn.finance.funds.find(f=>f.kind===3002&&f.serial_no==='pending').amount='27.93'
+partialReturn.balance.amount='1226.99'
+assert.equal(check(partialReturn).pendingAssets,0)
+assert.equal(check(partialReturn).gap,14245)
+assert.equal(check(partialReturn).closurePending,14245,'a partial closure return must leave the missing principal visible')
+const laterSettlement=structuredClone(deletedBeforeRefund)
+laterSettlement.groups[0].settled=true
+laterSettlement.balance.amount='1226.99'
+assert.equal(check(laterSettlement).closedAuthorization,0)
+assert.equal(check(laterSettlement).totals.cost,13223+14183)
+assert.equal(check(laterSettlement).gap,62,'a later actual settlement is counted once')
+const laterReversal=structuredClone(deletedBeforeRefund)
+Object.assign(laterReversal.groups[0],{fully_returned:true,returned:'141.83',difference:'0.00'})
+assert.equal(check(laterReversal).closedAuthorization,0)
+assert.equal(check(laterReversal).totals.pending,0)
+assert.equal(check(laterReversal).totals.cost,13223)
+assert.equal(check(laterReversal).gap,62,'a later release after the balance was returned does not create another asset')
 assert.deepEqual(cardReturnCounts([{state:'unopened'},{state:'opened'},{state:'waiting'},{state:'waiting'},{state:'returned'},{state:'invalid'}]),{unopened:1,opened:1,waiting:2,returned:1})
-console.log('Passed: funding, additional deposits, withdrawals, pending/final closure returns, pending payments, external withdrawals, missing/stale/partial data, unexplained differences and account states')
+console.log('Passed: funding, additional deposits, withdrawals, pending/final closure returns, deletion before refund, later settlements/reversals, pending payments, external withdrawals, missing/stale/partial data, unexplained differences and account states')

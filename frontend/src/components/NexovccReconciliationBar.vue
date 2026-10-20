@@ -16,14 +16,14 @@ const report=computed(()=>reconciliation(props.data,now.value,props.refreshSecon
  <section class="reconcile-bar" :class="masked?'unknown':syncing?'stale':report.state" aria-label="资金核对">
   <div class="reconcile-status"><i></i><div><strong>资金核对 · {{masked?'已关闭':syncing?'同步中':report.label}}</strong><small>{{syncing?'正在更新余额与流水，完成后核对':'按最近同步数据 · 含估算 · ≤ 1 USD 为小额差异'}}</small></div></div>
   <div class="reconcile-values">
-   <div><span>已付款在途</span><b><button @click="$emit('details',{type:'trades'})">{{money(report.totals.pending)}}</button> <em>USD</em></b><small>{{rmb(report.totals.pending)}} R · 已计入核对</small></div>
+   <div><span>已付款在途</span><b><button @click="$emit('details',{type:'trades'})">{{money(report.pendingAssets)}}</button> <em>USD</em></b><small>{{rmb(report.pendingAssets)}} R · 已计入核对</small></div>
    <div><span>账面差额</span><b>{{masked?'---':syncing?'—':money(report.gap)}} <em>USD</em></b><small>{{masked?'---':syncing?'—':rmb(report.gap)}} R</small></div>
    <div><span>其中销卡待核实</span><b>{{masked?'---':report.gap===null?'—':money(report.closurePending)}} <em>USD</em></b><small>{{masked?'---':report.gap===null?'—':rmb(report.closurePending)}} R · 不计成本</small></div>
    <div><span>其余待核对</span><b>{{masked?'---':syncing?'—':money(report.unexplained)}} <em>USD</em></b><small>{{masked?'---':syncing?'—':rmb(report.unexplained)}} R · 未认定为损失</small></div>
   </div>
   <p v-if="!masked&&report.gap!==null&&!syncing" class="formula">充值 <button @click="$emit('details',{type:'recharges'})">{{money(report.totals.gross)}}</button> − 余额及在途 <b>{{money(report.assets)}}</b> − 总成本 <button @click="$emit('details',{type:'funds',feesOnly:true})">{{money(report.totals.cost)}}</button><template v-if="report.externalWithdrawn"> − 账户提现 <button @click="$emit('details',{type:'funds',kind:'1001'})">{{money(report.externalWithdrawn)}}</button></template> ＝ 差额 <b>{{masked?'---':syncing?'—':money(report.gap)}}</b> USD</p>
   <p v-if="!masked&&report.reasons.length" class="notice">{{report.reasons.join('；')}}</p>
-  <details><summary>核对明细</summary><div class="breakdown"><span>账户余额 <b>{{money(report.account)}} USD</b></span><span>正常及销卡处理中余额 <b>{{money(report.cardBalance)}} USD</b></span><span>已付款在途 <button @click="$emit('details',{type:'trades'})">{{money(report.totals.pending)}} USD</button></span><span>已转出账户资金 <button @click="$emit('details',{type:'funds',kind:'1001'})">{{money(report.externalWithdrawn)}} USD</button></span></div><p>冻结金额单独展示，不重复加到余额；开卡入金、充值到卡、卡片提现均为资金划转。销卡待核实金额不再重复计入卡余额。差额仅用于查账，不自动计入成本或利润。</p></details>
+  <details><summary>核对明细</summary><div class="breakdown"><span>账户余额 <b>{{money(report.account)}} USD</b></span><span>正常及销卡处理中余额 <b>{{money(report.cardBalance)}} USD</b></span><span>已付款在途 <button @click="$emit('details',{type:'trades'})">{{money(report.pendingAssets)}} USD</button></span><span>已转出账户资金 <button @click="$emit('details',{type:'funds',kind:'1001'})">{{money(report.externalWithdrawn)}} USD</button></span></div><p v-if="!masked&&report.closedAuthorization">销卡后待结算授权 {{money(report.closedAuthorization)}} USD · 余款已转回主账户，不再重复计入在途；原付款仍待退款或结算。</p><p>冻结金额单独展示，不重复加到余额；开卡入金、充值到卡、卡片提现均为资金划转。销卡待核实金额不再重复计入卡余额。差额仅用于查账，不自动计入成本或利润。</p></details>
  </section>
 </template>
 <style scoped>
