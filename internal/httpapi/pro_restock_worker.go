@@ -352,7 +352,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 			active = true
 		}
 	}
-	if !force && !c.Enabled && !active {
+	if !force && !c.Enabled && !active && !c.DemandActive(now) {
 		return nil
 	}
 	p, password, _, e := s.store.ProSettings()
@@ -366,6 +366,13 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	}
 	sampleCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	demandScope := ""
+	if c.DemandActive(time.Now()) {
+		demandScope, e = s.store.ProRestockDemandScope()
+		if e != nil {
+			return e
+		}
+	}
 	var snap restock.Snapshot
 	if s.proRestock.monitor != nil {
 		snap, e = s.proRestock.monitor(sampleCtx, c, p, password)
@@ -392,6 +399,18 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	snap.GroupID = c.GroupID
 	if snap.Binding == "" {
 		snap.Binding = restockBinding(p)
+	}
+	if c.DemandActive(time.Now()) {
+		gateCtx, gateCancel := context.WithTimeout(ctx, 15*time.Second)
+		gate := s.sampleRestockDemand(gateCtx, c, p, snap)
+		gateCancel()
+		gate.Scope = demandScope
+		gate = c.AdvanceDemand(gate, time.Now())
+		if e = s.store.SaveProRestockDemand(gate); e != nil {
+			return e
+		}
+		c.DemandGate = &gate
+		snap.DemandGate = &gate
 	}
 	tasks, lead, e := s.restockTasks(snap, p, c)
 	if e != nil {

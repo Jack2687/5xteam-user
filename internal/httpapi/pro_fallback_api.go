@@ -58,7 +58,7 @@ func (s *Server) getProFallback(w http.ResponseWriter, r *http.Request) {
 	if pe != nil || source != fallbackSourceKey(c, p, password) {
 		observation = restock.FallbackObservation{GroupID: c.GroupID}
 	}
-	writeAPI(w, 200, map[string]any{"config": f, "plan": f.PlanWithSchedule(now, observation, c), "monitor": observation, "accounts": accounts, "server_time": now, "checked_at": checked, "error": lastError}, "")
+	writeAPI(w, 200, map[string]any{"config": f, "plan": f.Plan(now, observation), "monitor": observation, "accounts": accounts, "server_time": now, "checked_at": checked, "error": lastError}, "")
 }
 func (s *Server) readFallbackInput(w http.ResponseWriter, r *http.Request) (fallbackInput, model.DownstreamTarget, bool) {
 	v := fallbackInput{FallbackConfig: restock.DefaultFallbackConfig()}

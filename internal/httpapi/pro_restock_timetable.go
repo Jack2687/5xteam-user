@@ -11,6 +11,7 @@ import (
 )
 
 type proRestockPeriod struct {
+	HighDemand  bool   `json:"high_demand,omitempty"`
 	StartMinute int    `json:"start_minute"`
 	EndMinute   int    `json:"end_minute"`
 	Provider    string `json:"card_provider,omitempty"`
@@ -34,6 +35,7 @@ func (p proRestockPeriod) sameRule(other proRestockPeriod) bool {
 // Project the same purchase resolver and prohibition policy used at dispatch
 // onto a Beijing business day. No provider calls or workflow changes occur.
 func proRestockDailyTimetable(p model.ProSettings, pay gptpay.Settings, c restock.Config, now time.Time) proRestockTimetable {
+	c.DemandGate = nil // Future periods describe saved rules, never a live permission.
 	local := now.In(time.FixedZone("Asia/Shanghai", 8*3600))
 	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
 	boundaries := map[int]bool{0: true, 1440: true}
@@ -68,6 +70,8 @@ func proRestockDailyTimetable(p model.ProSettings, pay gptpay.Settings, c restoc
 		at := day.Add(time.Duration(start) * time.Minute)
 		policy := c.CardSchedule(at)
 		period := proRestockPeriod{StartMinute: start, EndMinute: minutes[i+1], Blocked: policy.Blocked, Source: "default"}
+		demand := c.DemandStatus(at)
+		period.HighDemand = demand.Active && demand.Phase != "blocked"
 		if policy.Blocked {
 			period.Source = "blocked"
 			// Invalid legacy settings fail closed, just like dispatch.

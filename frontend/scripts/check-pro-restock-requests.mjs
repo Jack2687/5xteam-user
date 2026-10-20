@@ -347,7 +347,7 @@ console.log('Passed: capacity percentage validation, save round-trip and live da
 // Daily scheduling fields survive drafts and saves independently of replenishment.
 {
  const f=fixture()
- const config={version:1,enabled:false,mode:'observe',capacity_percent:60,money_window_minutes:3,no_restock_enabled:true,no_restock_windows:[{start:'17:00',end:'20:50'}],no_restock_fallback:true,daily_ejh_merge_enabled:true,daily_ejh_merge_time:'17:30'}
+ const config={version:1,enabled:false,mode:'observe',capacity_percent:60,money_window_minutes:3,no_restock_enabled:true,no_restock_windows:[{start:'17:00',end:'20:50'}],daily_ejh_merge_enabled:true,daily_ejh_merge_time:'17:30'}
  f.applyConfig(config);f.state.value={config};f.dirty.value=true
  f.form.daily_ejh_merge_time='24:00';await f.save()
  assert.equal(f.requests.length,0,'invalid daily schedule sent to server')
@@ -355,7 +355,7 @@ console.log('Passed: capacity percentage validation, save round-trip and live da
  f.form.daily_ejh_merge_time='17:30'
  const saving=f.save();await tick()
  const request=f.requests[0]
- assert.equal(request.options.body.no_restock_fallback,true)
+ assert.equal(request.options.body.no_restock_fallback,undefined)
  assert.equal(request.options.body.daily_ejh_merge_enabled,true)
  assert.equal(request.options.body.daily_ejh_merge_time,'17:30')
  assert.deepEqual(JSON.parse(JSON.stringify(request.options.body.no_restock_windows)),[{start:'17:00',end:'20:50',allowed_provider:'',takeover_enabled:false}])
@@ -365,7 +365,7 @@ console.log('Passed: capacity percentage validation, save round-trip and live da
  assert.equal(f.form.daily_ejh_merge_time,'17:30');assert.equal(f.dirty.value,false)
  f.unmounted()
 }
-console.log('Passed: 17:00–20:50 fallback schedule and 17:30 daily merge settings validation/save')
+console.log('Passed: 17:00–20:50 no-restock schedule and 17:30 daily merge settings validation/save')
 
 // Reject conflicting allowed issuers even across midnight; preserve full-block rows.
 for(const windows of [
@@ -398,3 +398,22 @@ console.log('Passed: issuer exceptions round-trip, overlap validation, and indep
  put.reject(new Error('fixture finished'));await saving;f.unmounted()
 }
 console.log('Passed: per-window takeover flags, default opt-out, multi-window payload and issuer exclusion')
+
+{
+ const f=fixture()
+ const config={version:1,enabled:false,mode:'observe',capacity_percent:60,money_window_minutes:3,no_restock_enabled:true,no_restock_windows:[{start:'23:00',end:'09:00',high_demand_enabled:true,high_demand_threshold:20,high_demand_confirmations:3}]}
+ f.applyConfig(config);f.state.value={config};f.dirty.value=true
+ f.form.no_restock_windows[0].high_demand_threshold=0;await f.save()
+ assert.equal(f.requests.length,0,'invalid high demand threshold was saved')
+ f.form.no_restock_windows[0].high_demand_threshold=20
+ const saving=f.save();await tick();const req=f.requests[0]
+ assert.equal(req.options.body.no_restock_windows[0].high_demand_threshold,20)
+ assert.equal(req.options.body.no_restock_windows[0].high_demand_confirmations,3)
+ assert.equal(req.options.body.no_restock_windows[0].high_demand_enabled,true)
+ req.resolve({...config,version:2});await tick()
+ f.requests.at(-1).resolve({config:{...config,version:2}});await tick()
+ f.requests.at(-1).resolve([]);await saving
+ assert.equal(f.form.no_restock_windows[0].high_demand_threshold,20)
+ f.unmounted()
+}
+console.log('Passed: high-demand visual settings validation and save/load')

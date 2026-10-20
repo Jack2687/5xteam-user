@@ -7,7 +7,7 @@ import (
 
 func TestCardScheduleWholeDayAndIndependentMerge(t *testing.T) {
 	c := DefaultConfig()
-	c.NoRestockEnabled, c.NoRestockFallback, c.DailyEJHMergeEnabled = true, true, true
+	c.NoRestockEnabled, c.DailyEJHMergeEnabled = true, true
 	c.DailyEJHMergeTime = "17:30"
 	c.NoRestockWindows = []DailyWindow{
 		{Start: "02:00", End: "09:00"},
@@ -19,7 +19,7 @@ func TestCardScheduleWholeDayAndIndependentMerge(t *testing.T) {
 		policy := c.CardSchedule(now)
 		blocked := minute >= 120 && minute < 540
 		allowed := minute >= 1020 && minute < 1250
-		if policy.Active != (blocked || allowed) || policy.Blocked != blocked || (c.NoRestockReason(now) != "") != blocked || c.ScheduledFallbackActive(now) != blocked {
+		if policy.Active != (blocked || allowed) || policy.Blocked != blocked || (c.NoRestockReason(now) != "") != blocked {
 			t.Fatalf("minute %d: %+v", minute, policy)
 		}
 		provider := "ejh"
@@ -124,12 +124,6 @@ func TestCardScheduleRequestedBoundariesAndGates(t *testing.T) {
 				d := Evaluate(c, s, nil, Limits{}, 2, 20, 2, now)
 				if (d.Suggested == 0) != blocked {
 					t.Fatalf("%s: demand gate=%d", at, d.Suggested)
-				}
-				for _, fallback := range []bool{false, true} {
-					c.NoRestockFallback = fallback
-					if c.ScheduledFallbackActive(now) != (fallback && blocked) {
-						t.Fatal("fallback exception bypass", at)
-					}
 				}
 				deadline, enabled := c.DailyEJHMergeDeadline(now)
 				if !enabled || (!now.Before(deadline)) != (at >= "17:30:00") {

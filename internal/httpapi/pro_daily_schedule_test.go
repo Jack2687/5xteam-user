@@ -7,7 +7,6 @@ import (
 	"chatgpt-space-merge/internal/restock"
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,106 +14,38 @@ import (
 	"time"
 )
 
-func TestFallbackScheduledWindowBoundaries(t *testing.T) {
-	for _, emptyAfter := range []bool{false, true} {
-		t.Run(map[bool]string{false: "nonempty", true: "empty"}[emptyAfter], func(t *testing.T) {
-			s, st, m, now := fallbackFixture(t)
-			c, _ := st.ProRestockConfig()
-			c.NoRestockWindows = []restock.DailyWindow{{Start: "17:00", End: "20:50"}}
-			c.NoRestockFallback = true
-			if _, err := st.SaveProRestockConfig(c); err != nil {
-				t.Fatal(err)
-			}
-			f, id, _ := st.ProFallbackConfig()
-			f.CheckSeconds = 300
-			if _, err := st.SaveProFallbackConfig(f, id); err != nil {
-				t.Fatal(err)
-			}
-			setTime := func(at string) { *now, _ = time.Parse(time.RFC3339, "2026-10-16T"+at+"+08:00") }
-			m.sourceCount = 2
-			setTime("16:59:59")
-			if err := s.tickProFallback(context.Background(), false); err != nil {
-				t.Fatal(err)
-			}
-			if m.on[1] || m.on[2] {
-				t.Fatal("enabled early")
-			}
-			m.sourceFailure = true // The schedule must not wait for a failing primary sampler.
-			setTime("17:00:00")
-			if err := s.tickProFallback(context.Background(), false); err != nil {
-				t.Fatal(err)
-			}
-			if !m.on[1] || !m.on[2] || m.writes[3] != 0 {
-				t.Fatal("missed window start or touched unselected account", m.on)
-			}
-			w := httptest.NewRecorder()
-			s.getProFallback(w, httptest.NewRequest("GET", "/", nil))
-			if !strings.Contains(w.Body.String(), `"phase":"scheduled"`) {
-				t.Fatal(w.Body.String())
-			}
-			setTime("20:49:59")
-			if err := s.tickProFallback(context.Background(), false); err != nil {
-				t.Fatal(err)
-			}
-			if m.writes[1] != 1 {
-				t.Fatal("repeated scheduling write", m.writes)
-			}
-			m.sourceFailure = false
-			if emptyAfter {
-				m.sourceCount = 0
-			}
-			setTime("20:50:00")
-			if err := s.tickProFallback(context.Background(), false); err != nil {
-				t.Fatal(err)
-			}
-			if m.on[1] != emptyAfter || m.on[2] != emptyAfter {
-				t.Fatal("did not restore normal empty-group rule", m.on)
-			}
-			// Explicitly disabling fallback wins even inside a matching pause window.
-			setTime("17:30:00")
-			f, id, _ = st.ProFallbackConfig()
-			f.Enabled = false
-			if _, err := st.SaveProFallbackConfig(f, id); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.tickProFallback(context.Background(), true); err != nil {
-				t.Fatal(err)
-			}
-			if m.on[1] || m.on[2] || m.writes[3] != 0 {
-				t.Fatal("disabled fallback was overridden")
-			}
-		})
+func TestFallbackNoRestockWindowsUseEmptyGroupRule(t *testing.T) {
+	s, st, m, now := fallbackFixture(t)
+	c, _ := st.ProRestockConfig()
+	c.NoRestockWindows = []restock.DailyWindow{{Start: "02:00", End: "09:00"}, {Start: "17:00", End: "20:00", AllowedProvider: "nexovcc"}}
+	if _, err := st.SaveProRestockConfig(c); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestFallbackNexovccExceptionUsesNormalEmptyGroupRule(t *testing.T) {
-	for _, forceFallback := range []bool{false, true} {
-		t.Run(fmt.Sprint(forceFallback), func(t *testing.T) {
-			s, st, m, now := fallbackFixture(t)
-			c, _ := st.ProRestockConfig()
-			c.NoRestockWindows = []restock.DailyWindow{{Start: "02:00", End: "09:00"}, {Start: "17:00", End: "20:00", AllowedProvider: "nexovcc"}}
-			c.NoRestockFallback = forceFallback
-			if _, err := st.SaveProRestockConfig(c); err != nil {
-				t.Fatal(err)
-			}
-			for _, row := range []struct {
-				at    string
-				count int
-				want  bool
-			}{
-				{"01:59:59", 2, false}, {"02:00:00", 2, forceFallback}, {"08:59:59", 2, forceFallback}, {"09:00:00", 2, false},
-				{"17:00:00", 2, false}, {"17:29:59", 0, true}, {"17:30:00", 2, false}, {"19:59:59", 2, false}, {"20:00:00", 0, true}, {"20:50:00", 2, false},
-			} {
-				*now, _ = time.Parse(time.RFC3339, "2026-10-18T"+row.at+"+08:00")
-				m.sourceCount = row.count
-				if err := s.tickProFallback(context.Background(), true); err != nil {
-					t.Fatal(err)
-				}
-				if m.on[1] != row.want || m.on[2] != row.want || m.writes[3] != 0 {
-					t.Fatal("wrong fallback in issuer exception", row, m.on)
-				}
-			}
-		})
+	for _, row := range []struct {
+		at    string
+		count int
+	}{
+		{"01:59:59", 2}, {"02:00:00", 2}, {"02:30:00", 0}, {"03:00:00", 2}, {"08:59:59", 0}, {"09:00:00", 0}, {"09:01:00", 2},
+		{"17:00:00", 2}, {"17:29:59", 0}, {"17:30:00", 2}, {"19:59:59", 2}, {"20:00:00", 0}, {"20:50:00", 2},
+	} {
+		*now, _ = time.Parse(time.RFC3339, "2026-10-18T"+row.at+"+08:00")
+		m.sourceCount = row.count
+		if err := s.tickProFallback(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+		want := row.count == 0
+		if m.on[1] != want || m.on[2] != want || m.writes[3] != 0 {
+			t.Fatal("schedule changed empty-group rule", row, m.on)
+		}
+		w := httptest.NewRecorder()
+		s.getProFallback(w, httptest.NewRequest("GET", "/", nil))
+		phase := `"phase":"off"`
+		if want {
+			phase = `"phase":"active"`
+		}
+		if !strings.Contains(w.Body.String(), phase) {
+			t.Fatal(w.Body.String())
+		}
 	}
 }
 

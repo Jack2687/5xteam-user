@@ -12,6 +12,8 @@ import (
 
 func (s *Store) initializeProRestock() error {
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS pro_restock_config(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS pro_restock_demand_gate(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
+ DELETE FROM pro_restock_demand_gate;
  CREATE TABLE IF NOT EXISTS pro_restock_tasks(id TEXT PRIMARY KEY,email TEXT NOT NULL COLLATE NOCASE,status TEXT NOT NULL,created_at TEXT NOT NULL,cost INTEGER NOT NULL,payload TEXT NOT NULL);
  CREATE UNIQUE INDEX IF NOT EXISTS pro_restock_account ON pro_restock_tasks(email) WHERE status NOT IN ('ready','failed','cancelled');
  CREATE TABLE IF NOT EXISTS pro_restock_replacements(source TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE);
@@ -40,6 +42,9 @@ func readRestockConfig(q proCapacityQuery) (restock.Config, error) {
 	}
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &c)
+	}
+	if err == nil {
+		err = attachRestockDemand(q, &c)
 	}
 	return c, err
 }

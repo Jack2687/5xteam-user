@@ -118,11 +118,20 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	timetable := proRestockDailyTimetable(p, pay, c, now)
+	demand := c.DemandStatus(now)
+	selected, payment, routeErr := s.resolveProPurchase(p, pay, c, now)
+	purchase := map[string]any{"card_provider": selected.AutoCardProvider(), "plan_code": payment.PlanCode, "template_id": ""}
+	if selected.PurchaseRoute != nil {
+		purchase["template_id"] = selected.PurchaseRoute.TemplateID
+	}
+	if routeErr != nil {
+		purchase["error"] = routeErr.Error()
+	}
 	provider := timetable.Current.Provider
 	if provider == "" {
 		provider = c.EffectiveCardProvider(now, p.AutoCardProvider())
 	}
-	writeAPI(w, 200, map[string]any{"takeover": map[string]any{"config": tc, "state": ts}, "config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": provider, "purchase_timetable": timetable, "daily_ejh_merge_run": dailyRun}, "")
+	writeAPI(w, 200, map[string]any{"takeover": map[string]any{"config": tc, "state": ts}, "config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": provider, "purchase_timetable": timetable, "no_restock_demand": demand, "current_purchase": purchase, "daily_ejh_merge_run": dailyRun}, "")
 }
 func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	c := restock.DefaultConfig()

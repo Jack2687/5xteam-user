@@ -8,8 +8,8 @@ import (
 )
 
 type Config struct {
+	DemandGate           *DemandGate   `json:"-"`
 	NoRestockWindows     []DailyWindow `json:"no_restock_windows"`
-	NoRestockFallback    bool          `json:"no_restock_fallback"`
 	DailyEJHMergeEnabled bool          `json:"daily_ejh_merge_enabled"`
 	DailyEJHMergeTime    string        `json:"daily_ejh_merge_time"`
 
@@ -173,6 +173,7 @@ type Account struct {
 	Windows             []Window      `json:"windows"`
 }
 type Snapshot struct {
+	DemandGate          *DemandGate `json:"no_restock_demand,omitempty"`
 	TakeoverToken       string      `json:"takeover_token,omitempty"`
 	MonitorGroups       []int64     `json:"monitor_groups,omitempty"`
 	CollectionStartedAt time.Time   `json:"collection_started_at,omitempty"`

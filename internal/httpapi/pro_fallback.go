@@ -15,17 +15,16 @@ import (
 )
 
 type proFallbackRuntime struct {
-	mu              sync.Mutex
-	lastCheck       time.Time
-	lastError       string
-	observation     restock.FallbackObservation
-	source          string
-	tick            sync.Mutex
-	clients         map[string]*sub2.Client
-	next            time.Time
-	scheduled       bool
-	scheduleVersion int
-	now             func() time.Time
+	mu            sync.Mutex
+	lastCheck     time.Time
+	lastError     string
+	observation   restock.FallbackObservation
+	source        string
+	tick          sync.Mutex
+	clients       map[string]*sub2.Client
+	next          time.Time
+	configVersion int
+	now           func() time.Time
 }
 
 func (s *Server) fallbackNow() time.Time {
@@ -83,11 +82,10 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 	if err != nil {
 		return err
 	}
-	scheduled := c.ScheduledFallbackActive(now)
-	if !force && now.Before(s.proFallback.next) && scheduled == s.proFallback.scheduled && c.Version == s.proFallback.scheduleVersion {
+	if !force && now.Before(s.proFallback.next) && c.Version == s.proFallback.configVersion {
 		return nil
 	}
-	s.proFallback.scheduled, s.proFallback.scheduleVersion = scheduled, c.Version
+	s.proFallback.configVersion = c.Version
 	defer func() {
 		s.proFallback.mu.Lock()
 		defer s.proFallback.mu.Unlock()
@@ -113,11 +111,9 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 		if err = f.Validate(); err != nil {
 			return err
 		}
-		if !scheduled {
-			sampleCtx, stop := context.WithTimeout(parent, 5*time.Second)
-			observation, source = s.collectFallbackSource(sampleCtx, c)
-			stop()
-		}
+		sampleCtx, stop := context.WithTimeout(parent, 5*time.Second)
+		observation, source = s.collectFallbackSource(sampleCtx, c)
+		stop()
 		s.proFallback.mu.Lock()
 		// Retain the last valid sample for display only; Error prevents decisions.
 		old := s.proFallback.observation
@@ -127,7 +123,7 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 		s.proFallback.observation, s.proFallback.source = observation, source
 		s.proFallback.mu.Unlock()
 	}
-	plan := f.PlanWithSchedule(s.fallbackNow(), observation, c)
+	plan := f.Plan(s.fallbackNow(), observation)
 	if plan.Hold {
 		return errors.New(plan.Reason)
 	}
@@ -249,15 +245,13 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 						if e != nil {
 							return e
 						}
-						freshPlan := f.PlanWithSchedule(s.fallbackNow(), observation, latest)
+						freshPlan := f.Plan(s.fallbackNow(), observation)
 						if latest.Version != c.Version || freshPlan.Hold || freshPlan.Phase != plan.Phase || freshPlan.Active != plan.Active {
-							return errors.New("时段、配置或主组快照已变化，等待下轮核验")
+							return errors.New("配置或主组快照已变化，等待下轮核验")
 						}
-						if freshPlan.Phase != "scheduled" {
-							p, password, _, pe := s.store.ProSettings()
-							if pe != nil || fallbackSourceKey(latest, p, password) != source {
-								return errors.New("主监控配置已变更，保持调度等待新采集")
-							}
+						p, password, _, pe := s.store.ProSettings()
+						if pe != nil || fallbackSourceKey(latest, p, password) != source {
+							return errors.New("主监控配置已变更，保持调度等待新采集")
 						}
 					}
 					// Write-ahead intent survives an ambiguous POST or a process crash.

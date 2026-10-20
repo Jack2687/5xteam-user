@@ -8,10 +8,6 @@ import (
 // Use Beijing business time independently of the host/container time zone.
 var scheduleLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
-func (c Config) ScheduledFallbackActive(now time.Time) bool {
-	return c.NoRestockFallback && c.NoRestockEnabled && c.validateNoRestockWindows() == nil && c.NoRestockReason(now) != ""
-}
-
 func (c Config) DailyEJHMergeDeadline(now time.Time) (time.Time, bool) {
 	minute, ok := dailyMinute(c.DailyEJHMergeTime)
 	if !c.DailyEJHMergeEnabled || !ok {
@@ -22,10 +18,13 @@ func (c Config) DailyEJHMergeDeadline(now time.Time) (time.Time, bool) {
 }
 
 type DailyWindow struct {
-	Start           string `json:"start"`
-	End             string `json:"end"`
-	AllowedProvider string `json:"allowed_provider,omitempty"`
-	TakeoverEnabled bool   `json:"takeover_enabled,omitempty"`
+	HighDemandEnabled       bool   `json:"high_demand_enabled,omitempty"`
+	HighDemandThreshold     int    `json:"high_demand_threshold,omitempty"`
+	HighDemandConfirmations int    `json:"high_demand_confirmations,omitempty"`
+	Start                   string `json:"start"`
+	End                     string `json:"end"`
+	AllowedProvider         string `json:"allowed_provider,omitempty"`
+	TakeoverEnabled         bool   `json:"takeover_enabled,omitempty"`
 }
 
 type CardSchedule struct {
@@ -71,6 +70,9 @@ func (c Config) validateNoRestockWindows() error {
 		return fmt.Errorf("启用每日禁补时段时至少设置一个时间段")
 	}
 	for i, w := range windows {
+		if w.HighDemandEnabled && (w.AllowedProvider != "" || w.HighDemandThreshold < 1 || w.HighDemandThreshold > 1000000 || w.HighDemandConfirmations < 1 || w.HighDemandConfirmations > 1000) {
+			return fmt.Errorf("每日禁补时段 %d：高并发放行仅用于完全禁补，阈值应为 1～1000000，连续次数应为 1～1000", i+1)
+		}
 		start, startOK := dailyMinute(w.Start)
 		end, endOK := dailyMinute(w.End)
 		if !startOK || !endOK {
@@ -131,6 +133,19 @@ func (c Config) EffectiveCardProvider(now time.Time, defaultProvider string) str
 }
 
 func (c Config) CardSchedule(now time.Time) CardSchedule {
+	policy := c.StaticCardSchedule(now)
+	demand := c.DemandStatus(now)
+	if policy.Blocked && demand.Allowed {
+		policy.Blocked = false
+		policy.Reason = ""
+		policy.Summary = "禁补期间高并发放行 · 至" + policy.End
+	} else if policy.Blocked && demand.Active {
+		policy.Reason += "；" + demand.Reason
+	}
+	return policy
+}
+
+func (c Config) StaticCardSchedule(now time.Time) CardSchedule {
 	var policy CardSchedule
 	if !c.NoRestockEnabled {
 		return policy

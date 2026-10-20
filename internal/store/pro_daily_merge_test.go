@@ -23,7 +23,7 @@ func TestDailyEJHMergeSnapshotOnceAndLifecycle(t *testing.T) {
 	}
 	card := ejhFixtureCard(t, s)
 	c := restock.DefaultConfig()
-	c.NoRestockEnabled, c.NoRestockFallback = true, true
+	c.NoRestockEnabled = true
 	c.NoRestockWindows = []restock.DailyWindow{{Start: "17:00", End: "20:50"}}
 	c.DailyEJHMergeEnabled, c.DailyEJHMergeTime = true, "17:30"
 	if _, err := s.SaveProRestockConfig(c); err != nil {

@@ -11,7 +11,7 @@ let timer,disposed=false,revision=0
 const filtered=computed(()=>accounts.value.filter(a=>(a.name+' '+a.id+' '+a.type).toLowerCase().includes(search.value.toLowerCase())))
 const selectedGroups=c=>[...(c.group_ids??(c.group_id?[c.group_id]:[]))]
 const groupOptions=computed(()=>[...groups.value,...form.group_ids.filter(id=>!groups.value.some(g=>g.id===id)).map(id=>({id,name:'已保存分组'}))])
-const phases={scheduled:'禁补时段：开启兜底',active:'目标：开启兜底',off:'目标：关闭兜底',disabled:'兜底未启用',unknown:'保持当前调度'}
+const phases={active:'目标：开启兜底',off:'目标：关闭兜底',disabled:'兜底未启用',unknown:'保持当前调度'}
 const fmt=t=>t&&!String(t).startsWith('0001')?new Date(t).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'尚未核验'
 const stale=computed(()=>!state.value?.checked_at||String(state.value.checked_at).startsWith('0001')||clock.value+clockOffset.value-Date.parse(state.value.checked_at)>1000*(Number(state.value?.config?.check_seconds||10)+50))
 const unresolved=computed(()=>state.value?.accounts?.filter(a=>a.error||a.observed==null||a.observed!==a.desired)||[])
@@ -19,10 +19,10 @@ const pending=computed(()=>state.value?.config?.enabled?state.value.config.accou
 const cardStatus=computed(()=>{
  if(fetchError.value)return '读取异常'
  if(!state.value)return '读取中…'
- if(state.value.error||(state.value.plan.phase!=='scheduled'&&state.value.monitor?.error)||state.value.plan.hold)return '核验异常'
+ if(state.value.error||state.value.monitor?.error||state.value.plan.hold)return '核验异常'
  if(stale.value&&(state.value.config.enabled||state.value.accounts.length))return '待核验'
  if(pending.value||unresolved.value.length||state.value.accounts.some(a=>a.desired!==(!a.old_connection&&state.value.config.account_ids.includes(a.id)&&state.value.plan.active)))return '切换待确认'
- return {scheduled:'时段兜底已开启',active:'兜底已开启',off:'兜底已关闭',disabled:'未启用',unknown:'保持当前调度'}[state.value.plan.phase]||'待核验'
+ return {active:'兜底已开启',off:'兜底已关闭',disabled:'未启用',unknown:'保持当前调度'}[state.value.plan.phase]||'待核验'
 })
 async function refresh(initial=false,background=false){
  if(disposed||(background&&busy.value))return
@@ -39,7 +39,7 @@ function selectVisible(){form.account_ids=[...new Set([...form.account_ids,...fi
 function remove(id){form.account_ids=form.account_ids.filter(value=>value!==id);dirty.value=true}
 async function save(){await action(async()=>{
  const c=await api('/api/pro-restock/fallback',{method:'PUT',body:input()});if(disposed)return
- Object.assign(form,c);form.account_ids=[...(c.account_ids||[])];form.group_ids=selectedGroups(c);password.value='';dirty.value=false;await refresh();notice.value='兜底配置已保存。后台按禁补时段设置和主监控分组账号数量核验调度。'
+ Object.assign(form,c);form.account_ids=[...(c.account_ids||[])];form.group_ids=selectedGroups(c);password.value='';dirty.value=false;await refresh();notice.value='兜底配置已保存。后台按主监控分组账号数量核验调度：空组开启，有号关闭。'
 })}
 async function retry(){await action(async()=>{try{const data=await api('/api/pro-restock/fallback/retry',{method:'POST'});if(!disposed){state.value=data;notice.value='核验完成。'}}finally{await refresh()}})}
 async function reload(){await action(async()=>{await refresh(true);groups.value=[];accounts.value=[];loaded.value=false})}
@@ -47,11 +47,11 @@ onMounted(async()=>{await refresh(true);if(!disposed)timer=setInterval(()=>{cloc
 onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose()})
 </script>
 <template>
-<article v-if="compact" class="fallback-card" aria-label="兜底调度"><span>兜底调度</span><strong>{{cardStatus}}</strong><p>{{state?phases[state.plan.phase]:'正在读取状态'}} · 已选 {{state?.config?.account_ids?.length||0}} 个</p><p :title="fetchError||state?.error||state?.monitor?.error||state?.plan?.reason">{{fetchError||state?.error||(state?.plan?.phase==='scheduled'?state.plan.reason:state?.monitor?.error)||(state?.monitor?'监控组 '+(state.monitor.count??'未知')+' 个账号 · '+(state.config.check_seconds||3)+' 秒检查':'等待监控数据')}}</p><button type="button" aria-haspopup="dialog" @click="detailDialog?.showModal()">查看兜底详情</button></article>
+<article v-if="compact" class="fallback-card" aria-label="兜底调度"><span>兜底调度</span><strong>{{cardStatus}}</strong><p>{{state?phases[state.plan.phase]:'正在读取状态'}} · 已选 {{state?.config?.account_ids?.length||0}} 个</p><p :title="fetchError||state?.error||state?.monitor?.error||state?.plan?.reason">{{fetchError||state?.error||state?.monitor?.error||(state?.monitor?'监控组 '+(state.monitor.count??'未知')+' 个账号 · '+(state.config.check_seconds||3)+' 秒检查':'等待监控数据')}}</p><button type="button" aria-haspopup="dialog" @click="detailDialog?.showModal()">查看兜底详情</button></article>
 <component :is="compact?'dialog':'div'" ref="detailDialog" :class="{'fallback-dialog':compact}" :aria-label="compact?'兜底调度详情':undefined" @click="compact&&$event.target===detailDialog&&detailDialog.close()">
 <article class="fallback-panel" aria-label="兜底调度">
  <button v-if="compact" type="button" class="close-detail" aria-label="关闭兜底详情" @click="detailDialog.close()">✕</button>
- <header><div><h2>兜底调度</h2><p>空组自动兜底；可在补货配置中开启完全禁补时段强制兜底</p></div><span class="badge">{{state?phases[state.plan.phase]:'读取状态中…'}}</span></header>
+ <header><div><h2>兜底调度</h2><p>主监控分组为空自动开启兜底，有号后自动关闭</p></div><span class="badge">{{state?phases[state.plan.phase]:'读取状态中…'}}</span></header>
  <p v-if="error||fetchError" class="alert error" role="alert">{{error||fetchError}}</p><p v-if="notice" class="alert" role="status">{{notice}}</p>
  <template v-if="state">
   <p>{{state.plan.reason}}</p>
@@ -67,7 +67,7 @@ onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose()
   <form v-if="settings" @submit.prevent="save" @input="dirty=true">
    <fieldset :disabled="busy">
    <label class="check"><input v-model="form.enabled" type="checkbox">启用兜底调度</label>
-   <p>沿用 Pro 推送的主 Sub2 连接和自动补货选定的监控组，通常按分组实际账号数量判断；若开启“禁补时段立即启用兜底调度”，仅完全禁补时段优先开启；允许卡台补货的时段及其余时间按空组判断。与补货总开关、观察模式独立；登录、开通、授权期间仍为空组就继续兜底。关闭此开关、取消选择或更换连接后，原账号调度会收尾关闭。</p>
+   <p>沿用 Pro 推送的主 Sub2 连接和自动补货选定的监控组，按分组实际账号数量判断：空组开启兜底，有号后关闭；禁补期间同样适用。与补货总开关、观察模式独立；登录、开通、授权期间仍为空组就继续兜底。关闭此开关、取消选择或更换连接后，原账号调度会收尾关闭。</p>
    <div class="fields">
     <label>兜底 Sub2 地址<input v-model.trim="form.url" type="url" placeholder="https://sub2.example.com" :required="form.enabled" @change="resetConnection"></label>
     <label>管理员邮箱<input v-model.trim="form.email" type="email" autocomplete="off" :required="form.enabled" @change="resetConnection"></label>
