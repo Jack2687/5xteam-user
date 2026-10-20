@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { createLatestRequest } from '../src/latestRequest.js'
 import { forecastDetails, concurrencyDetails } from '../src/restockForecast.js'
+import { restockTaskActive, restockTaskProgress, restockTaskRows, restockTaskTimeline } from '../src/restockTasks.js'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const source = readFileSync(new URL('../src/components/ProRestockView.vue', import.meta.url), 'utf8')
@@ -12,7 +13,8 @@ function fixture() {
   const requests = [], timers = new Map()
   let mounted, unmounted, timerID = 0
   const context = vm.createContext({
-    defineProps:()=>({defaultPageSize:50}), ref, reactive, computed, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
+    defineProps:()=>({defaultPageSize:50}), ref, reactive, computed, watch, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
+    restockTaskActive, restockTaskProgress, restockTaskRows, restockTaskTimeline,
     document: {activeElement: {focus() {}}},
     onMounted(fn) { mounted = fn }, onUnmounted(fn) { unmounted = fn },
     setInterval(fn) { const id = ++timerID; timers.set(id, fn); return id },
@@ -24,8 +26,32 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog, applyConfig, addNoRestockWindow, removeNoRestockWindow, scheduleSummary};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog, applyConfig, addNoRestockWindow, removeNoRestockWindow, scheduleSummary, taskFilter, taskSearch, taskPage, taskPageSize, taskRows, visibleTasks, taskDetail};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
+}
+
+// Task pagination has independent state, uses global size, clamps after live
+// updates, and a displayed task detail follows its own current task only.
+{
+ const f=fixture()
+ f.state.value={tasks:Array.from({length:53},(_,i)=>({id:String(i),email:`account-${i}@example.test`,status:'ready',created_at:new Date(1700000000000+i*60000).toISOString()}))}
+ assert.equal(f.taskPageSize.value,50)
+ assert.equal(f.visibleTasks.value.length,50)
+ assert.equal(f.visibleTasks.value[0].id,'52')
+ f.page.value=4;f.taskPage.value=2
+ assert.equal(f.visibleTasks.value.length,3)
+ f.taskFilter.value='active';await tick()
+ assert.equal(f.taskPage.value,1)
+ assert.equal(f.page.value,4,'task filter must not change decision pagination')
+ assert.equal(f.visibleTasks.value.length,0)
+ f.taskFilter.value='all';await tick();f.taskPage.value=2
+ f.state.value={tasks:[{id:'latest',email:'latest@example.test',status:'running',stages:{'login:running':'2026-10-20T12:00:00+08:00'}}]}
+ await tick();assert.equal(f.taskPage.value,1)
+ f.detail.value={id:'latest',email:'latest@example.test',status:'running'}
+ f.state.value={tasks:[{id:'latest',email:'latest@example.test',status:'ready',ready_at:'2026-10-20T12:05:00+08:00'}]}
+ await tick();assert.equal(f.taskDetail.value.status,'补货成功')
+ assert.equal(f.taskDetail.value.success,'2026-10-20T12:05:00+08:00')
+ f.unmounted()
 }
 
 // An initial request completing after navigation must not resurrect polling.
