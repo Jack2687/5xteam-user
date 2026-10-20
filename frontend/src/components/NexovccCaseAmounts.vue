@@ -7,6 +7,8 @@ const props=defineProps({row:{type:Object,required:true},finance:{type:Object,de
 defineEmits(['details','match'])
 const value=computed(()=>caseDetails(props.row,props.finance))
 const feeRows=computed(()=>[
+ {label:'开卡费（分摊）',amount:value.value.opening,kind:'3003',scope:'card'},
+ {label:'卡服务费（月 · 分摊）',amount:value.value.monthly,kind:'3004',scope:'card'},
  {label:'授权撤销费',amount:value.value.reversal,kind:'2003'},
  {label:'交易手续费',amount:value.value.transaction,kind:'2007'},
  {label:'退款手续费',amount:value.value.refundFee,kind:'8888'},
@@ -27,9 +29,10 @@ const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(
   <p v-if="['opened','waiting'].includes(row.state)||value.pending>0" class="return-note">尚待回款：<b>{{money(value.pending)}} USD</b>（已扣清算）</p>
   <p v-if="value.manualUnconfirmed" class="warning">人工标记已回款；流水尚未确认全额回款，金额仍按实际记录显示。</p>
   <p v-if="row.match&&!row.match.group.valid" class="warning">{{row.match.group.problem||'流水金额待核实'}}</p>
-  <div class="fee-grid"><div v-for="item in feeRows" :key="item.label" class="fee-line"><span>{{item.label}}</span><button :disabled="!row.match" @click="$emit('details',{row,options:item.kind?{type:'funds',kind:item.kind}:{type:'trades'}})"><strong>{{money(item.amount)}} USD</strong><small>{{rmb(item.amount)}} R</small></button></div></div>
+  <div class="fee-grid"><div v-for="item in feeRows" :key="item.label" class="fee-line"><span>{{item.label}}</span><button :disabled="item.scope==='card'?!row.card_id:!row.match" @click="$emit('details',{row,options:item.kind?{type:'funds',kind:item.kind,scope:item.scope}:{type:'trades'}})"><strong>{{money(item.amount)}} USD</strong><small>{{rmb(item.amount)}} R</small></button></div></div>
   <div class="result-row"><div><span>账号成本{{value.provisional?'（当前）':''}}</span><strong>{{rmb(value.cost)}} R<small>{{money(value.cost)}} USD</small></strong></div><div class="profit"><span>账号结余{{value.provisional?'（暂计）':''}}</span><strong :class="{negative:value.profit<0}">{{money(value.profit)}} R</strong></div></div>
-  <small class="note">{{value.provisional?'回款完成后更新最终结余；':''}}开卡费、充值手续费在总账扣除。1 USD = 6.7 R。</small>
+  <small v-if="value.sharedCount" class="note">开卡费、月服务费按本卡已开通 {{value.sharedCount}} 个账号分摊，保留两位小数；尾差保留在总账。<template v-if="value.sharedApplied===false">本账号分摊已计入首次成功开通。</template></small>
+  <small class="note">{{value.provisional?'回款完成后更新最终结余；':''}}充值手续费在总账扣除。1 USD = 6.7 R。</small>
   <small v-if="row.revenue_note" class="note">{{row.revenue_note}}</small>
   <details><summary>查看流水与匹配依据 <span>{{row.match?(row.match.method==='auto'?'自动匹配':'人工关联'):'待匹配'}}</span></summary>
    <div class="evidence"><p>授权码：{{row.match?.group?.authorization||'—'}}<br>匹配依据：{{row.match?.evidence||'尚无匹配记录，可核实后关联同卡流水。'}}</p><p v-if="row.manual_state">人工状态依据：{{row.reason||'—'}}</p><p v-if="row.match&&!value.feesReady" class="warning">费用明细待同步核实，未将缺失金额当成零。</p>

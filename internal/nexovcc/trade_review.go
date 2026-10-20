@@ -26,7 +26,7 @@ type TradeReview struct {
 func ReviewFingerprint(f Finance, groups ...TradeGroup) string {
 	ids := map[string]bool{}
 	for _, g := range groups {
-		for _, id := range g.TradeIDs {
+		for _, id := range append(append([]string{}, g.TradeIDs...), g.FeeTradeIDs...) {
 			ids[id] = true
 		}
 	}

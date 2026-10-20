@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -67,7 +68,7 @@ func (s *Server) nexovccSyncWait(cfg nexovcc.Settings, automatic bool) (string, 
 	return "", nil
 }
 
-func (s *Server) syncNexovccLocked(ctx context.Context) (err error) {
+func (s *Server) syncNexovccLocked(ctx context.Context, forceAccount ...bool) (err error) {
 	cfg, _, err := s.store.NexovccSettings()
 	if err != nil {
 		return err
@@ -82,7 +83,11 @@ func (s *Server) syncNexovccLocked(ctx context.Context) (err error) {
 	}
 	defer func() {
 		state.NextRefresh = time.Time{}
-		if err == nil {
+		if errors.Is(err, errNexovccReadYielded) {
+			// A user operation took priority, not an upstream failure. Resume later
+			// using the per-card checkpoints, without increasing the failure counter.
+			state.RetryAfter = time.Now().Add(30 * time.Second)
+		} else if err == nil {
 			state.LastSuccess = time.Now()
 			state.Error, state.Failures, state.RetryAfter = "", 0, time.Time{}
 		} else {
@@ -99,5 +104,5 @@ func (s *Server) syncNexovccLocked(ctx context.Context) (err error) {
 			err = saveErr
 		}
 	}()
-	return s.fetchNexovccLocked(ctx)
+	return s.fetchNexovccLocked(ctx, forceAccount...)
 }

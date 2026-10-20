@@ -12,8 +12,10 @@ export function ledgerFunds(data) {
 }
 export function caseAmounts(row) {
  const g=row.match?.group,known=g?.valid
- const cost=known?cents(g.cost):null, revenue=row.revenue_r==null?null:cents(row.revenue_r)
- return {paid:known?cents(g.payment):null,returned:known?cents(g.returned):null,difference:known?cents(g.difference):null,fees:known?cents(g.fees):null,cost,revenue,profit:cost===null||revenue===null?null:revenue-rCents(cost),closed:!!(g?.fully_returned||g?.settled)}
+ const shared=row.shared_fees
+ const opening=shared?.ready?cents(shared.opening):null,monthly=shared?.ready?cents(shared.monthly):null
+ const cost=known&&(!shared||shared.ready)?cents(g.cost)+(opening||0)+(monthly||0):null, revenue=row.revenue_r==null?null:cents(row.revenue_r)
+ return {opening,monthly,sharedCount:shared?.count||0,sharedApplied:shared?.applied,paid:known?cents(g.payment):null,returned:known?cents(g.returned):null,difference:known?cents(g.difference):null,fees:known?cents(g.fees):null,cost,revenue,profit:cost===null||revenue===null?null:revenue-rCents(cost),closed:!!(g?.fully_returned||g?.settled)}
 }
 export function financeTotals(data,serial='') {
  const f=data.finance||{}, ready=!!f.at&&!f.at.startsWith('0001')

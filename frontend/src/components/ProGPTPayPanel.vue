@@ -11,6 +11,7 @@ import { providerName } from '../nexovcc'
 import { isClosedCard } from '../card-status'
 import Pagination from './Pagination.vue'
 import ProSchedulePanel from './ProSchedulePanel.vue'
+import ProPurchaseGroups from './ProPurchaseGroups.vue'
 import { caseSummary, cardHasCase } from '../ejh'
 import ReturnCaseLine from './ReturnCaseLine.vue'
 import CardAccountPreview from './CardAccountPreview.vue'
@@ -84,7 +85,23 @@ function associated(card){return cardCases.value.filter(c=>cardHasCase(card,c)||
 function cardHint(card){return associated(card).slice(0,30).map(caseSummary).join('\n')||'暂无关联账号'}
 const purchasePlans = [{code:'pro5',label:'5x'},{code:'pro20',label:'20x'}]
 function matchingTemplates(provider,plan){ return (provider==='ejh'?ejhTemplates.value:nexovccTemplates.value).filter(t=>t.plan_code===plan) }
-function addPurchaseWindow(){ automation.purchase_windows.push({start:'17:00',end:'20:50',card_provider:automation.card_provider||'ejh',plan_code:'pro5'}) }
+function addPurchaseWindow(){ automation.purchase_windows.push({start:'17:00',end:'20:50',card_provider:automation.card_provider||'ejh',plan_code:'pro5',extra_sub2_group_ids:[]}) }
+const purchaseGroups = ref([]), purchaseGroupsLoading = ref(false), purchaseGroupsError = ref(''), purchaseGroupsLoaded = ref(false)
+let purchaseGroupsController
+async function loadPurchaseGroups(force = false) {
+  if (disposed || automation.provider !== 'sub2' || purchaseGroupsLoading.value || (!force && purchaseGroupsLoaded.value)) return
+  purchaseGroupsLoading.value = true; purchaseGroupsError.value = ''
+  const controller = purchaseGroupsController = new AbortController()
+  try {
+    const result = await api('/api/pro-settings/sub2/groups', { signal: controller.signal })
+    if (disposed) return
+    purchaseGroups.value = result.groups || result || []; purchaseGroupsLoaded.value = true
+  } catch (e) {
+    if (!disposed && !controller.signal.aborted) purchaseGroupsError.value = e.message
+  } finally {
+    if (!disposed) purchaseGroupsLoading.value = false
+  }
+}
 function purchaseTemplateName(w){const id=(w.card_provider==='ejh'?automation.ejh_plan_templates:automation.nexovcc_plan_templates)?.[w.plan_code];return matchingTemplates(w.card_provider,w.plan_code).find(t=>t.id===id)?.name||'请在银行卡与补卡选择对应模板'}
 watch(()=>automation.ejh_plan_templates,v=>{if(!v)automation.ejh_plan_templates={}},{immediate:true})
 watch(()=>automation.nexovcc_plan_templates,v=>{if(!v)automation.nexovcc_plan_templates={}},{immediate:true})
@@ -190,12 +207,13 @@ onMounted(() => action(async () => {
     const [pay, pro] = await Promise.all([api('/api/gptpay/settings'), api('/api/pro-settings')])
     if (disposed) return
     Object.assign(settings, pay); savedURLs.set(settings.provider, settings.url); Object.assign(automation, pro); settingsReady.value = true
+    if (automation.purchase_windows?.some(w => w.extra_sub2_group_ids?.length)) void loadPurchaseGroups()
   } else {
     if (props.mode === 'orders') { const config = await api('/api/gptpay/settings'); queryProvider.value = config.provider || 'tokenseek' }
     await load()
   }
 }))
-onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogController?.abort(); catalogGeneration++; editor.value = null; rawCard.value = ''; settings.api_key = ''; providerDrafts.clear() })
+onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogController?.abort(); purchaseGroupsController?.abort(); catalogGeneration++; editor.value = null; rawCard.value = ''; settings.api_key = ''; providerDrafts.clear() })
 </script>
 
 <template>
@@ -250,6 +268,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
                 <label class="field"><span>卡台</span><select v-model="w.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select></label>
                 <label class="field"><span>开通套餐</span><select v-model="w.plan_code"><option value="pro5">5x</option><option value="pro20">20x</option></select><small>模板：{{purchaseTemplateName(w)}}</small></label>
               </div>
+              <ProPurchaseGroups v-model="w.extra_sub2_group_ids" :groups="purchaseGroups" :base-ids="automation.sub2?.group_ids || []" :base-names="automation.sub2?.group_names || []" :enabled="automation.provider === 'sub2'" :loading="purchaseGroupsLoading" :error="purchaseGroupsError" @load="loadPurchaseGroups()" @refresh="loadPurchaseGroups(true)" />
               <button class="btn ghost compact danger-text" type="button" @click="automation.purchase_windows.splice(i,1)">删除时段</button>
             </div>
             <button class="btn ghost compact" type="button" :disabled="automation.purchase_windows.length>=32" @click="addPurchaseWindow">添加时段</button>
@@ -386,7 +405,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 .filter-row input { max-width: 360px; }
 @media(max-width:800px) { .pay-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 
-.automation-config{border:1px solid var(--line);border-radius:18px;background:var(--surface);overflow:clip}
+.automation-config{min-width:0;border:1px solid var(--line);border-radius:18px;background:var(--surface);overflow:clip}
 .config-body .field{align-content:start}
 .config-heading{padding:26px 28px;display:flex;justify-content:space-between;align-items:center;gap:18px;border-bottom:1px solid var(--line)}
 .config-heading h2{font-size:23px;margin:6px 0}.config-heading p,.config-section-heading p{color:var(--muted);font-size:13px;line-height:1.7}

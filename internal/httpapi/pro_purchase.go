@@ -12,6 +12,38 @@ import (
 
 type proPurchaseContextKey struct{}
 
+func (s *Server) validatePurchaseGroups(ctx context.Context, p model.ProSettings, password string) error {
+	if !p.PurchaseScheduleEnabled {
+		return nil
+	}
+	var ids []int64
+	for _, w := range p.PurchaseWindows {
+		ids = append(ids, w.ExtraSub2GroupIDs...)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if p.Provider != "sub2" {
+		return fmt.Errorf("分时开通的额外推送分组仅支持 Sub2，请先配置 Sub2 推送")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	groups, err := s.sub2.Groups(ctx, p.Sub2, password)
+	if err != nil {
+		return fmt.Errorf("无法验证额外推送分组，请刷新分组后重试：%w", err)
+	}
+	available := map[int64]bool{}
+	for _, group := range groups {
+		available[group.ID] = true
+	}
+	for _, id := range ids {
+		if !available[id] {
+			return fmt.Errorf("额外推送分组 #%d 不存在或不是 OpenAI 分组，请重新选择", id)
+		}
+	}
+	return nil
+}
+
 func applyPurchasePay(pay gptpay.Settings, r *model.ProPurchaseRoute) (gptpay.Settings, error) {
 	if r != nil {
 		if pay.Provider != r.PaymentProvider {

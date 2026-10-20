@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"chatgpt-space-merge/internal/ejh"
@@ -30,6 +31,12 @@ func ResolveProPurchase(p model.ProSettings, pay gptpay.Settings, c restock.Conf
 	}
 	pay.PlanCode, pay.CreditQuantity = w.PlanCode, 0
 	r := &model.ProPurchaseRoute{CardProvider: p.CardProvider, TemplateID: id, PlanCode: w.PlanCode, PaymentProvider: pay.Provider, Country: pay.Country}
+	if len(w.ExtraSub2GroupIDs) > 0 && p.Provider != "sub2" {
+		return p, pay, fmt.Errorf("分时开通的额外推送分组仅支持 Sub2，请检查推送设置")
+	}
+	if p.Provider == "sub2" {
+		r.Sub2GroupIDs = model.PurchaseSub2Groups(p.Sub2.GroupIDs, w.ExtraSub2GroupIDs)
+	}
 	return p.WithPurchaseRoute(r), pay, nil
 }
 
@@ -64,7 +71,10 @@ func SameProPurchase(a, b *model.ProPurchaseRoute) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return *a == *b
+	return a.CardProvider == b.CardProvider && a.TemplateID == b.TemplateID &&
+		a.PlanCode == b.PlanCode && a.PaymentProvider == b.PaymentProvider &&
+		a.Country == b.Country && a.CreditQuantity == b.CreditQuantity &&
+		slices.Equal(a.Sub2GroupIDs, b.Sub2GroupIDs)
 }
 
 type proTemplateQuery interface {

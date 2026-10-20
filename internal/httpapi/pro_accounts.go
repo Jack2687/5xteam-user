@@ -847,6 +847,9 @@ func (s *Server) performProPush(ctx context.Context, email string) (out model.Ma
 	if len(v.Sub2.GroupIDs) == 0 {
 		return profile, errors.New("请选择 Pro 的 Sub2 OpenAI 分组")
 	}
+	if profile.ProRestockTargetID != "" && len(profile.ProAuto.Sub2PushGroupIDs) > 0 {
+		v.Sub2.GroupIDs = profile.ProAuto.Sub2PushGroupIDs
+	}
 	input := sub2.CreateAccountInput{Name: name, Credentials: buildProCredentials(profile, credentials), GroupIDs: v.Sub2.GroupIDs, Models: v.Sub2.Models, Concurrency: v.Sub2.AccountConcurrency, Priority: v.Sub2.Priority, CpaWS: v.Sub2.CpaWS}
 	name = s.sub2NameWithMother(name, profile.TargetAdminID, "")
 	input.Name = name

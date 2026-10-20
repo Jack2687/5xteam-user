@@ -17,7 +17,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 			APIKey string `json:"api_key"`
 		} `json:"gptpay"`
 	}
-	current, _, _, readErr := s.store.ProSettings()
+	current, subPassword, _, readErr := s.store.ProSettings()
 	if readErr != nil {
 		writeAPI(w, 500, nil, "读取 Pro 配置失败")
 		return
@@ -65,6 +65,12 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err = s.validateProPurchaseConfig(v, pay); err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
+	// The automation form cannot override the separately saved push connection.
+	v.Provider, v.Sub2 = current.Provider, current.Sub2
+	if err = s.validatePurchaseGroups(r.Context(), v, subPassword); err != nil {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}

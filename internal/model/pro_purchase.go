@@ -2,24 +2,27 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
 
 type ProPurchaseWindow struct {
-	Start        string `json:"start"`
-	End          string `json:"end"`
-	CardProvider string `json:"card_provider"`
-	PlanCode     string `json:"plan_code"`
+	Start             string  `json:"start"`
+	End               string  `json:"end"`
+	CardProvider      string  `json:"card_provider"`
+	PlanCode          string  `json:"plan_code"`
+	ExtraSub2GroupIDs []int64 `json:"extra_sub2_group_ids,omitempty"`
 }
 
 // Non-secret purchase intent, pinned before a workflow starts spending.
 type ProPurchaseRoute struct {
-	CardProvider    string `json:"card_provider"`
-	TemplateID      string `json:"template_id"`
-	PlanCode        string `json:"plan_code"`
-	PaymentProvider string `json:"payment_provider"`
-	Country         string `json:"country"`
-	CreditQuantity  int    `json:"credit_quantity"`
+	CardProvider    string  `json:"card_provider"`
+	TemplateID      string  `json:"template_id"`
+	PlanCode        string  `json:"plan_code"`
+	PaymentProvider string  `json:"payment_provider"`
+	Country         string  `json:"country"`
+	CreditQuantity  int     `json:"credit_quantity"`
+	Sub2GroupIDs    []int64 `json:"sub2_group_ids,omitempty"`
 }
 
 func purchaseMinute(s string) (int, error) {
@@ -54,6 +57,11 @@ func (p ProSettings) ValidatePurchaseWindows() error {
 		if (w.CardProvider != "ejh" && w.CardProvider != "nexovcc") || (w.PlanCode != "pro5" && w.PlanCode != "pro20") {
 			return fmt.Errorf("分时开通请选择卡台及 5x / 20x 套餐")
 		}
+		for _, id := range w.ExtraSub2GroupIDs {
+			if id <= 0 {
+				return fmt.Errorf("分时开通第 %d 条额外推送分组无效", i+1)
+			}
+		}
 		for m := range seen {
 			if w.contains(m) {
 				if seen[m] {
@@ -64,6 +72,14 @@ func (p ProSettings) ValidatePurchaseWindows() error {
 		}
 	}
 	return nil
+}
+
+// Keep the monitoring binding unchanged; these groups are applied only when
+// pushing the account, after the launch-time choice has been persisted.
+func PurchaseSub2Groups(base, extra []int64) []int64 {
+	ids := append(slices.Clone(base), extra...)
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }
 func (p ProSettings) PurchaseWindow(now time.Time) (ProPurchaseWindow, bool) {
 	if p.PurchaseScheduleEnabled {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -57,6 +58,9 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 					p, _, _, _ := st.ProSettings()
 					p.PurchaseScheduleEnabled = true
 					p.PurchaseWindows = []model.ProPurchaseWindow{activePurchaseWindow(provider, plan)}
+					p.PurchaseWindows[0].ExtraSub2GroupIDs = []int64{15, 1, 15}
+					remote, pushes := purchaseSub2Fixture(t, []int64{1, 15})
+					p.Sub2.URL = remote.URL
 					p.EJHPlanTemplates = map[string]string{plan: "allocation"}
 					p.NexovccPlanTemplates = map[string]string{plan: "template"}
 					p.Concurrency = 1
@@ -81,6 +85,7 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 							return e
 						}
 						live.PurchaseScheduleEnabled = false
+						live.PurchaseWindows[0].ExtraSub2GroupIDs = []int64{99}
 						if _, e = st.SaveProSettings(live, "", ""); e != nil {
 							return e
 						}
@@ -89,11 +94,7 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 						}
 						_, e = rpc("pro_tokens", map[string]any{"tokens": map[string]any{"access_token": proAutoToken(current, "new"), "refresh_token": "fixture-rt"}})
 						return e
-					}, Push: func(_ context.Context, current string) (model.MailAccountProfile, error) {
-						return st.UpdateProAccount(current, func(p *model.MailAccountProfile) {
-							p.PushStatus, p.PushProvider, p.Sub2AccountID = "completed", "sub2", 88
-						})
-					}, Quota: func(context.Context, string, bool) (model.MailAccountProfile, error) {
+					}, Push: s.performProPush, Quota: func(context.Context, string, bool) (model.MailAccountProfile, error) {
 						return model.MailAccountProfile{}, errors.New("fixture stops at quota")
 					}}
 					if trigger == "restock" {
@@ -104,6 +105,9 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 					profile := waitProAutoFinished(t, s, email)
 					if profile.ProAuto.Status != "waiting_quota" || profile.ProAuto.PlanCode != plan {
 						t.Fatal("workflow plan", profile.ProAuto)
+					}
+					if pushes.Load() != 1 || !slices.Equal(profile.ProAuto.Sub2PushGroupIDs, []int64{1, 15}) || profile.ProAuto.RestockBinding != restockBinding(p) {
+						t.Fatal("push groups or monitoring binding changed", pushes.Load(), profile.ProAuto)
 					}
 					orders, _, err := st.GPTPayOrders(10, 0, email)
 					if err != nil || len(orders) != 1 {

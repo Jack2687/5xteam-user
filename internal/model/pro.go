@@ -6,6 +6,9 @@ import (
 )
 
 type ProAutoState struct {
+	// Base connection and effective groups are separate so extra memberships
+	// do not change the restock pool's identity or hide in-flight work.
+	Sub2PushGroupIDs     []int64              `json:"sub2_push_group_ids,omitempty"`
 	RetryAttempts        int                  `json:"retry_attempts,omitempty"`
 	RetryAt              *time.Time           `json:"retry_at,omitempty"`
 	StopVersion          uint64               `json:"stop_version,omitempty"`

@@ -28,8 +28,9 @@ const names={trades:'卡片交易',funds:'资金明细',recharges:'充值记录'
 const filtered=computed(()=>{
  let rows=type.value==='funds'?ledgerFunds(props.data):props.data.finance?.[type.value]||[]
  if(props.options.serial)rows=rows.filter(r=>r.serial_no===props.options.serial)
- if(type.value==='trades'&&props.options.group)rows=rows.filter(r=>props.options.group.trade_ids.includes(r.id))
- if(type.value==='funds'&&props.options.group)rows=rows.filter(r=>props.options.group.trade_ids.includes(r.link))
+ const groupIDs=props.options.group?[...(props.options.group.trade_ids||[]),...(props.options.group.fee_trade_ids||[])]:null
+ if(type.value==='trades'&&groupIDs)rows=rows.filter(r=>groupIDs.includes(r.id))
+ if(type.value==='funds'&&groupIDs)rows=rows.filter(r=>groupIDs.includes(r.link))
  if(type.value==='funds'&&kind.value){const kinds={'card-service':[3004,3005],funding:[3001,4001],'card-transfers':[3001,4001,4002,3002],'case-other':[2008,2009,4005,4006,5009,5010],'card-other':['manual-other',2008,2009,4005,4006,8888,5003,5009,5010],8888:[8888,5003],3003:[3003,5001],2003:[2003,5004],2007:[2007,5008]}[kind.value]||[Number(kind.value)];rows=rows.filter(r=>kinds.includes(r.kind))}
  if(type.value==='funds'&&feesOnly.value)rows=rows.filter(r=>(feeKinds.includes(r.kind)||r.manual))
  if(state.value)rows=rows.filter(r=>r.status===state.value)

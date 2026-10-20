@@ -286,13 +286,13 @@ func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase)
 	// Recompute interpretations from the current cached evidence, including
 	// parser corrections, without waiting for another supplier request.
 	var financeRaw string
+	var finance nexovcc.Finance
 	var currentGroups map[string]nexovcc.TradeGroup
 	if err := q.QueryRow(`SELECT profile FROM nexovcc_cache WHERE kind='finance'`).Scan(&financeRaw); err == nil {
-		var f nexovcc.Finance
-		if err = json.Unmarshal([]byte(financeRaw), &f); err != nil {
+		if err = json.Unmarshal([]byte(financeRaw), &finance); err != nil {
 			return err
 		}
-		groups, err := nexovccTradeGroups(q, f)
+		groups, err := nexovccTradeGroups(q, finance)
 		if err != nil {
 			return err
 		}
@@ -301,6 +301,9 @@ func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase)
 			currentGroups[g.ID] = g
 		}
 	} else if err != sql.ErrNoRows {
+		return err
+	}
+	if err := allocateNexovccCardFees(q, cases, finance); err != nil {
 		return err
 	}
 	revenues := map[string]*float64{}

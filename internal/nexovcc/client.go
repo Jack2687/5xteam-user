@@ -372,6 +372,7 @@ func List(v any) ([]map[string]any, error) {
 func (c *Client) Pages(ctx context.Context, path string) ([]map[string]any, error) {
 	all := []map[string]any{}
 	seen := map[string]bool{}
+	total := -1
 	for page := 1; page <= 100; page++ {
 		v, e := c.Do(ctx, path, map[string]any{"page": page, "pageSize": 100})
 		if e != nil {
@@ -381,6 +382,36 @@ func (c *Client) Pages(ctx context.Context, path string) ([]map[string]any, erro
 		if e != nil {
 			return nil, e
 		}
+		pageSize := 100
+		if m, ok := v.(map[string]any); ok {
+			if value, exists := m["total"]; exists {
+				n, err := strconv.Atoi(text(value))
+				if err != nil || n < 0 {
+					return nil, fmt.Errorf("环球列表总数无效")
+				}
+				if total >= 0 && total != n {
+					return nil, fmt.Errorf("环球列表在分页期间发生变化，请重新同步")
+				}
+				total = n
+			} else if total >= 0 {
+				return nil, fmt.Errorf("环球列表分页缺少总数")
+			}
+			if value, exists := m["page"]; exists {
+				actual, err := strconv.Atoi(text(value))
+				if err != nil || actual != page {
+					return nil, fmt.Errorf("环球列表分页页码不符")
+				}
+			}
+			if value, exists := m["pageSize"]; exists {
+				n, err := strconv.Atoi(text(value))
+				if err != nil || n <= 0 || len(rows) > n {
+					return nil, fmt.Errorf("环球列表分页大小无效")
+				}
+				pageSize = n
+			}
+		} else if total >= 0 {
+			return nil, fmt.Errorf("环球列表分页缺少总数")
+		}
 		raw, _ := json.Marshal(rows)
 		key := string(raw)
 		if len(rows) > 0 && seen[key] {
@@ -388,7 +419,16 @@ func (c *Client) Pages(ctx context.Context, path string) ([]map[string]any, erro
 		}
 		seen[key] = true
 		all = append(all, rows...)
-		if len(rows) < 100 {
+		if total >= 0 {
+			// A supplier-side page cap must not truncate the card inventory.
+			// Once total is reached, do not request an unnecessary empty page.
+			if len(all) == total {
+				return all, nil
+			}
+			if len(all) > total || len(rows) == 0 {
+				return nil, fmt.Errorf("环球列表分页不完整")
+			}
+		} else if len(rows) < pageSize {
 			return all, nil
 		}
 	}

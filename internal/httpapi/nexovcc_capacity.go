@@ -174,9 +174,8 @@ func (s *Server) autoRecycleNexovccLocked(ctx context.Context) error {
 // Every entry point uses this gate while holding the issuer mutex. A pending
 // close is resumed by its original ID, never replaced by another money request.
 func (s *Server) ensureNexovccOnlineSlotLocked(ctx context.Context, openingID string, cfg nexovcc.Settings, checks ...func() error) error {
-	if err := s.syncNexovccLocked(ctx); err != nil {
-		return err
-	}
+	// Online capacity is counted from persisted cards under the issuer lock.
+	// Opening must not trigger a list/balance/history scan of the supplier.
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -228,6 +227,24 @@ func (s *Server) ensureNexovccOnlineSlotLocked(ctx context.Context, openingID st
 		}
 		if candidate == nil {
 			return &nexovccCapacityWaitError{fmt.Sprintf("环球在线卡 %d/%d，暂无全部回款且无占用的卡，等待回款后继续补卡", online, cfg.MaxOnlineCards)}
+		}
+		if err = s.syncNexovccCardFinanceLocked(ctx, candidate.ID); err != nil {
+			return err
+		}
+		cases, err := s.store.NexovccCases()
+		if err != nil {
+			return err
+		}
+		var finance nexovcc.Finance
+		if err = s.store.NexovccCached("finance", &finance); err != nil {
+			return err
+		}
+		groups, err := s.store.NexovccTradeGroups(finance)
+		if err != nil {
+			return err
+		}
+		if !nexovccRecycleCandidate(*candidate, cases, groups) {
+			return &nexovccCapacityWaitError{"原卡仍有未回款交易，等待回款后继续补卡"}
 		}
 		for _, check := range checks {
 			if err := check(); err != nil {

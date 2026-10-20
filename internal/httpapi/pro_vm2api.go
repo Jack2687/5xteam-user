@@ -42,6 +42,11 @@ func (s *Server) proAccountPushSettings(p model.MailAccountProfile) (model.ProSe
 			return v, password, key, e
 		}
 		v.Provider, v.Sub2, password = t.Provider, t.Sub2, t.Secret
+		// Match the normalized live settings: omitempty restores an empty
+		// model list as nil, which otherwise changes the restock binding hash.
+		if v.Sub2.Models == nil {
+			v.Sub2.Models = []string{}
+		}
 		return v, password, key, nil
 	}
 	if err != nil || p.VM2 == nil {

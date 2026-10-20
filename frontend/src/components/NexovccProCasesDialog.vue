@@ -25,7 +25,7 @@ async function load(){
 async function open(value){target.value=value;opened.value=true;edit.value=ledger.value=null;state.value='';page.value=1;data.value={cards:[],cases:[],finance:{},groups:[]};await load()}
 function close(){if(busy.value)return;opened.value=false;edit.value=ledger.value=null;generation++;loading.value=false}
 function openCard(row){close();emit('open-card',{provider:'nexovcc',cardID:row.card_id,email:row.email})}
-function details({row,options={type:'trades'}}){const serial=data.value.cards.find(c=>c.card.id===row.card_id)?.card.serial_no||row.match?.group?.serial_no;if(!serial){error.value='卡片资料未同步，无法定位流水';return}ledger.value={...options,serial,group:row.match?.group}}
+function details({row,options={type:'trades'}}){const serial=data.value.cards.find(c=>c.card.id===row.card_id)?.card.serial_no||row.match?.group?.serial_no;if(!serial){error.value='卡片资料未同步，无法定位流水';return}ledger.value={...options,serial,group:options.scope==='card'?null:row.match?.group}}
 function changeState(row){edit.value={type:'state',row,state:row.manual_state||row.state,reason:'',confirm:false};error.value=''}
 function changeMatch(row){edit.value={type:'match',row,group_id:row.match?.group?.id||'',reason:'',confirm:false};error.value=''}
 const groups=computed(()=>{

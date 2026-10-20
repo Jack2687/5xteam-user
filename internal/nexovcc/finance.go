@@ -51,12 +51,15 @@ type Daily struct {
 	Values   map[string]string `json:"values"`
 }
 type Finance struct {
-	Recharges []Recharge `json:"recharges"`
-	Trades    []Trade    `json:"trades"`
-	Funds     []Fund     `json:"funds"`
-	Days      []Daily    `json:"days"`
-	At        time.Time  `json:"at"`
-	Error     string     `json:"error"`
+	FundsAt   map[string]time.Time `json:"funds_at,omitempty"`
+	AccountAt time.Time            `json:"account_at,omitempty"`
+	CardAt    map[string]time.Time `json:"card_at,omitempty"`
+	Recharges []Recharge           `json:"recharges"`
+	Trades    []Trade              `json:"trades"`
+	Funds     []Fund               `json:"funds"`
+	Days      []Daily              `json:"days"`
+	At        time.Time            `json:"at"`
+	Error     string               `json:"error"`
 }
 type TradeGroup struct {
 	NonPro           bool         `json:"non_pro,omitempty"`
@@ -79,6 +82,7 @@ type TradeGroup struct {
 	At               time.Time    `json:"at"`
 	ReturnedAt       time.Time    `json:"returned_at"`
 	TradeIDs         []string     `json:"trade_ids"`
+	FeeTradeIDs      []string     `json:"fee_trade_ids,omitempty"`
 }
 
 func SignedMoney(n int64) string {
@@ -188,59 +192,122 @@ func (c *Client) FinancePages(ctx context.Context, path string, body map[string]
 	return nil, fmt.Errorf("环球财务记录超过同步上限，已保留上次完整数据")
 }
 
+type financeQuery struct {
+	cardNumber, serial string
+	accountOnly        bool
+	since              time.Time
+}
+
+// ReadFinance is the explicit historical import reader. Routine refreshes use
+// ReadCardFinance and ReadAccountFinance below instead.
 func (c *Client) ReadFinance(ctx context.Context, progress func(string)) (Finance, error) {
+	return c.readFinance(ctx, financeQuery{}, progress)
+}
+
+func (c *Client) ReadCardFinance(ctx context.Context, number, serial string) (Finance, error) {
+	if !ValidFinanceCardNumber(number) || serial == "" {
+		return Finance{}, fmt.Errorf("缺少完整卡号，未发起全账户流水查询")
+	}
+	return c.readFinance(ctx, financeQuery{cardNumber: number, serial: serial}, func(string) {})
+}
+
+// Receipt confirmation needs only the current card's funds, not its payment
+// history, account recharges, or daily statistics.
+func (c *Client) ReadCardFunds(ctx context.Context, number, serial string) (Finance, error) {
+	if !ValidFinanceCardNumber(number) || serial == "" {
+		return Finance{}, fmt.Errorf("缺少完整卡号，未发起全账户流水查询")
+	}
+	return c.readFinance(ctx, financeQuery{cardNumber: number, serial: serial, accountOnly: true}, func(string) {})
+}
+
+func ValidFinanceCardNumber(number string) bool {
+	if len(number) < 12 || len(number) > 19 {
+		return false
+	}
+	for _, r := range number {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Client) ReadAccountFinance(ctx context.Context, since time.Time) (Finance, error) {
+	return c.readFinance(ctx, financeQuery{accountOnly: true, since: since}, func(string) {})
+}
+
+func (c *Client) readFinance(ctx context.Context, q financeQuery, progress func(string)) (Finance, error) {
 	f := Finance{Recharges: []Recharge{}, Trades: []Trade{}, Funds: []Fund{}, Days: []Daily{}}
 	until := time.Now().In(time.FixedZone("CST", 8*3600)).Format("2006-01-02") + " 23:59:59"
 	body := map[string]any{"time_min": "2020-01-01 00:00:00", "time_max": until}
-	progress("分页同步充值记录")
-	rows, e := c.FinancePages(ctx, "/api/findLogRecharge", body)
-	if e != nil {
-		return f, e
+	if !q.since.IsZero() {
+		body["time_min"] = q.since.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04:05")
 	}
+	if q.cardNumber != "" {
+		body["card_no"] = q.cardNumber
+	}
+	var rows []map[string]any
+	var e error
 	ids := map[string]bool{}
-	for _, m := range rows {
-		r := Recharge{ID: text(m["order_no"]), Currency: Currency(m["money_id"]), Status: text(m["status"])}
-		if r.ID == "" || ids[r.ID] {
-			return f, fmt.Errorf("环球充值流水缺失或重复")
-		}
-		ids[r.ID] = true
-		if r.Amount, e = moneyField(m, "amount", false); e != nil {
+	if q.cardNumber == "" {
+		progress("分页同步充值记录")
+		rows, e = c.FinancePages(ctx, "/api/findLogRecharge", body)
+		if e != nil {
 			return f, e
 		}
-		if r.Received, e = moneyField(m, "real_amount", false); e != nil {
-			return f, e
+		ids = map[string]bool{}
+		for _, m := range rows {
+			r := Recharge{ID: text(m["order_no"]), Currency: Currency(m["money_id"]), Status: text(m["status"])}
+			if r.ID == "" || ids[r.ID] {
+				return f, fmt.Errorf("环球充值流水缺失或重复")
+			}
+			ids[r.ID] = true
+			if r.Amount, e = moneyField(m, "amount", false); e != nil {
+				return f, e
+			}
+			if r.Received, e = moneyField(m, "real_amount", false); e != nil {
+				return f, e
+			}
+			if r.Fee, e = moneyField(m, "fee", false); e != nil {
+				return f, e
+			}
+			if r.At, e = FinanceTime(m["created_at"]); e != nil {
+				return f, e
+			}
+			f.Recharges = append(f.Recharges, r)
 		}
-		if r.Fee, e = moneyField(m, "fee", false); e != nil {
-			return f, e
-		}
-		if r.At, e = FinanceTime(m["created_at"]); e != nil {
-			return f, e
-		}
-		f.Recharges = append(f.Recharges, r)
 	}
-	progress("分页同步卡片消费与回款")
-	rows, e = c.FinancePages(ctx, "/api/findLogCardTrades", body)
-	if e != nil {
-		return f, e
-	}
-	ids = map[string]bool{}
-	for _, m := range rows {
-		r := Trade{ID: text(m["log_no"]), Serial: text(m["serial_no"]), Last4: last4(m["card_no"]), Authorization: text(m["business_token"]), Currency: Currency(m["money_id"]), MerchantCurrency: text(m["merchant_currency"]), Merchant: text(m["merchant_address"]), Type: text(m["trade_type"]), Status: text(m["status"])}
-		if r.ID == "" || r.Serial == "" || ids[r.ID] {
-			return f, fmt.Errorf("环球交易流水缺失或重复")
-		}
-		ids[r.ID] = true
-		if r.Amount, e = moneyField(m, "trade_amount", false); e != nil {
+	if !q.accountOnly {
+		progress("分页同步卡片消费与回款")
+		rows, e = c.FinancePages(ctx, "/api/findLogCardTrades", body)
+		if e != nil {
 			return f, e
 		}
-		r.MerchantAmount = text(m["merchant_amount"])
-		if r.At, e = FinanceTime(m["created_at"]); e != nil {
-			return f, e
+		ids = map[string]bool{}
+		for _, m := range rows {
+			r := Trade{ID: text(m["log_no"]), Serial: text(m["serial_no"]), Last4: last4(m["card_no"]), Authorization: text(m["business_token"]), Currency: Currency(m["money_id"]), MerchantCurrency: text(m["merchant_currency"]), Merchant: text(m["merchant_address"]), Type: text(m["trade_type"]), Status: text(m["status"])}
+			if r.ID == "" || r.Serial == "" || ids[r.ID] {
+				return f, fmt.Errorf("环球交易流水缺失或重复")
+			}
+			ids[r.ID] = true
+			if r.Amount, e = moneyField(m, "trade_amount", false); e != nil {
+				return f, e
+			}
+			r.MerchantAmount = text(m["merchant_amount"])
+			if r.At, e = FinanceTime(m["created_at"]); e != nil {
+				return f, e
+			}
+			if q.serial != "" && r.Serial != q.serial {
+				return f, fmt.Errorf("卡片消费接口返回了其他卡片，已保留原流水")
+			}
+			f.Trades = append(f.Trades, r)
 		}
-		f.Trades = append(f.Trades, r)
 	}
 	progress("分页同步实际费用与资金流水")
 	fundsBody := map[string]any{"time_min": body["time_min"], "time_max": body["time_max"], "balance_type_id": 2, "is_default": 0}
+	if q.cardNumber != "" {
+		fundsBody["card_no"] = q.cardNumber
+	}
 	rows, e = c.FinancePages(ctx, "/api/findLogWebFunds", fundsBody)
 	if e != nil {
 		return f, e
@@ -261,30 +328,43 @@ func (c *Client) ReadFinance(ctx context.Context, progress func(string)) (Financ
 		if r.At, e = FinanceTime(m["created_at"]); e != nil {
 			return f, e
 		}
+		if !q.since.IsZero() && r.At.Before(q.since) {
+			return f, fmt.Errorf("财务明细返回了时间范围之外的数据，已保留原流水")
+		}
 		// The observed funds endpoint has no primary ID. Preserve identical rows
-		// within a snapshot, and replace complete snapshots instead of appending.
+		// within each complete card/window snapshot. The ID stays stable across scopes.
 		raw, _ := json.Marshal(r)
 		key := fmt.Sprintf("%x", sha256.Sum256(raw))
 		occurrences[key]++
 		r.ID = fmt.Sprintf("%s-%d", key, occurrences[key])
+		if q.serial != "" && r.Serial != q.serial {
+			return f, fmt.Errorf("财务明细接口返回了其他卡片，已保留原流水")
+		}
 		f.Funds = append(f.Funds, r)
 	}
-	progress("同步平台每日汇总")
-	rows, e = c.FinancePages(ctx, "/api/findLogReportCardDay", map[string]any{"money_id": 3, "date_min": nil, "date_max": nil})
-	if e != nil {
-		return f, e
-	}
-	for _, m := range rows {
-		r := Daily{Day: text(m["count_date"]), Currency: Currency(m["money_id"]), Values: map[string]string{}}
-		if _, e = FinanceTime(r.Day); e != nil {
+	if q.cardNumber == "" {
+		progress("同步平台每日汇总")
+		daysBody := map[string]any{"money_id": 3, "date_min": nil, "date_max": nil}
+		if !q.since.IsZero() {
+			daysBody["date_min"] = q.since.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02")
+			daysBody["date_max"] = until[:10]
+		}
+		rows, e = c.FinancePages(ctx, "/api/findLogReportCardDay", daysBody)
+		if e != nil {
 			return f, e
 		}
-		for _, k := range []string{"income_day", "income_fee_day", "income_count", "open_card_day", "open_card_count", "un_auth_day", "un_auth_count", "consume_day", "consume_count", "cancel_day", "cancel_count", "refund_day", "refund_count", "complete_day", "complete_count", "refund_fee_day", "foreign_fee_day", "card_day", "cancel_fee"} {
-			if m[k] != nil {
-				r.Values[k] = text(m[k])
+		for _, m := range rows {
+			r := Daily{Day: text(m["count_date"]), Currency: Currency(m["money_id"]), Values: map[string]string{}}
+			if _, e = FinanceTime(r.Day); e != nil {
+				return f, e
 			}
+			for _, k := range []string{"income_day", "income_fee_day", "income_count", "open_card_day", "open_card_count", "un_auth_day", "un_auth_count", "consume_day", "consume_count", "cancel_day", "cancel_count", "refund_day", "refund_count", "complete_day", "complete_count", "refund_fee_day", "foreign_fee_day", "card_day", "cancel_fee"} {
+				if m[k] != nil {
+					r.Values[k] = text(m[k])
+				}
+			}
+			f.Days = append(f.Days, r)
 		}
-		f.Days = append(f.Days, r)
 	}
 	f.At = time.Now()
 	return f, nil
@@ -317,9 +397,60 @@ func Groups(f Finance) []TradeGroup {
 		}
 		buckets[key] = append(buckets[key], t)
 	}
+	// A reversal can produce a separate zero-dollar authorization with its own
+	// transaction fee. Attribute fees only when the same-card return at the exact
+	// timestamp is unique; keep both original transaction records unchanged.
+	feeTrades := map[string][]string{}
+	attributed := map[string]bool{}
+	for key, rows := range buckets {
+		if len(rows) != 1 || rows[0].Status != "PENDING" || rows[0].At.IsZero() {
+			continue
+		}
+		zero := rows[0]
+		amount, err := Cents(zero.Amount)
+		if err != nil || amount != 0 || len(feesByTrade[zero.Serial+"|"+zero.ID]) == 0 {
+			continue
+		}
+		candidates := map[string]bool{}
+		for other, trades := range buckets {
+			if other == key {
+				continue
+			}
+			// Reversal descriptions may be prefixed/truncated by the issuer.
+			// Compare the zero authorization with the original payment merchant.
+			merchant := strings.Join(strings.Fields(strings.ToUpper(zero.Merchant)), " ")
+			sameMerchant := false
+			for _, paid := range trades {
+				n, err := Cents(paid.Amount)
+				if err == nil && n > 0 && (paid.Status == "PENDING" || paid.Status == "COMPLETE") && paid.Authorization != "" &&
+					merchant != "" && strings.Join(strings.Fields(strings.ToUpper(paid.Merchant)), " ") == merchant {
+					sameMerchant = true
+				}
+			}
+			if !sameMerchant {
+				continue
+			}
+			for _, r := range trades {
+				returned, err := Cents(r.Amount)
+				if err == nil && returned > 0 && (r.Status == "REVERSED" || r.Status == "REFUNDED") &&
+					r.Serial == zero.Serial && r.Currency == zero.Currency && r.At.Equal(zero.At) &&
+					r.MerchantCurrency == zero.MerchantCurrency {
+					candidates[other] = true
+				}
+			}
+		}
+		if len(candidates) == 1 {
+			for target := range candidates {
+				feeTrades[target] = append(feeTrades[target], zero.ID)
+				attributed[zero.Serial+"|"+zero.ID] = true
+			}
+		}
+	}
 	out := []TradeGroup{}
 	for key, rows := range buckets {
 		g := TradeGroup{ID: fmt.Sprintf("%x", sha256.Sum256([]byte(key))), Serial: rows[0].Serial, Authorization: rows[0].Authorization, Valid: true, TradeIDs: []string{}}
+		g.FeeTradeIDs = feeTrades[key]
+		sort.Strings(g.FeeTradeIDs)
 		var paid, returned, settled, merchantPaid, merchantReturned, fees int64
 		payments := 0
 		completeCount := 0
@@ -424,7 +555,13 @@ func Groups(f Finance) []TradeGroup {
 			g.Valid = false
 			g.Problem = "回款早于付款"
 		}
+		feeIDs := append([]string{}, g.FeeTradeIDs...)
 		for _, id := range g.TradeIDs {
+			if !attributed[g.Serial+"|"+id] {
+				feeIDs = append(feeIDs, id)
+			}
+		}
+		for _, id := range feeIDs {
 			for _, fee := range feesByTrade[g.Serial+"|"+id] {
 				n, e := SignedCents(fee.Amount)
 				if e != nil || fee.Currency != "USD" {

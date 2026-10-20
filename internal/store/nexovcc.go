@@ -607,27 +607,28 @@ func (s *Store) SaveNexovccOperation(op nexovcc.Operation) error {
 }
 
 type NexovccCase struct {
-	CardName      string        `json:"card_name"`
-	Provider      string        `json:"provider"`
-	OpenedAt      *time.Time    `json:"opened_at,omitempty"`
-	Deleted       bool          `json:"deleted"`
-	ManualState   string        `json:"manual_state,omitempty"`
-	RemovedAt     string        `json:"removed_at,omitempty"`
-	Match         *NexovccMatch `json:"match,omitempty"`
-	Revenue       *float64      `json:"revenue_r"`
-	RevenueNote   string        `json:"revenue_note,omitempty"`
-	ID            string        `json:"id"`
-	Email         string        `json:"email"`
-	CardID        string        `json:"card_id"`
-	Last4         string        `json:"last4"`
-	Plan          string        `json:"plan"`
-	PaymentStatus string        `json:"payment_status"`
-	State         string        `json:"state"`
-	Reason        string        `json:"reason"`
-	RequestedAt   string        `json:"requested_at"`
-	UpdatedAt     string        `json:"updated_at"`
-	Revision      int           `json:"revision"`
-	CreatedAt     time.Time     `json:"created_at"`
+	SharedFees    *NexovccSharedFees `json:"shared_fees,omitempty"`
+	CardName      string             `json:"card_name"`
+	Provider      string             `json:"provider"`
+	OpenedAt      *time.Time         `json:"opened_at,omitempty"`
+	Deleted       bool               `json:"deleted"`
+	ManualState   string             `json:"manual_state,omitempty"`
+	RemovedAt     string             `json:"removed_at,omitempty"`
+	Match         *NexovccMatch      `json:"match,omitempty"`
+	Revenue       *float64           `json:"revenue_r"`
+	RevenueNote   string             `json:"revenue_note,omitempty"`
+	ID            string             `json:"id"`
+	Email         string             `json:"email"`
+	CardID        string             `json:"card_id"`
+	Last4         string             `json:"last4"`
+	Plan          string             `json:"plan"`
+	PaymentStatus string             `json:"payment_status"`
+	State         string             `json:"state"`
+	Reason        string             `json:"reason"`
+	RequestedAt   string             `json:"requested_at"`
+	UpdatedAt     string             `json:"updated_at"`
+	Revision      int                `json:"revision"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 func (s *Store) NexovccCases() ([]NexovccCase, error) {

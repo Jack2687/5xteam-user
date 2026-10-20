@@ -39,10 +39,12 @@ const detailVisible=computed(()=>detailCases.value.slice((detailPage.value-1)*de
 watch([detail,detailState,detailSearch],()=>detailPage.value=1)
 watch(()=>props.defaultPageSize,v=>{detailSize.value=v||10;detailPage.value=1})
 watch(view,v=>{try{localStorage.setItem('nexovcc-view',v)}catch{}})
-let disposed=false,pollTimer,privateTimer,updateTimer
+let disposed=false,pollTimer,privateTimer,updateTimer,runGeneration=0
 const show=(text,type='success')=>Object.assign(message,{text,type})
 const tabs=[{id:'cards',name:'卡片管理'},{id:'returns',name:'账号回款'},{id:'operations',name:'操作记录'},{id:'settings',name:'配置与模板'}]
 const running=computed(()=>busy.value||deletingUnopened.value||job.value.status==='running'||!!batch.value?.running)
+const openingBlocked=computed(()=>deletingUnopened.value||!!batch.value?.running||(running.value&&!job.value.read_only))
+const dialogBlocked=computed(()=>saving.value||(dialog.value?.type==='open'?openingBlocked.value:running.value))
 const activeCards=computed(()=>data.cards.filter(r=>r.card.status!=='4'))
 const cardTotal=computed(()=>{const rows=activeCards.value;if(!rows.length)return '0.00';if(rows.some(r=>r.card.balance===''))return '待同步';return rows.reduce((s,r)=>s+Math.round(Number(r.card.balance)*100),0)/100})
 const selectable=computed(()=>activeCards.value.filter(r=>r.local?.available).length)
@@ -70,7 +72,7 @@ function associated(row){return returnCases.value.filter(c=>c.card_id===row.card
 function cardTotals(row){return totalsByCard.value.get(row.card.id)||financeTotals(data,row.card.serial_no)}
 function inspect(options,serial=''){if(options.type==='accounts'){detailState.value=options.state||'';detailSearch.value=options.search||'';detail.value={type:'accounts',cardID:data.cards.find(r=>r.card.serial_no===serial)?.card.id||''}}else ledger.value={...options,serial}}
 function manage(row){detail.value={type:'manage',cardID:row.card.id}}
-function caseTrades({row,options={type:'trades'}}){const serial=data.cards.find(r=>r.card.id===row.card_id)?.card.serial_no||row.match?.group?.serial_no;if(!serial){show('卡片资料未同步，无法定位流水','error');return}ledger.value={...options,serial,group:row.match?.group}}
+function caseTrades({row,options={type:'trades'}}){const serial=data.cards.find(r=>r.card.id===row.card_id)?.card.serial_no||row.match?.group?.serial_no;if(!serial){show('卡片资料未同步，无法定位流水','error');return}ledger.value={...options,serial,group:options.scope==='card'?null:row.match?.group}}
 function manageCase(row){const card=data.cards.find(r=>r.card.id===row.card_id);if(card)manage(card)}
 function editMatch(row){dialog.value={type:'match',row,group_id:row.match?.group?.id||'',reason:'',confirm:false}}
 function matchOptions(row){const serial=data.cards.find(r=>r.card.id===row.card_id)?.card.serial_no;return data.groups.filter(g=>!g.non_pro&&g.valid&&Number(g.payment)>0&&g.serial_no===serial&&!data.cases.some(c=>c.id!==row.id&&c.match?.group?.id===g.id))}
@@ -92,8 +94,8 @@ async function deleteUnopenedCases(){
   try{await load();clampPage();show(text,result.skipped?'info':'success')}catch(e){show(text+'；刷新失败：'+e.message,'error')}
  }catch(e){show('清理失败：'+e.message,'error')}finally{deletingUnopened.value=false}
 }
-async function loadJob(){const result=await api('/api/nexovcc/job');if(!disposed)job.value=result;return result}
-async function poll(){clearTimeout(pollTimer);try{const j=await loadJob();if(disposed)return;if(j.status==='running'){await load();pollTimer=setTimeout(poll,1200)}else{busy.value=false;await load();if(j.message)show(j.message,j.status==='completed'?'success':j.status==='attention'?'info':'error')}}catch(e){if(!disposed){show('进度查询暂时失败，正在重新连接：'+e.message,'error');pollTimer=setTimeout(poll,3000)}}}
+async function loadJob(){const generation=runGeneration;const result=await api('/api/nexovcc/job');if(!disposed&&generation===runGeneration)job.value=result;return result}
+async function poll(){clearTimeout(pollTimer);const generation=runGeneration;try{const j=await loadJob();if(disposed||generation!==runGeneration)return;if(j.status==='running'){await load();pollTimer=setTimeout(poll,1200)}else{busy.value=false;await load();if(j.message)show(j.message,j.status==='completed'?'success':j.status==='attention'?'info':'error')}}catch(e){if(!disposed&&generation===runGeneration){show('进度查询暂时失败，正在重新连接：'+e.message,'error');pollTimer=setTimeout(poll,3000)}}}
 async function recoverProgress(){if(disposed)return;try{const j=await loadJob();if(j.status==='running')pollTimer=setTimeout(poll,1200)}catch{pollTimer=setTimeout(poll,3000)}}
 async function watchUpdates(){
  if(disposed)return
@@ -101,13 +103,15 @@ async function watchUpdates(){
  if(!disposed)updateTimer=setTimeout(watchUpdates,5000)
 }
 async function run(input){
+ const generation=++runGeneration
  const accepted=await api('/api/nexovcc/run',{method:'POST',body:{...nexovccOperationPayload(input),confirm:true}})
- if(!disposed)job.value=accepted
+ if(disposed||generation!==runGeneration)return null
+ job.value=accepted
  // Follow the durable server job; changing pages never cancels a submitted operation.
  let current=accepted
  while(current.status==='running'){
   if(disposed)return null
-  await new Promise(resolve=>setTimeout(resolve,1000));current=await loadJob()
+  await new Promise(resolve=>setTimeout(resolve,1000));if(disposed||generation!==runGeneration)return null;current=await loadJob();if(generation!==runGeneration)return null
   if(current.id!==accepted.id)throw new Error('后台任务已变化，请查看操作记录核实原请求')
  }
  await load();if(current.status==='failed')throw new Error(current.message)
@@ -124,9 +128,9 @@ function resolve(op){
  if(op.status!=='unknown')return perform({action:'resolve',request_id:op.id,outcome:'query'})
  dialog.value={type:'resolve',op,outcome:'query',serial_no:op.serial_no||'',evidence:'',confirm:false}
 }
-function closeDialog(){if(!running.value&&!saving.value)dialog.value=null}
+function closeDialog(){if(!dialogBlocked.value)dialog.value=null}
 async function submit(){
- const d=dialog.value;if(!d||running.value||saving.value)return
+ const d=dialog.value;if(!d||dialogBlocked.value)return
  if(d.type==='open'){await batchOpen(d);return}
  if(d.type==='batch'){await batchCards(d);return}
  if(d.type==='match'){
@@ -169,7 +173,7 @@ async function tradePurposeUpdated(group){
 
 <template>
  <div class="nex-page">
-  <header class="heading"><div><span class="eyebrow">GLOBAL CARD PLATFORM</span><h1><Globe :size="26"/>环球卡台</h1><p>资金去向、账号回款、收益与成本</p></div><div class="actions"><button class="btn ghost" :disabled="running||!ready" @click="tab='settings'"><Settings2 :size="16"/>配置与模板</button><button class="btn ghost" :disabled="running" @click="perform({action:'sync'})"><RefreshCw :size="16"/>{{running?'同步处理中…':'同步全部'}}</button><button class="btn primary" :disabled="running||!cfg.templates.length" @click="openCards"><Plus :size="16"/>开卡</button></div></header>
+  <header class="heading"><div><span class="eyebrow">GLOBAL CARD PLATFORM</span><h1><Globe :size="26"/>环球卡台</h1><p>资金去向、账号回款、收益与成本</p></div><div class="actions"><button class="btn ghost" :disabled="running||!ready" @click="tab='settings'"><Settings2 :size="16"/>配置与模板</button><button class="btn ghost" :disabled="running" @click="perform({action:'sync'})"><RefreshCw :size="16"/>{{running?'同步处理中…':'同步全部'}}</button><button class="btn primary" :disabled="openingBlocked||!cfg.templates.length" @click="openCards"><Plus :size="16"/>开卡</button></div></header>
   <MessageBar :message="message"/>
   <NexovccProgress :job="job" :batch="batch" :busy="busy"/>
   <p v-if="!savedEnabled&&ready" class="note">卡台已关闭，可手动查询和操作。</p>
@@ -202,7 +206,7 @@ async function tradePurposeUpdated(group){
    <template v-if="detail.type==='accounts'"><div class="toolbar detail-toolbar"><div class="filters"><button :class="{selected:!detailState}" @click="detailState=''">全部</button><button v-for="(name,state) in returnStates" :key="state" :class="{selected:detailState===state}" @click="detailState=state">{{name}}</button></div><input v-model="detailSearch" placeholder="搜索账号"/></div><NexovccCaseTable compact :rows="detailVisible" :finance="data.finance" :cards="data.cards" :running="running" @state="editReturn" @match="editMatch" @details="caseTrades" @card="manageCase"/><Pagination :page="detailPage" :page-size="detailSize" :total="detailCases.length" @update:page="detailPage=$event" @update:page-size="detailSize=$event;detailPage=1"/></template>
    <template v-else-if="detailRow"><div class="manage-header"><div><strong>•••• {{detailRow.card.last4}}</strong><small>开卡 {{at(detailRow.card.created_at)}} · {{detailRow.card.serial_no}}</small></div><div><span>余额</span><strong>{{balanceDisplay(detailRow).amount}} USD</strong><small v-if="balanceDisplay(detailRow).note">{{balanceDisplay(detailRow).note}}</small><small v-else>{{at(detailRow.card.balance_at)}}</small></div><PaymentCardStatus v-if="detailRow.card.imported" :card="detailRow.local"/></div><CardOccupancy :card="detailRow" @updated="load"/><NexovccFinanceSummary :data="data" :serial="detailRow.card.serial_no" @details="inspect($event,detailRow.card.serial_no)"/><div class="card-extra"><section><h3>额度 / 退回 / 差额</h3><NexovccCardFunding :data="data" :row="detailRow" @details="inspect($event,detailRow.card.serial_no)"/></section><section><h3>账号回款</h3><NexovccCardReturns :row="detailRow" :cases="associated(detailRow)" @inspect="inspect($event,detailRow.card.serial_no)"/></section></div><div class="actions manage-actions"><button class="btn ghost" @click="inspect({type:'accounts'},detailRow.card.serial_no)">账号回款 {{associated(detailRow).length}}</button><button class="btn ghost" @click="inspect({type:'trades'},detailRow.card.serial_no)">交易明细</button><button class="btn ghost" @click="inspect({type:'funds'},detailRow.card.serial_no)">资金明细</button><button v-if="detailRow.card.status!=='4'" class="btn ghost" :disabled="running" @click="perform({action:'refresh',card_id:detailRow.card.id})">刷新余额</button><button class="btn ghost" :disabled="!detailRow.card.imported" @click="reveal(detailRow)">查看卡密</button><button class="btn ghost" :disabled="running||!detailRow.card.imported" @click="editLimit(detailRow)">修改开通上限</button><template v-if="detailRow.card.status!=='4'"><button class="btn ghost" :disabled="running" @click="toggle(detailRow)">{{detailRow.local?.enabled?'禁用':'启用'}}</button><button v-for="act in ['deposit','withdraw','withdraw_all','freeze','unfreeze','remark']" :key="act" class="btn ghost" :disabled="running||(['withdraw','withdraw_all'].includes(act)&&!!cancelReason(detailRow,data.operations))" @click="cardAction(detailRow,act)">{{operationNames[act]}}</button><button class="btn ghost danger-text" :disabled="running||!!cancelReason(detailRow,data.operations)" @click="cardAction(detailRow,'cancel')">一键销卡</button><button class="btn primary" :disabled="running||!!cancelReason(detailRow,data.operations)" @click="cardAction(detailRow,'withdraw_cancel')">提现留 1U 并销卡</button></template></div><p v-if="cancelReason(detailRow,data.operations)" class="note">{{cancelReason(detailRow,data.operations)}}</p></template>
   </section></div></Teleport>
-  <Teleport to="body"><div v-if="dialog" class="modal-backdrop" @click.self="closeDialog"><form class="modal nex-dialog" @submit.prevent="submit"><div class="modal-heading"><h2>{{dialog.type==='open'?'开卡':dialog.type==='batch'?'批量'+operationNames[dialog.action]:dialog.type==='match'?'关联交易流水':dialog.type==='return'?'调整回款状态':dialog.type==='limit'?'单卡开通上限':dialog.type==='resolve'?'核实原操作':operationNames[dialog.action]}}</h2><button type="button" class="icon-button" :disabled="running||saving" @click="closeDialog"><X :size="18"/></button></div>
+  <Teleport to="body"><div v-if="dialog" class="modal-backdrop" @click.self="closeDialog"><form class="modal nex-dialog" @submit.prevent="submit"><div class="modal-heading"><h2>{{dialog.type==='open'?'开卡':dialog.type==='batch'?'批量'+operationNames[dialog.action]:dialog.type==='match'?'关联交易流水':dialog.type==='return'?'调整回款状态':dialog.type==='limit'?'单卡开通上限':dialog.type==='resolve'?'核实原操作':operationNames[dialog.action]}}</h2><button type="button" class="icon-button" :disabled="dialogBlocked" @click="closeDialog"><X :size="18"/></button></div>
    <template v-if="dialog.type==='open'"><label class="field">开卡模板<select v-model="dialog.template_id" required><option v-for="t in cfg.templates" :key="t.id" :value="t.id">{{t.name}} · {{t.amount}} USD</option></select></label><label class="field">开卡数量<input v-model.number="dialog.count" type="number" min="1" max="100" required/></label><p>逐张开卡并导入 Pro；遇到失败或未知结果即停止。</p><label class="check"><input v-model="dialog.confirm" type="checkbox" required/>确认从环球账户扣款开卡</label></template>
    <template v-else-if="dialog.type==='batch'"><p>对所选 {{dialog.ids.length}} 张卡执行{{operationNames[dialog.action]}}。</p><p v-if="dialog.action==='withdraw_all'">按每张卡的最新余额提现，保留 1 USD；余额不足的卡自动跳过。</p><p v-else-if="dialog.action==='withdraw_cancel'">自动提现保留 1 USD → 核实到账 → 冻结 → 销卡；操作间隔至少 3 秒。</p><p v-else>卡内余额不超过 1 USD；冻结成功后等待 3 秒自动销卡。</p><p>后台逐张处理，离开页面仍继续。跳过不可操作卡，结果未知时停止后续提交；进度与结果可在这里查看。</p><label class="check"><input v-model="dialog.confirm" type="checkbox" required/>确认执行批量{{operationNames[dialog.action]}}</label></template>
    <template v-else-if="dialog.type==='match'"><p>{{dialog.row.email}} · 尾号 {{dialog.row.last4}}</p><label class="field">同卡交易<select v-model="dialog.group_id" required><option value="">选择核实后的付款流水</option><option v-for="g in matchOptions(dialog.row)" :key="g.id" :value="g.id">{{at(g.at)}} · {{g.payment}} USD · 回款 {{g.returned}} · 授权 {{g.authorization}}</option></select></label><p v-if="!matchOptions(dialog.row).length">没有可关联流水，请先同步；重复或不完整的交易需要核实。</p><label class="field">核实依据<textarea v-model="dialog.reason" minlength="5" maxlength="500" required/></label><label class="check"><input v-model="dialog.confirm" type="checkbox" required/>确认该付款属于此账号</label></template>
@@ -210,7 +214,7 @@ async function tradePurposeUpdated(group){
    <template v-else-if="dialog.type==='return'"><p>{{dialog.row.email}} · 尾号 {{dialog.row.last4}}</p><label class="field">回款状态<select v-model="dialog.state"><option v-for="(name,state) in returnStates" :key="state" :value="state">{{name}}</option><option value="auto">恢复自动判断</option></select></label><label class="field">核实依据<textarea v-model="dialog.reason" required minlength="3" maxlength="500" placeholder="例如已在环球后台确认退款到账"/></label><label class="check"><input v-model="dialog.confirm" type="checkbox" required/>已核实该账号实际付款 / 回款状态</label></template>
    <template v-else-if="dialog.type==='resolve'"><p>{{operationNames[dialog.op.action]}} · {{dialog.op.id}}</p><label class="field">处理方式<select v-model="dialog.outcome"><option value="query">查询原操作结果</option><option v-if="dialog.op.action!=='open'" value="succeeded">人工确认已完成并到账</option><option value="failed">人工确认未执行 / 未扣款</option></select></label><label v-if="dialog.op.action==='open'&&!dialog.op.serial_no" class="field">原卡序列号<input v-model="dialog.serial_no" placeholder="同步后核对备注与操作编号，填写对应卡序列号"/></label><label v-if="dialog.outcome!=='query'" class="field">核实依据<textarea v-model="dialog.evidence" minlength="5" maxlength="500" required/></label><label class="check"><input v-model="dialog.confirm" type="checkbox" required/>确认核实原操作，不重复提交资金请求</label></template>
    <template v-else><p>银行卡尾号 {{dialog.card.card.last4}}</p><label v-if="['deposit','withdraw'].includes(dialog.action)" class="field">金额 USD<input v-model="dialog.amount" type="number" min="0.01" step="0.01" required/></label><label v-if="dialog.action==='remark'" class="field">备注<input v-model="dialog.remark" maxlength="40"/></label><p v-if="dialog.action==='withdraw'">提现后须保留 1 USD。核实提现到账后才能继续销卡。</p><p v-if="dialog.action==='withdraw_all'">按最新余额一键提现，保留 1 USD；余额不超过 1 USD 时跳过。</p><p v-if="dialog.action==='cancel'">冻结成功后等待 3 秒自动销卡。卡内余额须不超过 1 USD。</p><p v-if="dialog.action==='withdraw_cancel'">提现保留 1 USD → 核实到账 → 冻结 → 销卡。操作间隔至少 3 秒，剩余余额退回后自动确认完成。</p><label class="check"><input v-model="dialog.confirm" type="checkbox" required/>确认执行{{operationNames[dialog.action]}}</label></template>
-   <div class="actions"><button type="button" class="btn ghost" :disabled="running||saving" @click="closeDialog">取消</button><button class="btn primary" :disabled="running||saving">{{running||saving?'处理中…':'确认'}}</button></div>
+   <div class="actions"><button type="button" class="btn ghost" :disabled="dialogBlocked" @click="closeDialog">取消</button><button class="btn primary" :disabled="dialogBlocked">{{dialogBlocked?'处理中…':'确认'}}</button></div>
   </form></div><div v-if="privateInfo" class="modal-backdrop" @click.self="privateInfo=null"><section class="modal nex-dialog"><div class="modal-heading"><h2>卡片信息</h2><button class="icon-button" @click="privateInfo=null"><X :size="18"/></button></div><p class="private-number">{{privateInfo.cardNumber}}</p><p>有效期：{{privateInfo.expMonth}} / {{privateInfo.expYear}}</p><p>CVV：{{privateInfo.cvv}}</p><small>30 秒后自动隐藏</small></section></div></Teleport>
   <NexovccLedgerDialog v-if="ledger" :data="data" :options="ledger" :page-size="props.defaultPageSize" @close="ledger=null" @updated="tradePurposeUpdated"/>
  </div>

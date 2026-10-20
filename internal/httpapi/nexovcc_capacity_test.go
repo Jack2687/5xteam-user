@@ -58,10 +58,28 @@ func TestNexovccAutoRecycleThresholdKeepsUnusedAndStopsBelowLimit(t *testing.T) 
 		case "/api/card/getUserCardBalance":
 			return nexReply(map[string]any{"balance": nexovcc.Money(balances[serial])}), nil
 		case "/api/findLogWebFunds":
-			return nexReply(map[string]any{"list": funds, "total": len(funds), "page": 1}), nil
+			filtered := []any{}
+			for _, item := range funds {
+				fund := item.(map[string]any)
+				for i, card := range cards {
+					if card.Serial == fund["serial_no"] && (r.Body["card_no"] == nil || r.Body["card_no"] == pans[i]) {
+						filtered = append(filtered, item)
+					}
+				}
+			}
+			return nexReply(map[string]any{"list": filtered, "total": len(filtered), "page": 1}), nil
 		case "/api/findLogCardTrades":
 			var trades []any
 			for _, tr := range finance.Trades {
+				matches := r.Body["card_no"] == nil
+				for i, card := range cards {
+					if card.Serial == tr.Serial && r.Body["card_no"] == pans[i] {
+						matches = true
+					}
+				}
+				if !matches {
+					continue
+				}
 				trades = append(trades, map[string]any{"log_no": tr.ID, "serial_no": tr.Serial, "business_token": tr.Authorization, "money_id": 3, "trade_amount": tr.Amount, "merchant_amount": tr.MerchantAmount, "merchant_currency": tr.MerchantCurrency, "status": tr.Status, "created_at": tr.At.Format(time.RFC3339Nano)})
 			}
 			return nexReply(map[string]any{"list": trades, "total": len(trades), "page": 1}), nil

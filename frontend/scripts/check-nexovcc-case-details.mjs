@@ -53,6 +53,25 @@ const settled=structuredClone(waiting);Object.assign(settled.match.group,{settle
 assert.equal(caseDetails(settled,pendingFinance).pending,0)
 assert.equal(caseDetails(settled,pendingFinance).settlement,8233)
 
+// Card fees are allocated by the backend across all successful accounts, not
+// just the current page. Raw card totals must not acquire a second copy.
+for(const [count,opening,monthly,cost] of [[1,'0.50','0.20',155],[2,'0.25','0.10',120],[3,'0.16','0.06',107]]){
+ const allocated={...row,shared_fees:{count,ready:true,applied:true,opening,monthly,opening_total:'0.50',monthly_total:'0.20'}}
+ const details=caseDetails(allocated,finance)
+ assert.equal(details.cost,cost)
+ assert.equal(details.opening,Math.round(Number(opening)*100))
+ assert.equal(details.monthly,Math.round(Number(monthly)*100))
+ assert.equal(details.profit,2000-financeHelpers.rCents(cost))
+}
+assert.equal(caseDetails({...row,shared_fees:{count:3,ready:false}},finance).cost,null)
+const extraFee=structuredClone(finance)
+extraFee.funds.push({id:'aux-fee',serial_no:'fixture-card-1',kind:2007,currency:'USD',link:'zero-auth',amount:'-1.00'})
+const withAux=structuredClone(row)
+Object.assign(withAux.match.group,{fee_trade_ids:['zero-auth'],fees:'1.80',cost:'1.85'})
+assert.equal(caseDetails(withAux,extraFee).transaction,130)
+assert.equal(caseDetails(withAux,extraFee).cost,185)
+assert.deepEqual(caseDetails(withAux,extraFee).merchantPaid,caseDetails(row,finance).merchantPaid)
+
 const code=readFileSync(new URL('../src/components/NexovccManagementView.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const context=vm.createContext({...nexovcc,...financeHelpers,sortReturnCases,ref,reactive,computed,watch,defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},formatTime:v=>v})
 vm.runInContext(code+';globalThis.view={data,tab,returnCategory,returnFilter,filtered,inspect,detailCases,caseTrades,ledger};',context)
@@ -69,6 +88,9 @@ view.caseTrades({row,options:{type:'funds',kind:'2003'}})
 assert.equal(view.ledger.value.serial,'fixture-card-1')
 assert.equal(view.ledger.value.group.trade_ids.length,2)
 assert.equal(view.ledger.value.kind,'2003')
+view.caseTrades({row,options:{type:'funds',kind:'3003',scope:'card'}})
+assert.equal(view.ledger.value.group,null)
+assert.equal(view.ledger.value.serial,'fixture-card-1')
 const ledgerCode=readFileSync(new URL('../src/components/NexovccLedgerDialog.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const ledgerData={finance:{funds:[{id:'month',kind:3004,serial_no:'fixture-card-1'},{id:'year',kind:3005,serial_no:'fixture-card-1'},{id:'other',kind:3004,serial_no:'other-card'},{id:'open',kind:3003,serial_no:'fixture-card-1'}]}}
 const ledgerContext=vm.createContext({...financeHelpers,ref,computed,watch,defineProps:()=>({data:ledgerData,options:{type:'funds',kind:'card-service',serial:'fixture-card-1'},pageSize:10}),defineEmits:()=>()=>{},formatTime:v=>v})

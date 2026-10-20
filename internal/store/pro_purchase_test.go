@@ -4,6 +4,7 @@ import (
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
+	"slices"
 	"testing"
 	"time"
 )
@@ -55,6 +56,8 @@ func TestProPurchaseClaimPinsPlanAndTemplate(t *testing.T) {
 	p.PurchaseScheduleEnabled = true
 	local := time.Now().In(time.FixedZone("CST", 8*3600))
 	p.PurchaseWindows = []model.ProPurchaseWindow{{Start: local.Add(-time.Hour).Format("15:04"), End: local.Add(time.Hour).Format("15:04"), CardProvider: "nexovcc", PlanCode: "pro20"}}
+	p.Sub2.GroupIDs = []int64{1}
+	p.PurchaseWindows[0].ExtraSub2GroupIDs = []int64{15}
 	p.NexovccPlanTemplates = map[string]string{"pro20": "global20"}
 	if _, err = s.SaveProSettings(p, "", ""); err != nil {
 		t.Fatal(err)
@@ -92,6 +95,13 @@ func TestProPurchaseClaimPinsPlanAndTemplate(t *testing.T) {
 	}
 	p.NexovccPlanTemplates["pro20"] = "global20"
 	s.SaveProSettings(p, "", "")
+	p.PurchaseWindows[0].ExtraSub2GroupIDs = []int64{99}
+	s.SaveProSettings(p, "", "")
+	if s.ClaimProRestockDispatch(task) == nil {
+		t.Fatal("changed push groups accepted for an unstarted task")
+	}
+	p.PurchaseWindows[0].ExtraSub2GroupIDs = []int64{15}
+	s.SaveProSettings(p, "", "")
 	if err = s.ClaimProRestockDispatch(task); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +113,40 @@ func TestProPurchaseClaimPinsPlanAndTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned, err := s.ProRestockDispatchTask(task.ID)
-	if err != nil || pinned.PurchaseRoute == nil || pinned.PurchaseRoute.PlanCode != "pro20" || pinned.PurchaseRoute.TemplateID != "global20" {
+	if err != nil || pinned.PurchaseRoute == nil || pinned.PurchaseRoute.PlanCode != "pro20" || pinned.PurchaseRoute.TemplateID != "global20" || !slices.Equal(pinned.PurchaseRoute.Sub2GroupIDs, []int64{1, 15}) {
 		t.Fatal(pinned, err)
+	}
+}
+
+func TestProPurchaseGroupsFollowWindowWithoutMutatingBase(t *testing.T) {
+	p := model.DefaultProSettings()
+	p.PurchaseScheduleEnabled = true
+	p.Sub2.GroupIDs = []int64{3, 1}
+	p.PurchaseWindows = []model.ProPurchaseWindow{
+		{Start: "20:50", End: "10:00", CardProvider: "ejh", PlanCode: "pro5"},
+		{Start: "10:00", End: "20:50", CardProvider: "nexovcc", PlanCode: "pro20", ExtraSub2GroupIDs: []int64{15, 1, 15}},
+	}
+	p.EJHPlanTemplates = map[string]string{"pro5": "ejh5"}
+	p.NexovccPlanTemplates = map[string]string{"pro20": "global20"}
+	pay := gptpay.Settings{Provider: "tokenseek", PlanCode: "pro5", Country: "PH"}
+	for _, tc := range []struct {
+		clock  string
+		groups []int64
+	}{
+		{"09:59", []int64{1, 3}}, {"10:00", []int64{1, 3, 15}},
+		{"20:49", []int64{1, 3, 15}}, {"20:50", []int64{1, 3}}, {"00:00", []int64{1, 3}},
+	} {
+		now, _ := time.ParseInLocation("2006-01-02 15:04", "2026-10-20 "+tc.clock, time.FixedZone("CST", 8*3600))
+		selected, _, err := ResolveProPurchase(p, pay, restock.DefaultConfig(), now)
+		if err != nil || selected.PurchaseRoute == nil || !slices.Equal(selected.PurchaseRoute.Sub2GroupIDs, tc.groups) {
+			t.Fatal(tc.clock, selected.PurchaseRoute, err)
+		}
+		if !slices.Equal(p.Sub2.GroupIDs, []int64{3, 1}) || !slices.Equal(selected.Sub2.GroupIDs, p.Sub2.GroupIDs) {
+			t.Fatal("extra groups changed base monitoring configuration")
+		}
+	}
+	p.PurchaseWindows[1].ExtraSub2GroupIDs = []int64{-1}
+	if p.ValidatePurchaseWindows() == nil {
+		t.Fatal("invalid group accepted")
 	}
 }

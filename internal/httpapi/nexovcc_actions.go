@@ -32,8 +32,9 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	if err != nil {
 		return op, err
 	}
-	s.nexovccProgress("正在查询最新卡片状态和余额", 0, 3)
-	card, err := s.refreshNexovccLocked(ctx, in.CardID, "")
+	needsBalance := in.Action != "freeze" && in.Action != "unfreeze" && in.Action != "remark"
+	s.nexovccProgress("正在查询最新卡片状态", 0, 3)
+	card, err := s.refreshNexovccDetailsLocked(ctx, in.CardID, "", needsBalance)
 	if err != nil {
 		return op, err
 	}
@@ -64,9 +65,12 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	if path == "" {
 		return op, fmt.Errorf("操作类型无效")
 	}
-	cardBalance, err := nexovcc.Cents(card.Balance)
-	if err != nil {
-		return op, err
+	var cardBalance int64
+	if needsBalance {
+		cardBalance, err = nexovcc.Cents(card.Balance)
+		if err != nil {
+			return op, err
+		}
 	}
 	if in.Action == "withdraw_all" {
 		in.Amount = nexovcc.Money(max(int64(0), cardBalance-100))
@@ -91,12 +95,15 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 		}
 		body["remark"] = in.Remark
 	}
-	balance, err := client.Balance(ctx)
-	if err != nil {
-		return op, err
-	}
-	if err = s.store.NexovccCache("balance", balance); err != nil {
-		return op, err
+	var balance nexovcc.Balance
+	if needsBalance {
+		balance, err = client.Balance(ctx)
+		if err != nil {
+			return op, err
+		}
+		if err = s.store.NexovccCache("balance", balance); err != nil {
+			return op, err
+		}
 	}
 	op = nexovcc.Operation{ID: in.RequestID, Action: in.Action, CardID: card.ID, Serial: card.Serial, Amount: in.Amount, Remark: in.Remark, Status: "submitted", BeforeBalance: card.Balance, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	op.CapacityRecycle = in.CapacityRecycle
@@ -219,9 +226,16 @@ func (s *Server) advanceNexovccCloseLocked(ctx context.Context, op nexovcc.Opera
 		confirmed := false
 		for attempt := 0; attempt < 4; attempt++ {
 			s.nexovccProgress("1/3 正在核实提现到账", 0, 3)
-			if err = s.syncNexovccFinanceLocked(ctx); err != nil {
-				op.Error = "提现已提交，等待资金流水同步：" + err.Error()
-				break
+			var finance nexovcc.Finance
+			since := op.CreatedAt
+			if op.StepAt.After(since) {
+				since = op.StepAt
+			}
+			if attempt > 0 || s.store.NexovccCached("finance", &finance) != nil || finance.FundsSyncedAt(op.Serial).Before(since) {
+				if err = s.syncNexovccCardFundsLocked(ctx, op.CardID); err != nil {
+					op.Error = "提现已提交，等待资金流水同步：" + err.Error()
+					break
+				}
 			}
 			probe := op
 			if s.nexovccTransferConfirmedLocked(ctx, &probe, 4002, op.WithdrawAmount) {

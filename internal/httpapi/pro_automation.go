@@ -253,6 +253,15 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	var card gptpay.Card
 	var secret gptpay.CardSecret
+	pushTargetID, pushGroupIDs := p.ProRestockTargetID, p.ProAuto.Sub2PushGroupIDs
+	if automatic && !resume && !paidRecovery && pro.PurchaseRoute != nil && len(pro.PurchaseRoute.Sub2GroupIDs) > 0 {
+		pushTargetID, err = s.store.SaveDownstreamTarget(model.DownstreamTarget{Scope: "pro-restock", Provider: "sub2", Sub2: pro.Sub2, Secret: subPassword})
+		if err != nil {
+			writeAPI(w, 500, nil, "保存分时推送目标失败，未启动开通")
+			return
+		}
+		pushGroupIDs = append([]int64(nil), pro.PurchaseRoute.Sub2GroupIDs...)
+	}
 
 	value, _ := s.proLocks.LoadOrStore("account:"+email, &sync.Mutex{})
 	lock := value.(*sync.Mutex)
@@ -445,6 +454,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 				p.ProAuto.StopVersion = stopVersion
 				p.ProAuto.QuotaPlan = restockPlan(cfg.Provider, cfg.PlanCode, cfg.Country, cfg.CreditQuantity)
 				p.ProAuto.RestockBinding = restockBinding(pro)
+				p.ProRestockTargetID, p.ProAuto.Sub2PushGroupIDs = pushTargetID, pushGroupIDs
 			}
 			p.ProAuto.Status = "running"
 			p.ProAuto.StopRequested = false
