@@ -78,30 +78,31 @@ type PrivateCard struct {
 	Month, Year int
 }
 type Operation struct {
-	PlanCode             string    `json:"plan_code,omitempty"`
-	ID                   string    `json:"id"`
-	Action               string    `json:"action"`
-	CardID               string    `json:"card_id"`
-	Serial               string    `json:"serial_no"`
-	TemplateID           string    `json:"template_id"`
-	ProductID            string    `json:"product_id"`
-	Amount               string    `json:"amount"`
-	Remark               string    `json:"remark"`
-	Status               string    `json:"status"`
-	Error                string    `json:"error"`
-	Evidence             string    `json:"evidence"`
-	Automatic            bool      `json:"automatic"`
-	CapacityRecycle      bool      `json:"capacity_recycle,omitempty"`
-	AutoWithdraw         bool      `json:"auto_withdraw,omitempty"`
-	BeforeBalance        string    `json:"before_balance"`
-	BeforeAccountBalance string    `json:"before_account_balance"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
-	Step                 string    `json:"step,omitempty"`
-	StepAt               time.Time `json:"step_at,omitempty"`
-	WithdrawAmount       string    `json:"withdraw_amount,omitempty"`
-	WithdrawEvidence     string    `json:"withdraw_evidence,omitempty"`
-	FrozenAt             time.Time `json:"frozen_at,omitempty"`
+	PlanCode             string             `json:"plan_code,omitempty"`
+	ID                   string             `json:"id"`
+	Action               string             `json:"action"`
+	CardID               string             `json:"card_id"`
+	Serial               string             `json:"serial_no"`
+	TemplateID           string             `json:"template_id"`
+	ProductID            string             `json:"product_id"`
+	Amount               string             `json:"amount"`
+	Remark               string             `json:"remark"`
+	Status               string             `json:"status"`
+	Error                string             `json:"error"`
+	Evidence             string             `json:"evidence"`
+	Automatic            bool               `json:"automatic"`
+	CapacityRecycle      bool               `json:"capacity_recycle,omitempty"`
+	AutoWithdraw         bool               `json:"auto_withdraw,omitempty"`
+	BalanceWithdrawal    *BalanceWithdrawal `json:"balance_withdrawal,omitempty"`
+	BeforeBalance        string             `json:"before_balance"`
+	BeforeAccountBalance string             `json:"before_account_balance"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+	Step                 string             `json:"step,omitempty"`
+	StepAt               time.Time          `json:"step_at,omitempty"`
+	WithdrawAmount       string             `json:"withdraw_amount,omitempty"`
+	WithdrawEvidence     string             `json:"withdraw_evidence,omitempty"`
+	FrozenAt             time.Time          `json:"frozen_at,omitempty"`
 }
 
 func (o Operation) Terminal() bool { return o.Status == "succeeded" || o.Status == "failed" }

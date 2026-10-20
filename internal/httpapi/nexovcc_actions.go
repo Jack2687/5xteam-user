@@ -74,6 +74,11 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	}
 	if in.Action == "withdraw_all" {
 		in.Amount = nexovcc.Money(max(int64(0), cardBalance-100))
+		if in.AutoWithdraw && in.Amount == "0.00" {
+			// A balance may have fallen since candidate discovery. Do not send
+			// a zero withdrawal or consume the pending refund's idempotency key.
+			return nexovcc.Operation{Action: in.Action, CardID: card.ID, Status: "succeeded", Amount: "0.00", Evidence: "余额不超过 1 USD，无需提现"}, nil
+		}
 	}
 	body := map[string]any{"serial_no": card.Serial}
 	if in.Action == "deposit" || in.Action == "withdraw" || in.Action == "withdraw_all" {
@@ -117,6 +122,13 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	}
 	if err = s.store.BeginNexovccOperation(op); err != nil {
 		return op, err
+	}
+	if op.AutoWithdraw {
+		// Preserve the balance-only admission evidence persisted under the lock.
+		op, err = s.store.NexovccOperation(op.ID)
+		if err != nil {
+			return op, err
+		}
 	}
 	if nexovccClosing(in.Action) {
 		return s.advanceNexovccCloseLocked(ctx, op)

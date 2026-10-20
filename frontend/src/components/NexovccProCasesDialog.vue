@@ -66,7 +66,7 @@ async function tradePurposeUpdated(group){
    <p class="hint">手动状态不改变真实金额；付款结果未知时不能用回款状态解除占用。</p>
    <div class="panel-actions"><button class="btn primary" :disabled="busy||!edit.confirm">{{busy?'保存中…':'保存'}}</button><button type="button" class="btn ghost" :disabled="busy" @click="edit=null">取消</button></div>
   </form>
-  <NexovccCaseTable v-else-if="!loading" compact :rows="visible" :cards="data.cards" :finance="data.finance" :running="busy" @state="changeState" @match="changeMatch" @details="details" @card="openCard"/>
+  <NexovccCaseTable :data="data" v-else-if="!loading" compact :rows="visible" :cards="data.cards" :finance="data.finance" :running="busy" @state="changeState" @match="changeMatch" @details="details" @card="openCard"/>
   <Pagination v-if="!edit" :page="page" :page-size="size" :total="rows.length" @update:page="page=$event" @update:page-size="size=$event;page=1"/>
  </section></div></Teleport>
  <NexovccLedgerDialog v-if="opened&&ledger" :data="data" :options="ledger" :page-size="size" @close="ledger=null" @updated="tradePurposeUpdated"/>

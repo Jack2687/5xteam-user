@@ -55,6 +55,10 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	ops, err := s.store.NexovccOperations()
+	if err != nil {
+		return err
+	}
 	sort.Slice(cards, func(i, j int) bool {
 		if cards[i].CreatedAt.Equal(cards[j].CreatedAt) {
 			return cards[i].ID < cards[j].ID
@@ -67,15 +71,33 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 			return err
 		}
 		amount, e := nexovcc.Cents(card.Balance)
-		if e != nil || amount <= 100 || !nexovccRecycleCandidate(card, cases, groups) || !nexovccCardUsed(card, cases, groups) {
+		if e != nil || amount <= 100 || card.Status == "4" || !card.Imported || card.Error != "" || !nexovccCardUsed(card, cases, groups) {
 			continue
 		}
 		local, _, e := s.store.GPTPayCard(card.ID)
 		if e != nil {
 			return e
 		}
-		if local.IssuerLocked || local.ActiveAccounts > 0 || local.PendingAccounts > 0 || local.AccountLimit < 1 || local.OpenedAccounts < local.AccountLimit {
+		if local.IssuerLocked || local.PendingAccounts > 0 || local.AccountLimit < 1 || local.OpenedAccounts < local.AccountLimit {
 			continue
+		}
+		cycle, withdrawn := nexovcc.WithdrawFundingCycle(card, finance), false
+		for _, op := range ops {
+			if op.CardID == card.ID && op.BalanceWithdrawal != nil && op.BalanceWithdrawal.Cycle == cycle {
+				withdrawn = true
+			}
+		}
+		if withdrawn {
+			continue // Late refund rows cannot withdraw the same recovered funds again.
+		}
+		if local.ActiveAccounts > 0 || !nexovccRecycleCandidate(card, cases, groups) {
+			evidence, err := s.store.NexovccBalanceWithdrawal(card.ID)
+			if err != nil {
+				return err
+			}
+			if evidence == nil {
+				continue
+			}
 		}
 		id := nexovccAutoWithdrawID(card, finance)
 		if _, e = s.store.NexovccOperation(id); e == nil {

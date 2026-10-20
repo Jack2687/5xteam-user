@@ -32,7 +32,7 @@ export function cardFunding(data, row) {
  const pendingAssets = totals.pending - closedAuthorization
  // Active/closing cards still belong to card assets. Only a closed card's
  // uncredited residual can explain a missing transfer, never a new expense.
- const closurePending = ready && closed && !totals.unverified && !totals.staleReviews ? Math.max(0, funded - withdrawn - returned - totals.cardLoss - totals.settlement - pendingAssets - totals.manualFees) : null
+ const closurePending = ready && closed && !totals.unverified && !totals.staleReviews ? Math.max(0, funded - withdrawn - returned - totals.cardLoss - totals.settlement - pendingAssets - totals.manualFees - totals.balanceDifference) : null
  const settled = ready && closed && closurePending === 0 && !waiting
  return {ready, funded:ready ? funded : null, withdrawn:ready ? withdrawn : null, returned:ready ? returned : null,
   difference:settled ? funded - withdrawn - returned : null, additions:additions.length,
@@ -66,7 +66,7 @@ export function reconciliation(data, now = Date.now(), freshnessSeconds = 120) {
  const summaries = cards.map(r => cardFunding(data, r))
  const closedSerials = new Set(cards.filter((r,i) => summaries[i].closedAuthorization > 0).map(r => r.card.serial_no))
  const closedAuthorization = sum((data.groups || []).filter(g => closedSerials.has(g.serial_no) && g.valid && !g.fully_returned && !g.settled), g => Math.max(0, cents(g.difference)))
- const pendingAssets = totals.pending - closedAuthorization
+ const pendingAssets = totals.pending - closedAuthorization - totals.balanceRecoveredPending
  const assets = cents(data.balance?.amount) + cardBalance + pendingAssets
  const gap = totals.ready && !moneyMissing ? totals.gross - assets - totals.cost - externalWithdrawn : null
  const closurePending = sum(summaries, s => s.closurePending || 0)
@@ -85,6 +85,7 @@ export function reconciliation(data, now = Date.now(), freshnessSeconds = 120) {
  if (stale) reasons.push('余额或流水较旧，请同步全部')
  const moving = (data.operations || []).some(op => moneyActions.includes(op.action) && pending(op))
  if (moving) reasons.push('有资金操作处理中')
+ if (totals.balanceDifference || totals.balanceRecoveredPending) reasons.push('含余额差额暂估，回款状态仍以流水为准')
  const unexplained = gap === null ? null : gap - closurePending
  const state = gap === null ? 'unknown' : reasons.length ? 'stale' : closurePending > 0 ? 'pending' : Math.abs(gap) <= 100 ? 'balanced' : 'difference'
  const label = {unknown:'数据不足', stale:'待同步核实', pending:'销卡退回待核实', balanced:gap === 0 ? '账面相符' : '小额差异', difference:'存在差额'}[state]

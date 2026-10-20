@@ -2,16 +2,20 @@
 import { computed } from 'vue'
 import { returnStates } from '../nexovcc'
 import { cardReturnCounts } from '../nexovcc-reconciliation'
+import { cardReturnNotice } from '../nexovcc-return-notice'
+import NexovccReturnNotice from './NexovccReturnNotice.vue'
 import { formatTime } from '../utils'
-const props=defineProps({row:{type:Object,required:true},cases:{type:Array,default:()=>[]}})
+const props=defineProps({row:{type:Object,required:true},cases:{type:Array,default:()=>[]},data:{type:Object,default:()=>({})}})
 defineEmits(['inspect'])
 const counts=computed(()=>cardReturnCounts(props.cases))
+const notice=computed(()=>cardReturnNotice(props.data,props.row))
 const latestRequest=computed(()=>props.cases.filter(c=>c.state==='waiting'&&c.requested_at&&!c.requested_at.startsWith('0001')).map(c=>c.requested_at).sort().at(-1))
 </script>
 <template>
  <div class="card-returns" aria-label="账号回款状态">
   <div v-if="row.local?.active_accounts||row.local?.pending_accounts" class="occupants"><strong>占用 {{row.local.active_accounts||0}} · 在途 {{row.local.pending_accounts||0}}</strong><button v-for="occupant in row.local.occupants||[]" :key="occupant.email+':'+occupant.order_id" :title="occupant.email" @click="$emit('inspect',{type:'accounts',search:occupant.email})">{{occupant.email}}<small v-if="occupant.deleted">账号已删除</small></button><small v-if="!row.local.occupants?.length">{{row.local.active_email||'等待流程更新'}}</small></div>
   <div class="return-badges"><button v-for="(name,state) in returnStates" :key="state" :class="state" @click="$emit('inspect',{type:'accounts',state})">{{name}} <b>{{counts[state]}}</b><small v-if="state==='waiting'&&latestRequest">申请 {{formatTime(latestRequest)}}</small></button></div>
+  <NexovccReturnNotice :notice="notice"/>
  </div>
 </template>
 <style scoped>

@@ -417,6 +417,8 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...Nexovcc
 	if e = lockProCardAdmission(tx); e != nil {
 		return e
 	}
+	// Never accept caller-supplied refund/balance evidence.
+	op.BalanceWithdrawal = nil
 	scope := "open"
 	if op.Action != "open" {
 		scope = "card:" + op.CardID
@@ -444,6 +446,9 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...Nexovcc
 			return fmt.Errorf("卡片仍有开通预留或未决付款，请先核实")
 		}
 		if op.AutoWithdraw {
+			if op.Action != "withdraw_all" || op.CapacityRecycle {
+				return fmt.Errorf("自动提现例外仅允许提现留 1U，不能用于销卡")
+			}
 			// Re-read the effective per-card limit under the admission lock: an
 			// operator may have raised it after the background candidate scan.
 			limit, err := proCardLimit(tx, key.String)
@@ -457,17 +462,39 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...Nexovcc
 			if opened < limit {
 				return fmt.Errorf("自动提现须达到该卡开通上限（已开通 %d/%d）", opened, limit)
 			}
+			finance, err := nexovccWithdrawalFinance(tx)
+			if err != nil {
+				return err
+			}
+			if used, err := nexovccBalanceWithdrawalUsed(tx, c, finance); err != nil {
+				return err
+			} else if used {
+				return fmt.Errorf("本轮恢复余额已有提现记录，退款流水补齐不会重复提现")
+			}
 		}
 		if op.CapacityRecycle || op.AutoWithdraw {
 			var unpaid int
 			if e = tx.QueryRow(`SELECT count(*) FROM pro_card_usage u WHERE u.card_key=? AND u.status='success' AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)`, key.String).Scan(&unpaid); e != nil {
 				return e
 			}
-			if unpaid > 0 {
+			if op.AutoWithdraw && unpaid > 0 {
+				op.BalanceWithdrawal, e = nexovccBalanceWithdrawal(tx, c, key.String)
+				if e != nil {
+					return e
+				}
+				if op.BalanceWithdrawal != nil {
+					balance, be := nexovcc.Cents(c.Balance)
+					amount, ae := nexovcc.Cents(op.Amount)
+					if be != nil || ae != nil || op.BeforeBalance != c.Balance || amount != balance-100 {
+						return fmt.Errorf("可提现余额已变化，请重新核对")
+					}
+				}
+			}
+			if unpaid > 0 && op.BalanceWithdrawal == nil {
 				return fmt.Errorf("自动提现或回收须等待全部付款实际回款，人工状态不能替代退款流水")
 			}
 		}
-		if (op.Action == "withdraw" || op.Action == "withdraw_all" || op.Action == "cancel" || op.Action == "withdraw_cancel") && n > 0 {
+		if (op.Action == "withdraw" || op.Action == "withdraw_all" || op.Action == "cancel" || op.Action == "withdraw_cancel") && n > 0 && op.BalanceWithdrawal == nil {
 			return fmt.Errorf("仍有未确认回款的账号，暂不能提现或销卡")
 		}
 	}

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { cardBalanceDisplay, cardFunding, cardReturnCounts, reconciliation } from '../src/nexovcc-reconciliation.js'
+import { cardReturnNotice, caseReturnNotice } from '../src/nexovcc-return-notice.js'
 const now=Date.parse('2026-10-19T12:00:00+08:00'),at=new Date(now).toISOString()
 const raw=JSON.parse(readFileSync(new URL('../../internal/nexovcc/testdata/finance.json',import.meta.url),'utf8'))
 const data={finance:{at,
@@ -170,4 +171,58 @@ assert.equal(check(laterReversal).totals.pending,0)
 assert.equal(check(laterReversal).totals.cost,13223)
 assert.equal(check(laterReversal).gap,62,'a later release after the balance was returned does not create another asset')
 assert.deepEqual(cardReturnCounts([{state:'unopened'},{state:'opened'},{state:'waiting'},{state:'waiting'},{state:'returned'},{state:'invalid'}]),{unopened:1,opened:1,waiting:2,returned:1})
+
+// Informational balance/ledger mismatch must never fabricate refunds, clear
+// occupancy, change costs, or rely on a filtered page of account records.
+const returnData={
+ finance:{at:'2026-10-20T18:21:04+08:00',card_at:{card4276:'2026-10-20T18:21:04+08:00'},funds:[
+  {kind:3001,serial_no:'card4276',currency:'USD',amount:'-170.00',at:'2026-10-20T15:30:19+08:00'},
+  {kind:2007,serial_no:'card4276',currency:'USD',amount:'-2.42',at:'2026-10-20T16:21:20+08:00'},
+ ]},
+ cards:[{card:{id:'c4276',serial_no:'card4276',status:'1',balance:'169.39',balance_at:'2026-10-20T18:20:53+08:00'},local:{active_accounts:1,available:false}}],
+ cases:[{id:'c1',card_id:'c4276',state:'waiting',payment_status:'success',requested_at:'2026-10-20T18:07:35+08:00'}],
+ groups:[{id:'g1',serial_no:'card4276',valid:true,payment:'141.82',returned:'0.00',difference:'141.82',fees:'2.42',cost:'2.42',at:'2026-10-20T16:21:17+08:00'}],
+ operations:[],balance:{amount:'1000.00',at:'2026-10-20T18:20:53+08:00'},
+}
+const originalReturnData=structuredClone(returnData),originalTotals=check(returnData)
+const notice=d=>cardReturnNotice(d,d.cards[0])
+assert.equal(notice(returnData).text,'余额高于流水，回款待确认')
+assert.match(notice(returnData).detail,/28\.18 USD.*141\.21 USD/)
+assert.equal(caseReturnNotice(returnData,returnData.cases[0]).text,'本卡余额高于流水，回款待确认')
+assert.equal(caseReturnNotice(returnData,{...returnData.cases[0],state:'returned'}),null)
+assert.deepEqual(returnData,originalReturnData)
+assert.deepEqual(check(returnData),originalTotals,'display notices must leave reconciliation unchanged')
+assert.equal(returnData.cards[0].local.available,false)
+assert.equal(returnData.cards[0].local.active_accounts,1)
+assert.equal(returnData.groups[0].returned,'0.00')
+const oldLedger=structuredClone(returnData);oldLedger.finance.card_at.card4276='2026-10-20T18:11:04+08:00'
+assert.equal(notice(oldLedger).text,'余额已更新，流水待同步')
+const noSnapshot=structuredClone(returnData);delete noSnapshot.finance.card_at.card4276
+assert.equal(notice(noSnapshot).text,'流水待同步','never use another card\'s global refresh time')
+const normalBalance=structuredClone(returnData);normalBalance.cards[0].card.balance='28.18'
+assert.equal(notice(normalBalance),null)
+normalBalance.cards[0].card.balance='28.19';assert.equal(notice(normalBalance),null)
+const toppedUp=structuredClone(returnData)
+toppedUp.finance.funds.push({kind:4001,serial_no:'card4276',currency:'USD',amount:'-141.21',at:'2026-10-20T18:13:00+08:00'})
+assert.equal(notice(toppedUp),null,'a recorded deposit is not a refund signal')
+const transferred=structuredClone(returnData);transferred.operations=[{card_id:'c4276',action:'deposit',status:'processing'}]
+assert.equal(notice(transferred).text,'余额与流水待核对')
+for(const kind of ['foreign','missing','invalid','other-expense','future']){
+ const d=structuredClone(returnData)
+ if(kind==='foreign')d.finance.funds[0].currency='PHP'
+ if(kind==='missing')d.finance.funds=[]
+ if(kind==='invalid')d.groups[0].valid=false
+ if(kind==='other-expense')d.groups[0].other_expense={applied:true}
+ if(kind==='future')d.finance.funds[0].at='2026-10-20T18:22:00+08:00'
+ assert.equal(notice(d).text,kind==='future'?'余额待同步，回款待确认':'余额与流水待核对',kind)
+}
+for(const kind of ['closed','returned','settled','failed','removed']){
+ const d=structuredClone(returnData)
+ if(kind==='closed')d.cards[0].card.status='4'
+ if(kind==='returned')d.cases[0].state='returned'
+ if(kind==='settled')d.cases[0].match={group:{settled:true}}
+ if(kind==='failed')d.cases[0].payment_status='failed'
+ if(kind==='removed')d.cases[0].removed_at=at
+ assert.equal(notice(d),null,kind)
+}
 console.log('Passed: funding, additional deposits, withdrawals, pending/final closure returns, deletion before refund, later settlements/reversals, pending payments, external withdrawals, missing/stale/partial data, unexplained differences and account states')
