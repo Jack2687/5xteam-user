@@ -243,7 +243,7 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取环球刷新状态失败")
 		return
 	}
-	withdrawState, e := s.nexovccWithdrawState(cfg)
+	withdrawState, e := s.nexovccWithdrawState(cfg, ops)
 	if e != nil {
 		writeAPI(w, 500, nil, "读取环球提现检查状态失败")
 		return

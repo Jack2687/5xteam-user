@@ -90,3 +90,40 @@ func TestNexovccWithdrawIntervalValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestNexovccWithdrawNoticeTracksUnresolvedResultsInsteadOfOldFailures(t *testing.T) {
+	s, _ := nexFixtureServer(t)
+	s.nexovcc.transport = func(context.Context, nexovcc.Request) (nexovcc.Response, error) {
+		t.Fatal("reading the notice must not contact the supplier")
+		return nexovcc.Response{}, nil
+	}
+	cfg, _, _ := s.store.NexovccSettings()
+	before := nexovccWithdrawState{LastAttempt: time.Now(), LastSuccess: time.Now(), Blocked: 8}
+	if err := s.store.NexovccCache("withdraw_state", before); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.nexovccWithdrawState(cfg)
+	if err != nil || state.Blocked != 0 || !state.LastAttempt.Equal(before.LastAttempt) {
+		t.Fatal("stale notice survived", state, err)
+	}
+	ops := []nexovcc.Operation{
+		{ID: "historical-failure", AutoWithdraw: true, Action: "withdraw_all", Status: "failed"},
+		{ID: "manual-unknown", Action: "cancel", Status: "unknown"},
+		{ID: "actual-unknown", AutoWithdraw: true, Action: "withdraw_all", Status: "unknown"},
+	}
+	state, err = s.nexovccWithdrawState(cfg, ops)
+	if err != nil || state.Blocked != 1 {
+		t.Fatal("notice mixed history or manual actions into pending withdrawals", state, err)
+	}
+	for _, outcome := range []string{"succeeded", "failed"} {
+		ops[2].Status = outcome
+		state, err = s.nexovccWithdrawState(cfg, ops)
+		if err != nil || state.Blocked != 0 || !state.LastSuccess.Equal(before.LastSuccess) {
+			t.Fatal("resolved notice waited for another sweep", outcome, state, err)
+		}
+	}
+	var stored nexovccWithdrawState
+	if err = s.store.NexovccCached("withdraw_state", &stored); err != nil || stored.Blocked != before.Blocked {
+		t.Fatal("read changed scheduled task state", stored, err)
+	}
+}

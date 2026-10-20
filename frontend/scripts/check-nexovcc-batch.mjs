@@ -118,3 +118,26 @@ for (const pageAutoRefresh of [true, false]) {
  assert.equal(calls.filter(r=>r.url==='/api/nexovcc/run').length,before)
 }
 console.log('Passed: page refresh opt-out, manual full refresh, exact-card transaction refresh, invalid card does not broaden scope')
+
+{
+ const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,
+  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},
+ })
+ vm.runInContext(code+';globalThis.view={data,tab,page,search,filtered,withdrawAttention,withdrawAttentionOnly,showWithdrawAttention};',context)
+ const v=context.view
+ v.data.operations=[{id:'old-failure',auto_withdraw:true,status:'failed'},{id:'pending',auto_withdraw:true,status:'unknown'},{id:'manual-pending',status:'unknown'}]
+ v.data.withdraw={blocked:9}
+ assert.equal(v.withdrawAttention.value.length,1,'historical cached count leaked into notice')
+ v.search.value='unrelated';v.page.value=3
+ v.showWithdrawAttention()
+ assert.equal(v.tab.value,'operations')
+ assert.equal(v.page.value,1)
+ assert.equal(v.search.value,'')
+ assert.deepEqual(Array.from(v.filtered.value,r=>r.id),['pending'])
+ v.data.operations[1].status='succeeded'
+ assert.equal(v.withdrawAttention.value.length,0)
+ assert.equal(v.filtered.value.length,0)
+ v.withdrawAttentionOnly.value=false
+ assert.equal(v.filtered.value.length,3,'resolved/failed records must remain in history')
+ console.log('Passed: only unknown automatic withdrawals show a notice; click locates them; resolution clears it without deleting history')
+}

@@ -22,11 +22,33 @@ type nexovccWithdrawState struct {
 	Error       string    `json:"error,omitempty"`
 }
 
-func (s *Server) nexovccWithdrawState(cfg nexovcc.Settings) (nexovccWithdrawState, error) {
+func nexovccWithdrawAttentionCount(ops []nexovcc.Operation) int {
+	count := 0
+	for _, op := range ops {
+		if op.AutoWithdraw && op.Status == "unknown" {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Server) nexovccWithdrawState(cfg nexovcc.Settings, snapshot ...[]nexovcc.Operation) (nexovccWithdrawState, error) {
 	var state nexovccWithdrawState
 	if err := s.store.NexovccCached("withdraw_state", &state); err != nil {
 		return state, err
 	}
+	// A resolved operation must disappear immediately, without waiting for the
+	// next withdrawal sweep. Definite historical failures are not unknown results.
+	var ops []nexovcc.Operation
+	if len(snapshot) > 0 {
+		ops = snapshot[0]
+	} else {
+		var err error
+		if ops, err = s.store.NexovccOperations(); err != nil {
+			return state, err
+		}
+	}
+	state.Blocked = nexovccWithdrawAttentionCount(ops)
 	seconds := cfg.AutoWithdrawIntervalSeconds
 	if seconds == 0 {
 		seconds = 60
@@ -99,22 +121,14 @@ func (s *Server) runNexovccWithdrawCheck(ctx context.Context) (bool, error) {
 	err = s.autoWithdrawNexovccLocked(workCtx)
 	cancel()
 	state.Blocked = 0
-	cards, _ := s.store.NexovccCards()
-	remaining := map[string]bool{}
-	for _, card := range cards {
-		amount, e := nexovcc.Cents(card.Balance)
-		remaining[card.ID] = card.Status != "4" && e == nil && amount > 100
-	}
 	if ops, e := s.store.NexovccOperations(); e == nil {
-		for _, op := range ops {
-			if op.AutoWithdraw && (op.Status == "unknown" || op.Status == "failed" && remaining[op.CardID]) {
-				state.Blocked++
-			}
-		}
+		state.Blocked = nexovccWithdrawAttentionCount(ops)
+	} else if err == nil {
+		err = e
 	}
 	message, status := "自动提现检查完成", "completed"
 	if state.Blocked > 0 {
-		message += fmt.Sprintf(" · %d 笔失败或待核实，见操作记录", state.Blocked)
+		message += fmt.Sprintf(" · %d 笔自动提现结果待核实，见操作记录", state.Blocked)
 	}
 	if err == nil {
 		state.LastSuccess = time.Now()
