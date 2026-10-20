@@ -26,6 +26,9 @@ type Settings struct {
 	DefaultMaxAccounts          int        `json:"default_max_accounts"`
 	SingleActiveAccount         bool       `json:"single_active_account"`
 	PageRefreshSeconds          int        `json:"page_refresh_seconds"`
+	PageAutoRefresh             bool       `json:"page_auto_refresh"`
+	HTTP522RetrySeconds         int        `json:"http_522_retry_seconds"`
+	HTTP522Retries              int        `json:"http_522_retries"`
 	RequestIntervalSeconds      int        `json:"request_interval_seconds"`
 	MaxOnlineCards              int        `json:"max_online_cards"`
 	AutoRecycleAt               int        `json:"auto_recycle_at"`
@@ -108,7 +111,7 @@ type Operation struct {
 
 func (o Operation) Terminal() bool { return o.Status == "succeeded" || o.Status == "failed" }
 func Defaults() Settings {
-	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, RequestIntervalSeconds: 3, AutoWithdrawIntervalSeconds: 60, BatchIntervalSeconds: 3, Templates: []Template{}}
+	return Settings{DefaultMaxAccounts: 1, SingleActiveAccount: true, PageRefreshSeconds: 30, PageAutoRefresh: true, HTTP522RetrySeconds: 5, HTTP522Retries: 2, RequestIntervalSeconds: 3, AutoWithdrawIntervalSeconds: 60, BatchIntervalSeconds: 3, Templates: []Template{}}
 }
 
 var moneyPattern = regexp.MustCompile(`^\d{1,10}(\.\d{1,2})?$`)
@@ -132,6 +135,12 @@ func Cents(s string) (int64, error) {
 }
 func Money(n int64) string { return fmt.Sprintf("%d.%02d", n/100, n%100) }
 func Normalize(s Settings) (Settings, error) {
+	if s.HTTP522RetrySeconds == 0 {
+		s.HTTP522RetrySeconds = 5
+	}
+	if s.HTTP522RetrySeconds < 1 || s.HTTP522RetrySeconds > 300 || s.HTTP522Retries < 0 || s.HTTP522Retries > 10 {
+		return s, fmt.Errorf("522 重试间隔须为 1～300 秒，重试次数须为 0～10 次")
+	}
 	if s.AutoWithdrawIntervalSeconds == 0 {
 		s.AutoWithdrawIntervalSeconds = 60
 	}

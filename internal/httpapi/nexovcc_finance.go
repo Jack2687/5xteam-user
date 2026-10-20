@@ -11,11 +11,21 @@ import (
 	"chatgpt-space-merge/internal/nexovcc"
 )
 
-// Routine refreshes touch only live/unresolved cards. Account-only records use
-// a separate low-frequency incremental window so closed history is retained.
-func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...bool) (err error) {
+// Routine refreshes query the same non-deleted cards shown in the normal tab.
+// Pending closing operations reconcile their own receipts separately.
+func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...bool) error {
+	return s.syncNexovccFinanceScopeLocked(ctx, "", true, len(forceAccount) > 0 && forceAccount[0])
+}
+
+// An empty card ID selects normal cards; an explicit ID can refresh closed
+// history too. These actions never expand into account-wide ledger requests.
+func (s *Server) syncNexovccTransactionsLocked(ctx context.Context, cardID string) error {
+	return s.syncNexovccFinanceScopeLocked(ctx, cardID, false, false)
+}
+
+func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID string, account, forceAccount bool) (err error) {
 	defer func() {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || !account {
 			return
 		}
 		message := ""
@@ -45,11 +55,22 @@ func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...b
 			}
 		}
 	}
+	selected := make([]nexovcc.Card, 0, len(cards))
+	for _, card := range cards {
+		if cardID != "" && card.ID == cardID || cardID == "" && card.Status != "4" {
+			selected = append(selected, card)
+		}
+	}
+	if cardID != "" && len(selected) == 0 {
+		return fmt.Errorf("卡片不存在，未同步其他卡片")
+	}
+	skipped := len(cards) - len(selected)
+	cards = selected
 	// Resume with the least recently refreshed card after an opening preempts
 	// a long scan; already completed cards must not starve the remaining ones.
 	sort.SliceStable(cards, func(i, j int) bool { return f.CardAt[cards[i].Serial].Before(f.CardAt[cards[j].Serial]) })
 	var failures []error
-	if (len(forceAccount) > 0 && forceAccount[0]) || time.Since(f.AccountAt) >= max(30*time.Minute, time.Duration(cfg.PageRefreshSeconds)*time.Second) {
+	if account && (forceAccount || time.Since(f.AccountAt) >= max(30*time.Minute, time.Duration(cfg.PageRefreshSeconds)*time.Second)) {
 		since := f.AccountAt
 		if since.IsZero() && legacyAccount {
 			since = f.At
@@ -57,29 +78,19 @@ func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...b
 		if !since.IsZero() {
 			since = since.Add(-72 * time.Hour).Truncate(time.Second)
 		}
-		s.nexovccProgress("更新近期账户流水与汇总", 0, len(cards)+1)
-		fresh, e := c.ReadAccountFinance(ctx, since)
+		s.nexovccProgress("更新近期充值记录与每日汇总", 0, len(cards)+1)
+		fresh, e := c.ReadAccountSummary(ctx, since)
 		if e == nil {
-			f = nexovcc.MergeAccountFinance(f, fresh, since)
+			f = nexovcc.MergeAccountSummary(f, fresh, since)
 			e = s.store.SaveNexovccFinance(f)
 		}
 		if e != nil {
+			if nexovcc.ActualHTTP522(e) {
+				return e
+			}
 			failures = append(failures, e)
 		}
 	}
-	ops, err := s.store.NexovccOperations()
-	if err != nil {
-		return err
-	}
-	cases, err := s.store.NexovccCases()
-	if err != nil {
-		return err
-	}
-	groups, err := s.store.NexovccTradeGroups(f)
-	if err != nil {
-		return err
-	}
-	skipped := 0
 	for i, card := range cards {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -88,24 +99,11 @@ func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...b
 			failures = append(failures, fmt.Errorf("环球接口冷却中，剩余卡片保留缓存"))
 			break
 		}
-		pending, zeroClosed := false, false
-		for _, op := range ops {
-			if op.Serial != card.Serial {
-				continue
-			}
-			pending = pending || !op.Terminal()
-			zeroClosed = zeroClosed || nexovccClosing(op.Action) && op.Status == "succeeded" && op.BeforeBalance == "0.00"
+		label := "同步正常卡交易明细"
+		if cardID != "" {
+			label = "同步本卡交易明细"
 		}
-		for _, row := range cases {
-			if row.CardID == card.ID && row.PaymentStatus != "failed" && (row.PaymentStatus != "success" || row.Match == nil || !row.Match.Group.Valid || !row.Match.Group.FullyReturned) {
-				pending = true
-			}
-		}
-		if !pending && nexovcc.ClosedFinanceComplete(card, f, groups, zeroClosed) {
-			skipped++
-			continue
-		}
-		s.nexovccProgress(fmt.Sprintf("更新卡片流水 %d/%d · 尾号 %s", i+1, len(cards), card.Last4), i+1, len(cards)+1)
+		s.nexovccProgress(fmt.Sprintf("%s %d/%d · 尾号 %s", label, i+1, len(cards), card.Last4), i, len(cards))
 		number, e := s.nexovccFinanceNumberLocked(card)
 		if e == nil {
 			var fresh nexovcc.Finance
@@ -119,6 +117,9 @@ func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...b
 			}
 		}
 		if e != nil {
+			if nexovcc.ActualHTTP522(e) {
+				return fmt.Errorf("尾号 %s：%w", card.Last4, e)
+			}
 			failures = append(failures, fmt.Errorf("尾号 %s：%w", card.Last4, e))
 		}
 	}
@@ -135,7 +136,11 @@ func (s *Server) syncNexovccFinanceLocked(ctx context.Context, forceAccount ...b
 	if err = s.store.SaveNexovccFinance(f); err != nil {
 		return err
 	}
-	s.nexovccProgress(fmt.Sprintf("流水已更新，%d 张已结清销卡使用缓存", skipped), len(cards)+1, len(cards)+1)
+	message := fmt.Sprintf("已同步 %d 张正常卡交易明细，%d 张销卡保留历史数据", len(cards), skipped)
+	if cardID != "" {
+		message = "本卡交易明细已同步"
+	}
+	s.nexovccProgress(message, len(cards), len(cards))
 	return nil
 }
 
@@ -249,7 +254,9 @@ func (s *Server) nexovccTransferConfirmedLocked(ctx context.Context, op *nexovcc
 	if op.StepAt.After(freshAfter) {
 		freshAfter = op.StepAt
 	}
-	if f.FundsSyncedAt(op.Serial).Before(freshAfter) {
+	// Deleted cards are retired from routine finance scans. An unfinished close
+	// still polls its own receipt until the principal has actually returned.
+	if f.FundsSyncedAt(op.Serial).Before(freshAfter) || (kind == 3002 && !s.nexovccTransferEvidenceLocked(op, kind, expected, f)) {
 		if s.syncNexovccCardFundsLocked(ctx, op.CardID) != nil {
 			return false
 		}

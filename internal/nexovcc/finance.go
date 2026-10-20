@@ -195,6 +195,7 @@ func (c *Client) FinancePages(ctx context.Context, path string, body map[string]
 type financeQuery struct {
 	cardNumber, serial string
 	accountOnly        bool
+	summaryOnly        bool
 	since              time.Time
 }
 
@@ -234,6 +235,12 @@ func ValidFinanceCardNumber(number string) bool {
 
 func (c *Client) ReadAccountFinance(ctx context.Context, since time.Time) (Finance, error) {
 	return c.readFinance(ctx, financeQuery{accountOnly: true, since: since}, func(string) {})
+}
+
+// Routine refreshes get trades and funds by card. Account-wide reads are
+// restricted to recharge records and daily totals, which have no card filter.
+func (c *Client) ReadAccountSummary(ctx context.Context, since time.Time) (Finance, error) {
+	return c.readFinance(ctx, financeQuery{accountOnly: true, summaryOnly: true, since: since}, func(string) {})
 }
 
 func (c *Client) readFinance(ctx context.Context, q financeQuery, progress func(string)) (Finance, error) {
@@ -303,44 +310,46 @@ func (c *Client) readFinance(ctx context.Context, q financeQuery, progress func(
 			f.Trades = append(f.Trades, r)
 		}
 	}
-	progress("分页同步实际费用与资金流水")
-	fundsBody := map[string]any{"time_min": body["time_min"], "time_max": body["time_max"], "balance_type_id": 2, "is_default": 0}
-	if q.cardNumber != "" {
-		fundsBody["card_no"] = q.cardNumber
-	}
-	rows, e = c.FinancePages(ctx, "/api/findLogWebFunds", fundsBody)
-	if e != nil {
-		return f, e
-	}
-	ids = map[string]bool{}
-	occurrences := map[string]int{}
-	for _, m := range rows {
-		r := Fund{Link: text(m["link_log_no"]), Serial: text(m["serial_no"]), Last4: last4(m["card_no"]), Currency: Currency(m["money_id"])}
-		if r.Kind, e = strconv.Atoi(text(m["change_type_id"])); e != nil {
-			return f, fmt.Errorf("环球资金变动类型无效")
+	if !q.summaryOnly {
+		progress("分页同步实际费用与资金流水")
+		fundsBody := map[string]any{"time_min": body["time_min"], "time_max": body["time_max"], "balance_type_id": 2, "is_default": 0}
+		if q.cardNumber != "" {
+			fundsBody["card_no"] = q.cardNumber
 		}
-		if r.Amount, e = moneyField(m, "amount", true); e != nil {
+		rows, e = c.FinancePages(ctx, "/api/findLogWebFunds", fundsBody)
+		if e != nil {
 			return f, e
 		}
-		if r.Balance, e = moneyField(m, "after_balance", true); e != nil {
-			return f, e
+		ids = map[string]bool{}
+		occurrences := map[string]int{}
+		for _, m := range rows {
+			r := Fund{Link: text(m["link_log_no"]), Serial: text(m["serial_no"]), Last4: last4(m["card_no"]), Currency: Currency(m["money_id"])}
+			if r.Kind, e = strconv.Atoi(text(m["change_type_id"])); e != nil {
+				return f, fmt.Errorf("环球资金变动类型无效")
+			}
+			if r.Amount, e = moneyField(m, "amount", true); e != nil {
+				return f, e
+			}
+			if r.Balance, e = moneyField(m, "after_balance", true); e != nil {
+				return f, e
+			}
+			if r.At, e = FinanceTime(m["created_at"]); e != nil {
+				return f, e
+			}
+			if !q.since.IsZero() && r.At.Before(q.since) {
+				return f, fmt.Errorf("财务明细返回了时间范围之外的数据，已保留原流水")
+			}
+			// The observed funds endpoint has no primary ID. Preserve identical rows
+			// within each complete card/window snapshot. The ID stays stable across scopes.
+			raw, _ := json.Marshal(r)
+			key := fmt.Sprintf("%x", sha256.Sum256(raw))
+			occurrences[key]++
+			r.ID = fmt.Sprintf("%s-%d", key, occurrences[key])
+			if q.serial != "" && r.Serial != q.serial {
+				return f, fmt.Errorf("财务明细接口返回了其他卡片，已保留原流水")
+			}
+			f.Funds = append(f.Funds, r)
 		}
-		if r.At, e = FinanceTime(m["created_at"]); e != nil {
-			return f, e
-		}
-		if !q.since.IsZero() && r.At.Before(q.since) {
-			return f, fmt.Errorf("财务明细返回了时间范围之外的数据，已保留原流水")
-		}
-		// The observed funds endpoint has no primary ID. Preserve identical rows
-		// within each complete card/window snapshot. The ID stays stable across scopes.
-		raw, _ := json.Marshal(r)
-		key := fmt.Sprintf("%x", sha256.Sum256(raw))
-		occurrences[key]++
-		r.ID = fmt.Sprintf("%s-%d", key, occurrences[key])
-		if q.serial != "" && r.Serial != q.serial {
-			return f, fmt.Errorf("财务明细接口返回了其他卡片，已保留原流水")
-		}
-		f.Funds = append(f.Funds, r)
 	}
 	if q.cardNumber == "" {
 		progress("同步平台每日汇总")

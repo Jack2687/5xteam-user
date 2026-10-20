@@ -63,6 +63,9 @@ type Client struct {
 	backoffFailures int
 	retryCode       int
 	wait            func(context.Context, time.Duration) error
+	http522Retries  int
+	http522Interval time.Duration
+	retryProgress   func(string)
 }
 
 func New(c Credentials, transport Transport) *Client {
@@ -201,6 +204,35 @@ func (c *Client) safe(s string) string {
 	return s
 }
 func (c *Client) call(ctx context.Context, path string, body map[string]any) (any, error) {
+	value, err := c.callOnce(ctx, path, body)
+	if !retryableRead(path) || no522Retries(ctx) {
+		return value, err
+	}
+	for attempt := 1; ActualHTTP522(err) && attempt <= c.http522Retries; attempt++ {
+		if c.retryProgress != nil {
+			c.retryProgress(fmt.Sprintf("HTTP 522 · %.0f 秒后重试 %d/%d", c.http522Interval.Seconds(), attempt, c.http522Retries))
+		}
+		if waitErr := c.wait(ctx, c.http522Interval); waitErr != nil {
+			return nil, waitErr
+		}
+		// The configured retry wait replaces local pacing/backoff for this
+		// attempt only. It does not mark later automatic work as manual.
+		value, err = c.callOnce(WithImmediateRequests(ctx), path, body)
+		if err == nil && c.retryCode == 522 {
+			c.retryAt, c.retryCode, c.backoffFailures = time.Time{}, 0, 0
+		}
+	}
+	if ActualHTTP522(err) && c.http522Retries > 0 {
+		var remote *Error
+		errors.As(err, &remote)
+		copy := *remote
+		copy.Message = fmt.Sprintf("HTTP 522，重试 %d 次后仍失败，已停止本次请求", c.http522Retries)
+		err = &copy
+	}
+	return value, err
+}
+
+func (c *Client) callOnce(ctx context.Context, path string, body map[string]any) (any, error) {
 	if err := c.coolingDown(); err != nil && !ImmediateRequests(ctx) {
 		return nil, err
 	}

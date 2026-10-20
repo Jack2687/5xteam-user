@@ -108,7 +108,7 @@ func TestNexovccOpeningCapacityUsesOnlyLocalCards(t *testing.T) {
 	}
 }
 
-func TestNexovccSettledDeletedCardsStopAndUnresolvedCardsContinue(t *testing.T) {
+func TestNexovccRoutineFinanceSkipsAllDeletedHistory(t *testing.T) {
 	s, _ := nexFixtureServer(t)
 	now := time.Now()
 	closed, err := s.store.SaveNexovccCard(nexovcc.Card{Serial: "closed", Status: "4"}, nil)
@@ -116,6 +116,10 @@ func TestNexovccSettledDeletedCardsStopAndUnresolvedCardsContinue(t *testing.T) 
 		t.Fatal(err)
 	}
 	pending, err := s.store.SaveNexovccCard(nexovcc.Card{Serial: "pending", Status: "4"}, &nexovcc.PrivateCard{Number: "4242424242424242", CVV: "123", Month: 12, Year: 2099})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.store.SaveNexovccCard(nexovcc.Card{Serial: "live", Status: "1"}, &nexovcc.PrivateCard{Number: "5555555555554444", CVV: "123", Month: 12, Year: 2099})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +135,11 @@ func TestNexovccSettledDeletedCardsStopAndUnresolvedCardsContinue(t *testing.T) 
 	calls := 0
 	s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
 		if strings.Contains(r.Path, "findLog") {
-			if r.Body["card_no"] != "4242424242424242" || (r.Path != "/api/findLogCardTrades" && r.Path != "/api/findLogWebFunds") {
+			if r.Body["card_no"] != "5555555555554444" || (r.Path != "/api/findLogCardTrades" && r.Path != "/api/findLogWebFunds") {
 				t.Fatalf("queried closed card or account history: %s", r.Path)
+			}
+			if s.nexovcc.job.Total != 1 || !strings.Contains(s.nexovcc.job.Message, "1/1") {
+				t.Fatal("progress includes historical cards", s.nexovcc.job)
 			}
 			calls++
 		}
@@ -147,7 +154,7 @@ func TestNexovccSettledDeletedCardsStopAndUnresolvedCardsContinue(t *testing.T) 
 	if err = s.store.NexovccCached("finance", &saved); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 4 || len(saved.Funds) != 2 || saved.Funds[0].Serial != closed.Serial {
+	if calls != 4 || len(saved.Funds) != 3 || saved.Funds[0].Serial != closed.Serial || !saved.CardAt[pending.Serial].Equal(now) {
 		t.Fatal("closed history was re-read or erased", calls, saved)
 	}
 }
@@ -238,7 +245,7 @@ func TestNexovccAccountLedgerUsesIncrementalClockAndManualRefresh(t *testing.T) 
 	s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
 		if strings.Contains(r.Path, "findLog") {
 			calls++
-			if r.Path == "/api/findLogCardTrades" {
+			if r.Path == "/api/findLogCardTrades" || r.Path == "/api/findLogWebFunds" {
 				t.Fatal("account refresh requested all card payments")
 			}
 			if r.Path != "/api/findLogReportCardDay" && (r.Body["time_min"] == nil || r.Body["time_min"] == "2020-01-01 00:00:00") {
@@ -250,7 +257,7 @@ func TestNexovccAccountLedgerUsesIncrementalClockAndManualRefresh(t *testing.T) 
 	if err := s.syncNexovccFinanceLocked(context.Background()); err != nil || calls != 0 {
 		t.Fatal("automatic refresh ignored account cache", err, calls)
 	}
-	if err := s.syncNexovccFinanceLocked(context.Background(), true); err != nil || calls != 3 {
+	if err := s.syncNexovccFinanceLocked(context.Background(), true); err != nil || calls != 2 {
 		t.Fatal("manual refresh did not update account window", err, calls)
 	}
 	var saved nexovcc.Finance

@@ -169,7 +169,7 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 	_, err = client.Do(ctx, "/api/card/"+path, body)
 	op.StepAt = time.Now()
 	if err != nil {
-		return s.nexovccActionError(op, err)
+		return s.nexovccActionError(ctx, op, err)
 	}
 	op.Status, op.Error = "processing", "卡台已受理，正在同步结果"
 	if in.Action == "freeze" || in.Action == "unfreeze" {
@@ -190,12 +190,18 @@ func nexovccActionName(action string) string {
 	return map[string]string{"deposit": "充值", "withdraw": "提现", "withdraw_all": "提现留 1U", "freeze": "冻结", "unfreeze": "解冻", "cancel": "销卡", "withdraw_cancel": "提现留 1U 并销卡", "remark": "修改备注"}[action]
 }
 
-func (s *Server) nexovccActionError(op nexovcc.Operation, err error) (nexovcc.Operation, error) {
+func (s *Server) nexovccActionError(ctx context.Context, op nexovcc.Operation, err error) (nexovcc.Operation, error) {
 	op.Status, op.Error = "unknown", err.Error()
 	if !nexovcc.IsUnknown(err) {
 		op.Status = "failed"
 	}
-	return op, s.store.SaveNexovccOperation(op)
+	if saveErr := s.store.SaveNexovccOperation(op); saveErr != nil {
+		return op, saveErr
+	}
+	if nexovcc.ActualHTTP522(err) {
+		return s.recoverNexovcc522Locked(ctx, op)
+	}
+	return op, nil
 }
 
 func (s *Server) nexovccGap(ctx context.Context, after time.Time, message string) error {
@@ -246,7 +252,7 @@ func (s *Server) advanceNexovccCloseLocked(ctx context.Context, op nexovcc.Opera
 	if op.Step == "ready" && op.Action == "withdraw_cancel" && op.WithdrawAmount != "0.00" {
 		s.nexovccProgress("1/3 正在提现，保留 1 USD", 0, 3)
 		if err = send("withdraw_submitting", "/api/card/userCardWithdraw", map[string]any{"serial_no": op.Serial, "amount": op.WithdrawAmount, "money_id": 3}); err != nil {
-			return s.nexovccActionError(op, err)
+			return s.nexovccActionError(ctx, op, err)
 		}
 		op.Step, op.StepAt, op.Status, op.Error = "withdraw_waiting", time.Now(), "processing", "提现已受理，正在核实到账"
 		if err = s.store.SaveNexovccOperation(op); err != nil {
@@ -311,7 +317,7 @@ func (s *Server) advanceNexovccCloseLocked(ctx context.Context, op nexovcc.Opera
 		} else {
 			s.nexovccProgress("2/3 正在冻结卡片", 1, 3)
 			if err = send("freeze_submitting", "/api/card/lockUserCard", map[string]any{"serial_no": op.Serial}); err != nil {
-				return s.nexovccActionError(op, err)
+				return s.nexovccActionError(ctx, op, err)
 			}
 			op.FrozenAt = time.Now()
 		}
@@ -326,7 +332,7 @@ func (s *Server) advanceNexovccCloseLocked(ctx context.Context, op nexovcc.Opera
 		}
 		s.nexovccProgress("3/3 正在销卡", 2, 3)
 		if err = send("cancel_submitting", "/api/card/deleteUserCard", map[string]any{"serial_no": op.Serial}); err != nil {
-			return s.nexovccActionError(op, err)
+			return s.nexovccActionError(ctx, op, err)
 		}
 		op.Step, op.StepAt, op.Status, op.Error = "cancel_waiting", time.Now(), "processing", "销卡已受理，正在核实剩余余额退回"
 		if err = s.store.SaveNexovccOperation(op); err != nil {

@@ -10,7 +10,10 @@ import (
 
 func TestNexovccIncompleteFinancePreservesSnapshot(t *testing.T) {
 	s, _ := nexFixtureServer(t)
-	previous := nexovcc.Finance{At: time.Now().Add(-time.Hour), Funds: []nexovcc.Fund{{ID: "prior-record", Currency: "USD", Kind: 3003, Amount: "-0.50"}}}
+	if _, err := s.store.SaveNexovccCard(nexovcc.Card{Serial: "live", Status: "1"}, &nexovcc.PrivateCard{Number: "4242424242424242", CVV: "123", Month: 12, Year: 2099}); err != nil {
+		t.Fatal(err)
+	}
+	previous := nexovcc.Finance{At: time.Now().Add(-time.Hour), AccountAt: time.Now(), Funds: []nexovcc.Fund{{ID: "prior-record", Currency: "USD", Kind: 3003, Amount: "-0.50"}}}
 	if err := s.store.SaveNexovccFinance(previous); err != nil {
 		t.Fatal(err)
 	}

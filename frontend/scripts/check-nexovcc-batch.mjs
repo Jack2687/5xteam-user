@@ -84,3 +84,37 @@ console.log('Passed: single/batch actions, server-side live balance, immediate p
  assert.equal(calls.filter(r=>r.url==='/api/nexovcc/job').length,1,'manual progress not polled')
  console.log('Passed: disabled Global skips automatic requests; manual query and progress remain available')
 }
+
+for (const pageAutoRefresh of [true, false]) {
+ const calls=[],mounts=[]
+ const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,localStorage:{getItem:()=>null},
+  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted:fn=>mounts.push(fn),onBeforeUnmount(){},clearTimeout(){},setTimeout(){},formatTime:v=>v,
+  async api(url,options={}){
+   calls.push({url,options})
+   if(url==='/api/nexovcc/settings')return {enabled:true,page_auto_refresh:pageAutoRefresh,templates:[]}
+   if(url==='/api/nexovcc/dashboard')return {cards:[{card:{id:'one',serial_no:'serial-one'}}],cases:[],operations:[],products:[],balance:{},groups:[],finance:{}}
+   if(url==='/api/nexovcc/job')return {id:'job',status:'completed'}
+   if(url==='/api/nexovcc/run')return {id:'job',status:'completed'}
+   throw Error(url)
+  }
+ })
+ vm.runInContext(code+';globalThis.view={perform,syncCardTransactions,watchUpdates};',context)
+ for(const fn of mounts)await fn()
+ let runs=calls.filter(r=>r.url==='/api/nexovcc/run')
+ assert.equal(runs.length,pageAutoRefresh?1:0)
+ if(pageAutoRefresh)assert.equal(runs[0].options.body.automatic_refresh,true)
+ await context.view.watchUpdates()
+ assert.equal(calls.filter(r=>r.url==='/api/nexovcc/run').length,runs.length,'local progress polling triggered upstream refresh')
+ await context.view.perform({action:'sync'})
+ runs=calls.filter(r=>r.url==='/api/nexovcc/run')
+ assert.equal(runs.at(-1).options.body.action,'sync')
+ assert.equal(runs.at(-1).options.body.automatic_refresh,undefined)
+ await context.view.syncCardTransactions('serial-one')
+ runs=calls.filter(r=>r.url==='/api/nexovcc/run')
+ assert.equal(runs.at(-1).options.body.action,'card_finance')
+ assert.equal(runs.at(-1).options.body.card_id,'one')
+ const before=runs.length
+ await context.view.syncCardTransactions('missing')
+ assert.equal(calls.filter(r=>r.url==='/api/nexovcc/run').length,before)
+}
+console.log('Passed: page refresh opt-out, manual full refresh, exact-card transaction refresh, invalid card does not broaden scope')

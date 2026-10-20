@@ -145,3 +145,13 @@ func TestReceiptReaderOnlyQueriesOneCardsFunds(t *testing.T) {
 		t.Fatal("receipt refresh changed payment history/freshness", merged)
 	}
 }
+
+func TestAccountSummaryPreservesRecentAndClosedCardEvidence(t *testing.T) {
+	now := time.Now()
+	old := Finance{Funds: []Fund{{ID: "recent", Serial: "deleted", At: now}, {ID: "old", At: now.Add(-7 * 24 * time.Hour)}}, Trades: []Trade{{ID: "payment", Serial: "deleted"}}, Recharges: []Recharge{{ID: "old-recharge"}}}
+	fresh := Finance{At: now, Recharges: []Recharge{{ID: "new-recharge"}}}
+	out := MergeAccountSummary(old, fresh, now.Add(-72*time.Hour))
+	if !reflect.DeepEqual(out.Funds, old.Funds) || !reflect.DeepEqual(out.Trades, old.Trades) || len(out.Recharges) != 2 || !out.AccountAt.Equal(now) {
+		t.Fatal("summary erased ledger evidence", out)
+	}
+}

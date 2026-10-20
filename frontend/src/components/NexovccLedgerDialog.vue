@@ -1,13 +1,13 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X, RefreshCw } from 'lucide-vue-next'
 import { formatTime } from '../utils'
 import { api } from '../api'
 import { fundNames,tradeStates,feeKinds,inDateRange,ledgerFunds } from '../nexovcc-finance'
 import Pagination from './Pagination.vue'
 import NexovccTradeReview from './NexovccTradeReview.vue'
-const props=defineProps({data:{type:Object,required:true},options:{type:Object,required:true},pageSize:{type:Number,default:10}})
-const emit=defineEmits(['close','updated'])
+const props=defineProps({data:{type:Object,required:true},options:{type:Object,required:true},pageSize:{type:Number,default:10},syncing:{type:Boolean,default:false},syncMessage:{type:String,default:''},syncFailed:{type:Boolean,default:false}})
+const emit=defineEmits(['close','updated','sync'])
 const saving=ref(''),error=ref(''),message=ref('')
 const groupByTrade=computed(()=>new Map((props.data.groups||[]).flatMap(g=>(g.trade_ids||[]).map(id=>[id,g]))))
 const linkedGroups=computed(()=>new Set((props.data.cases||[]).map(c=>c.match?.group?.id).filter(Boolean)))
@@ -25,6 +25,13 @@ async function togglePurpose(row){
 function close(){if(!saving.value)emit('close')}
 const type=ref(props.options.type||'trades'),kind=ref(props.options.kind||''),state=ref(''),query=ref(''),from=ref(''),to=ref(''),page=ref(1),size=ref(props.pageSize),feesOnly=ref(!!props.options.feesOnly)
 const names={trades:'卡片交易',funds:'资金明细',recharges:'充值记录',days:'平台日汇总',reviews:'交易核实'}
+const lastSynced=computed(()=>{
+ const f=props.data.finance||{},serial=props.options.serial
+ if(!serial)return f.at
+ const at=f.card_at?f.card_at[serial]:f.at
+ const fundsAt=f.funds_at?.[serial]
+ return type.value==='funds'&&fundsAt&&(!at||new Date(fundsAt)>new Date(at))?fundsAt:at
+})
 const filtered=computed(()=>{
  let rows=type.value==='funds'?ledgerFunds(props.data):props.data.finance?.[type.value]||[]
  if(props.options.serial)rows=rows.filter(r=>r.serial_no===props.options.serial)
@@ -45,7 +52,8 @@ watch(()=>props.pageSize,v=>{size.value=v;page.value=1})
 </script>
 <template>
  <Teleport to="body"><div class="modal-backdrop" @click.self="close"><section class="modal ledger" role="dialog" aria-modal="true" aria-label="环球交易与资金明细">
-  <div class="modal-heading"><h2>{{options.serial?'本卡':'环球'}}交易与资金明细</h2><button class="icon-button" aria-label="关闭明细" :disabled="!!saving" @click="close"><X :size="18"/></button></div>
+  <div class="modal-heading"><h2>{{options.serial?'本卡':'环球'}}交易与资金明细</h2><div class="heading-actions"><button v-if="options.serial" class="btn ghost" :disabled="syncing||!!saving" title="仅同步当前卡片的交易与资金明细" @click="emit('sync',options.serial)"><RefreshCw :size="14"/>{{syncing?'同步处理中…':'同步交易明细'}}</button><button class="icon-button" aria-label="关闭明细" :disabled="!!saving" @click="close"><X :size="18"/></button></div></div>
+  <p v-if="syncMessage" :class="syncFailed?'danger-text':'note'" role="status">{{syncMessage}}</p>
   <p v-if="error" class="danger-text" role="alert">{{error}}</p><p v-if="message" class="note" role="status">{{message}}</p>
   <nav><button v-for="(name,key) in names" v-show="!options.serial||!['recharges','days'].includes(key)" :key="key" :class="{selected:type===key}" :disabled="!!saving" @click="type=key">{{name}}</button></nav>
   <p v-if="options.group" class="note">授权 {{options.group.authorization}} · 付款 {{options.group.payment}} USD · 回款 {{options.group.returned}} USD · 差额 {{options.group.difference}} USD</p>
@@ -57,11 +65,11 @@ watch(()=>props.pageSize,v=>{size.value=v;page.value=1})
   <table v-else><thead><tr><th>日期</th><th>充值</th><th>付款 / 撤销 / 退款</th><th>开卡费</th><th>撤销费</th><th>币种</th></tr></thead><tbody><tr v-for="r in visible" :key="r.day+'-'+r.currency"><td>{{r.day}}</td><td>{{r.values.income_day||'0'}}</td><td>{{r.values.consume_day||'0'}} / {{r.values.cancel_day||'0'}} / {{r.values.refund_day||'0'}}</td><td>{{r.values.open_card_day||'0'}}</td><td>{{r.values.un_auth_day||r.values.cancel_fee||'0'}}</td><td>{{r.currency}}</td></tr></tbody></table>
   <div v-if="!visible.length" class="empty">暂无符合条件的流水</div></div>
   <Pagination v-if="type!=='reviews'" :page="page" :page-size="size" :total="filtered.length" @update:page="page=$event" @update:page-size="size=$event;page=1"/>
-  <p v-if="type!=='reviews'" class="note">{{type==='days'?'平台日汇总仅供核对，不重复计入费用。':type==='trades'?'授权和撤销可能各有一条记录；成本按同一授权合并计算，未回款授权不当作成本。':'资金划转不当作成本。余额差额为暂估成本，不是平台新增扣款；流水确认的损耗会抵扣暂估，避免重复。费用取实际明细；充值手续费单独按成功充值总额的 1% 计算。'}} 最近同步 {{at(data.finance?.at)}}</p><p v-if="type==='trades'" class="note">非 Pro 付款不关联 Pro 账号；实际金额、费用及未退款在途仍计入资金核对。</p>
+  <p v-if="type!=='reviews'" class="note">{{type==='days'?'平台日汇总仅供核对，不重复计入费用。':type==='trades'?'授权和撤销可能各有一条记录；成本按同一授权合并计算，未回款授权不当作成本。':'资金划转不当作成本。余额差额为暂估成本，不是平台新增扣款；流水确认的损耗会抵扣暂估，避免重复。费用取实际明细；充值手续费单独按成功充值总额的 1% 计算。'}} 最近同步 {{at(lastSynced)}}</p><p v-if="type==='trades'" class="note">非 Pro 付款不关联 Pro 账号；实际金额、费用及未退款在途仍计入资金核对。</p>
  </section></div></Teleport>
 </template>
 <style scoped>
-.modal-backdrop{z-index:12000}.ledger{box-sizing:border-box;width:min(1200px,96vw);max-height:92vh;overflow:auto}.ledger h2{font-size:18px}nav{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0;border-bottom:1px solid var(--line);padding-bottom:10px}nav button{white-space:nowrap;background:none;border:0;border-radius:7px;color:var(--muted);padding:9px 15px;cursor:pointer}nav .selected{background:var(--green-soft);color:var(--green-strong)}.filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px;font-size:12px}.filters input:not([type=checkbox]),select{background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:9px}.filters input[type=search]{width:245px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px;text-align:left}th,td{padding:14px;border-bottom:1px solid var(--line);vertical-align:top}th{white-space:nowrap;background:var(--bg);color:var(--muted);font-weight:400}td{min-width:110px;max-width:270px;overflow-wrap:anywhere}small{display:block;color:var(--muted);margin-top:7px;font-size:11px}.note{font-size:11px;line-height:1.8;color:var(--muted)}.empty{text-align:center;padding:35px;color:var(--muted)}.negative{color:var(--red)}
+.heading-actions{display:flex;align-items:center;gap:12px}.heading-actions .btn{font-size:12px;padding:7px 10px}.modal-backdrop{z-index:12000}.ledger{box-sizing:border-box;width:min(1200px,96vw);max-height:92vh;overflow:auto}.ledger h2{font-size:18px}nav{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0;border-bottom:1px solid var(--line);padding-bottom:10px}nav button{white-space:nowrap;background:none;border:0;border-radius:7px;color:var(--muted);padding:9px 15px;cursor:pointer}nav .selected{background:var(--green-soft);color:var(--green-strong)}.filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px;font-size:12px}.filters input:not([type=checkbox]),select{background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:9px}.filters input[type=search]{width:245px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px;text-align:left}th,td{padding:14px;border-bottom:1px solid var(--line);vertical-align:top}th{white-space:nowrap;background:var(--bg);color:var(--muted);font-weight:400}td{min-width:110px;max-width:270px;overflow-wrap:anywhere}small{display:block;color:var(--muted);margin-top:7px;font-size:11px}.note{font-size:11px;line-height:1.8;color:var(--muted)}.empty{text-align:center;padding:35px;color:var(--muted)}.negative{color:var(--red)}
 .purpose-cell{min-width:130px}.purpose-tag{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}.purpose-button{border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--green-strong);padding:6px 10px;font-size:12px;white-space:nowrap;cursor:pointer}.purpose-button:disabled{opacity:.55;cursor:wait}.danger-text{color:var(--red);font-size:12px}
 @media(max-width:640px){.ledger{width:96vw;padding:16px}.ledger nav{gap:4px}.ledger nav button{padding:8px 10px}}
 </style>

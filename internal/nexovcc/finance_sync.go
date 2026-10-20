@@ -64,6 +64,13 @@ func MergeAccountFinance(old, fresh Finance, since time.Time) Finance {
 	return out
 }
 
+func MergeAccountSummary(old, fresh Finance, since time.Time) Finance {
+	out := MergeAccountFinance(old, fresh, since)
+	// No fund snapshot was requested; preserve all cached card and account fees.
+	out.Funds = old.Funds
+	return out
+}
+
 func MergeCardFunds(old, fresh Finance, serial string) Finance {
 	out := old
 	out.Funds = []Fund{}

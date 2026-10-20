@@ -83,3 +83,16 @@ pickerProps.disabled=true
 pickerContext.picker.toggle('267',true)
 assert.deepEqual(Array.from(pickerProps.modelValue),['268'])
 console.log('Passed: scheduled withdrawal settings, legacy template, multi-select, drag and keyboard priority, unavailable products')
+
+assert.equal(cfg.page_auto_refresh,true)
+assert.equal(cfg.http_522_retry_seconds,5)
+assert.equal(cfg.http_522_retries,2)
+cfg.page_auto_refresh=false
+cfg.http_522_retry_seconds=11
+cfg.http_522_retries=0
+await save()
+payload=requests.filter(r=>r.url==='/api/nexovcc/settings').at(-1).body
+assert.equal(payload.page_auto_refresh,false)
+assert.equal(payload.http_522_retry_seconds,11)
+assert.equal(payload.http_522_retries,0)
+console.log('Passed: 522 retry and page refresh settings defaults and explicit disabled values')

@@ -94,6 +94,7 @@ func nexFixtureServer(t *testing.T) (*Server, *nexFixture) {
 		}
 	}
 	cfg := nexovcc.Defaults()
+	cfg.HTTP522Retries = 0 // Retry policy is covered separately; fixtures never sleep.
 	cfg.Enabled = true
 	cfg.Templates = []nexovcc.Template{{ID: "template", Name: "fixture", ProductID: "267", Amount: "10.00", FeeBuffer: "1.00"}}
 	if _, e = st.SaveNexovccSettings(cfg, nexovcc.Credentials{Login: "fixture-login", Password: "fixture-password", FundPassword: "fixture-fund"}, false); e != nil {
