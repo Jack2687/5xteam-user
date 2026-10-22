@@ -15,6 +15,11 @@ assert.equal(restockTaskProgress(old).eta,null)
 assert.equal(restockTaskProgress(old).stage,'推送后核验完成','historical quota stage must not appear as current work')
 assert.equal(restockTaskProgress(pending).started,null,'reservation time is not execution time')
 assert.equal(restockTaskProgress(failure).success,null,'updated time is not success time')
+const cardWait={...pending,status:'waiting_card',stage:'card',card_id:'original-card',message:'原卡资料完成后自动续跑'}
+assert.equal(restockTaskProgress(cardWait).status,'等待原卡 · 自动续跑')
+assert.equal(restockTaskProgress(cardWait).stage,'卡片资料同步')
+assert.equal(restockTaskProgress(cardWait).success,null)
+assert.equal(restockTaskRows([cardWait],'active').length,1,'card import still occupies the original batch')
 const legacy={...old,ready_at:null,stages:{'push:completed':old.stages['push:completed']},stage:'merge'}
 assert.equal(restockTaskProgress(legacy).status,'已交付')
 assert.equal(restockTaskProgress(legacy).success,null,'do not invent readiness from creation, updates, or push time')
@@ -24,3 +29,5 @@ assert.deepEqual(restockTaskTimeline(old).map(t=>t.label),['登录 · 开始执�
 assert.equal(restockTaskTimeline({stages:{login:'0001-01-01T00:00:00Z',push:'invalid'}}).length,0)
 assert.deepEqual(input,original,'presenting history must not mutate task state or scheduling inputs')
 console.log('Passed: restock task sorting/filtering, execution and verified-success times, historical stages and missing milestones')
+
+assert.equal(restockTaskProgress({status:'cancelled',stopped_at:'2026-10-21T06:00:00Z',submitted_at:'2026-10-21T05:00:00Z'}).status,'已手动停止')

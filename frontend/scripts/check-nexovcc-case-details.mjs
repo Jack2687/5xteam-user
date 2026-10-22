@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import './check-nexovcc-refund-descriptors.mjs'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { ref, reactive, computed, watch } from 'vue'
 import * as nexovcc from '../src/nexovcc.js'
 import * as financeHelpers from '../src/nexovcc-finance.js'
 import { caseDetails, sortReturnCases } from '../src/nexovcc-case-details.js'
+import { sortClosedCards } from '../src/nexovcc-card-list.js'
 
 const raw=JSON.parse(readFileSync(new URL('../../internal/nexovcc/testdata/finance.json',import.meta.url),'utf8'))
 const finance={at:new Date().toISOString(),
@@ -24,6 +26,24 @@ assert.equal(d.profit,1430)
 assert.deepEqual(d.merchantPaid,[{currency:'PHP',amount:579464}])
 assert.deepEqual(d.merchantReturned,[{currency:'PHP',amount:579464}])
 assert.equal(d.manualUnconfirmed,false)
+const completedRefundFinance={at:new Date().toISOString(),funds:[
+ {id:'payment-fee',serial_no:'card-4276',link:'payment-4276',kind:2007,currency:'USD',amount:'-2.42'},
+ {id:'refund-fee',serial_no:'card-4276',link:'refund-4276',kind:8888,currency:'USD',amount:'-4.74'},
+],trades:[
+ {id:'payment-4276',serial_no:'card-4276',status:'COMPLETE',amount:'141.82',currency:'USD',merchant_amount:'8919.64',merchant_currency:'PHP',at:'2026-10-22T11:42:00+08:00'},
+ {id:'refund-4276',serial_no:'card-4276',status:'REFUNDED',amount:'141.23',currency:'USD',merchant_amount:'8898.46',merchant_currency:'PHP',at:'2026-10-22T12:24:00+08:00'},
+]}
+const completedRefundRow={id:'refund-4276-order',state:'returned',payment_status:'success',revenue_r:20,match:{group:{serial_no:'card-4276',valid:true,fully_returned:true,payment:'141.82',returned:'141.23',difference:'0.59',fees:'7.16',cost:'7.75',returned_at:'2026-10-22T12:24:00+08:00',trade_ids:['payment-4276','refund-4276']}}}
+const completedRefund=caseDetails(completedRefundRow,completedRefundFinance)
+assert.equal(completedRefund.transaction,242)
+assert.equal(completedRefund.refundFee,474)
+assert.equal(completedRefund.cardLoss,59)
+assert.equal(completedRefund.pending,0)
+assert.equal(completedRefund.cost,775)
+assert.equal(completedRefund.closed,true)
+assert.equal(completedRefund.refundCompleted,true)
+assert.deepEqual(completedRefund.merchantPaid,[{currency:'PHP',amount:891964}])
+assert.deepEqual(completedRefund.merchantReturned,[{currency:'PHP',amount:889846}])
 const service=structuredClone(finance)
 service.funds.push({kind:3004,currency:'USD',serial_no:'fixture-card-1',link:'fixture-log-1',amount:'-0.20'})
 assert.deepEqual(caseDetails(row,service),d) // card service is not a per-order fee
@@ -73,8 +93,8 @@ assert.equal(caseDetails(withAux,extraFee).cost,185)
 assert.deepEqual(caseDetails(withAux,extraFee).merchantPaid,caseDetails(row,finance).merchantPaid)
 
 const code=readFileSync(new URL('../src/components/NexovccManagementView.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
-const context=vm.createContext({...nexovcc,...financeHelpers,sortReturnCases,ref,reactive,computed,watch,defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},formatTime:v=>v})
-vm.runInContext(code+';globalThis.view={data,tab,returnCategory,returnFilter,filtered,inspect,detailCases,caseTrades,ledger};',context)
+const context=vm.createContext({...nexovcc,...financeHelpers,sortReturnCases,sortClosedCards,ref,reactive,computed,watch,defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},formatTime:v=>v})
+vm.runInContext(code+';globalThis.view={data,tab,filter,returnCategory,returnFilter,filtered,inspect,detailCases,caseTrades,ledger};',context)
 const view=context.view
 view.data.cards=[{card:{id:'card1',serial_no:'fixture-card-1'}}]
 view.data.cases=[row,{id:'unopened',state:'unopened',email:'failed@example.com',payment_status:'failed',card_id:'card1',created_at:'2026-10-19T12:00:00Z'}, {...waiting,id:'waiting',requested_at:'2026-10-19T13:00:00Z'}]
@@ -91,6 +111,15 @@ assert.equal(view.ledger.value.kind,'2003')
 view.caseTrades({row,options:{type:'funds',kind:'3003',scope:'card'}})
 assert.equal(view.ledger.value.group,null)
 assert.equal(view.ledger.value.serial,'fixture-card-1')
+const closedCards=[
+ {card:{id:'closed-old',status:'4',created_at:'2026-10-01T00:00:00Z',synced_at:'2026-10-22T10:00:00Z'}},
+ {card:{id:'closed-new',status:'4',closed_at:'2026-10-22T12:00:00Z',created_at:'2026-10-02T00:00:00Z'}},
+ {card:{id:'closed-operation',status:'4',created_at:'2026-10-03T00:00:00Z'}},
+]
+const closedOperation={card_id:'closed-operation',action:'withdraw_cancel',status:'succeeded',updated_at:'2026-10-22T13:00:00Z'}
+assert.deepEqual(sortClosedCards(closedCards,[closedOperation]).map(r=>r.card.id),['closed-operation','closed-new','closed-old'])
+view.data.cards=closedCards;view.data.operations=[closedOperation];view.tab.value='cards';view.filter.value='closed'
+assert.deepEqual([...view.filtered.value].map(r=>r.card.id),['closed-operation','closed-new','closed-old'])
 const ledgerCode=readFileSync(new URL('../src/components/NexovccLedgerDialog.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const ledgerData={finance:{funds:[{id:'month',kind:3004,serial_no:'fixture-card-1'},{id:'year',kind:3005,serial_no:'fixture-card-1'},{id:'other',kind:3004,serial_no:'other-card'},{id:'open',kind:3003,serial_no:'fixture-card-1'}]}}
 const ledgerContext=vm.createContext({...financeHelpers,ref,computed,watch,defineProps:()=>({data:ledgerData,options:{type:'funds',kind:'card-service',serial:'fixture-card-1'},pageSize:10}),defineEmits:()=>()=>{},formatTime:v=>v})

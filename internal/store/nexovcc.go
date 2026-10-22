@@ -19,6 +19,7 @@ func (s *Store) initializeNexovcc() error {
  CREATE TABLE IF NOT EXISTS nexovcc_cache(kind TEXT PRIMARY KEY,profile TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_operations(id TEXT PRIMARY KEY,scope TEXT NOT NULL,profile TEXT NOT NULL,status TEXT NOT NULL);
  CREATE UNIQUE INDEX IF NOT EXISTS nexovcc_active_scope ON nexovcc_operations(scope) WHERE status NOT IN ('succeeded','failed');
+ CREATE UNIQUE INDEX IF NOT EXISTS nexovcc_restock_open ON nexovcc_operations(json_extract(profile,'$.restock_task_id')) WHERE scope='open' AND coalesce(json_extract(profile,'$.restock_task_id'),'')<>'';
  CREATE TABLE IF NOT EXISTS nexovcc_case_states(order_id TEXT PRIMARY KEY,state TEXT NOT NULL,reason TEXT NOT NULL,updated_at TEXT NOT NULL,revision INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_case_removals(order_id TEXT PRIMARY KEY,revision INTEGER NOT NULL,removed_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS nexovcc_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,profile TEXT NOT NULL);
@@ -39,7 +40,7 @@ func (s *Store) nexovccSettingsLocked() (nexovcc.Settings, nexovcc.Credentials, 
 	var raw, sealed string
 	e := s.db.QueryRow(`SELECT profile,secret FROM nexovcc_settings WHERE id=1`).Scan(&raw, &sealed)
 	if errors.Is(e, sql.ErrNoRows) {
-		return cfg, cred, nil
+		return cfg.WithSyncDefaults(), cred, nil
 	}
 	if e != nil {
 		return cfg, cred, e
@@ -47,6 +48,7 @@ func (s *Store) nexovccSettingsLocked() (nexovcc.Settings, nexovcc.Credentials, 
 	if e = json.Unmarshal([]byte(raw), &cfg); e != nil {
 		return cfg, cred, e
 	}
+	cfg = cfg.WithSyncDefaults()
 	for i := range cfg.Templates {
 		cfg.Templates[i].ProductIDs = cfg.Templates[i].OrderedProductIDs()
 	}
@@ -197,6 +199,7 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 			return c, e
 		}
 		c.Imported = old.Imported
+		c.NormalPending, c.NormalPendingAt = old.NormalPending, old.NormalPendingAt
 		c.Control, c.ControlAt = old.Control, old.ControlAt
 		// A transition back to ACTIVE after observing a non-active snapshot
 		// also recognizes an unfreeze performed on the supplier's website.
@@ -217,6 +220,27 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 		}
 		if c.Balance == "" {
 			c.Balance, c.BalanceAt = old.Balance, old.BalanceAt
+		}
+		if c.Status == "4" && old.Status == "4" {
+			c.ClosedAt = old.ClosedAt
+		}
+	}
+	if c.Status == "4" {
+		c.NormalPending, c.NormalPendingAt = false, nil
+		if c.ClosedAt.IsZero() {
+			var closedAt string
+			if e = tx.QueryRow(`SELECT coalesce(max(json_extract(profile,'$.updated_at')),'') FROM nexovcc_operations WHERE scope=? AND json_extract(profile,'$.action') IN ('cancel','withdraw_cancel') AND status='succeeded'`, "card:"+c.ID).Scan(&closedAt); e != nil {
+				return c, e
+			}
+			if closedAt != "" {
+				c.ClosedAt, _ = time.Parse(time.RFC3339Nano, closedAt)
+			}
+			if c.ClosedAt.IsZero() {
+				c.ClosedAt = c.SyncedAt
+				if c.ClosedAt.IsZero() {
+					c.ClosedAt = time.Now()
+				}
+			}
 		}
 	}
 	// An import time is not falsely presented as the supplier's opening time.
@@ -407,6 +431,9 @@ type NexovccOpenAdmission struct {
 }
 
 func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...NexovccOpenAdmission) error {
+	if op.RestockTaskID != "" && (op.Action != "open" || !op.Automatic || len(admission) == 0 || admission[0].RestockID != op.RestockTaskID) {
+		return fmt.Errorf("环球开卡与原补货任务不匹配")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, e := s.db.Begin()
@@ -433,6 +460,9 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...Nexovcc
 		}
 		if c.Status == "4" {
 			return fmt.Errorf("环球卡片已销卡，不能重复操作")
+		}
+		if op.AutoWithdraw && c.NormalPending {
+			return fmt.Errorf("正常待定卡不参与自动提现")
 		}
 		n, _, e := nexovccOccupancy(tx, key.String, "")
 		if e != nil {

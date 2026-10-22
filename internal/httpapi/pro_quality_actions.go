@@ -163,11 +163,11 @@ func (s *Server) applyProQuality(ctx context.Context, initial model.MailAccountP
 			return
 		}
 		request := &proQualityMergeRequest{Revision: q.Revision, Identity: state.Identity}
-		if _, err = s.startProMergeJobWithQuality(p.Email, lock.Unlock, request); err == nil {
+		if _, err = s.startProDispositionJob(p.Email, lock.Unlock, request); err == nil {
 			handedOff = true
-			message := "降智已确认，跳过额度等待并执行空间合并"
+			message := "降智已确认，跳过额度等待并执行" + c.DispositionLabel()
 			if state.ErrorDegraded {
-				message = state.Reason + "，跳过额度等待并执行空间合并"
+				message = state.Reason + "，跳过额度等待并执行" + c.DispositionLabel()
 			}
 			s.auditProEvent(updated, "quality_action", "pending", "sub2", message, nil)
 		} else {
@@ -296,6 +296,8 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 		}
 		if runErr != nil {
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "failed", runErr.Error()
+		} else if p.DeletionSubmitted() && !p.DeletionAccepted() {
+			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "pending", "删除已提交，等待上游明确确认"
 		} else {
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "completed", ""
 		}
@@ -305,6 +307,18 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 		status, message = "failed", "降智合并失败："+runErr.Error()
 	}
 	if p, _, err := s.store.MailAccountCredential(email); err == nil {
+		if p.ProDeactivation != nil {
+			message = "降智触发的删除请求已受理"
+			if !p.DeletionAccepted() {
+				message = "降智触发的删除结果尚未确认"
+				if runErr == nil {
+					status = "pending"
+				}
+			}
+			if runErr != nil {
+				message = "降智触发的删除流程未完成：" + redactSensitiveText(runErr.Error())
+			}
+		}
 		s.auditProEvent(p, "quality_action", status, "sub2", message, nil)
 	}
 }

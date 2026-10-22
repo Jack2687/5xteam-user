@@ -28,13 +28,17 @@ func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccoun
 }
 
 func (s *Server) startProMergeJobWithQuality(email string, unlock func(), quality *proQualityMergeRequest) (model.MailAccountProfile, error) {
+	return s.startProEndJob(email, unlock, quality, "merge")
+}
+
+func (s *Server) startProEndJob(email string, unlock func(), quality *proQualityMergeRequest, action string) (model.MailAccountProfile, error) {
 	s.proMergeMu.Lock()
 	defer s.proMergeMu.Unlock()
 	if s.proMergeClosed {
 		return model.MailAccountProfile{}, errors.New("服务正在停止，请稍后重试")
 	}
 	if _, exists := s.proMergeJobs[email]; exists {
-		return model.MailAccountProfile{}, errors.New("该账号已在后台执行空间合并")
+		return model.MailAccountProfile{}, errors.New("该账号已在后台执行合并或删除流程")
 	}
 	p, _, err := s.store.MailAccountCredential(email)
 	if err != nil {
@@ -43,18 +47,44 @@ func (s *Server) startProMergeJobWithQuality(email string, unlock func(), qualit
 	if p.ManagementScope != "pro" {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
-	if proTransferNeedsConfirmation(p) {
+	resumeDeletion := action == "manual_deactivate"
+	if resumeDeletion {
+		action = "deactivate"
+	}
+	if action == "automatic" {
+		cfg, _, _, e := s.store.ProSettings()
+		if e != nil {
+			return p, e
+		}
+		action = cfg.Disposition()
+		if p.DeletionSubmitted() {
+			action = "deactivate"
+		}
+	}
+	if action == "deactivate" && p.DeletionConfirmed() && !resumeDeletion {
+		return p, errors.New("删除已确认完成，后续分组调整请手动续跑")
+	}
+	if action == "merge" && proTransferNeedsConfirmation(p) {
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			p.TransferStatus = "unknown"
 			p.ProLastError = errProTransferUncertain.Error()
 		})
 		return p, errProTransferUncertain
 	}
-	p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.ProWorkflowRunning = true; p.ProLastError = "" })
+	p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		p.ProWorkflowRunning, p.ProLastError = true, ""
+		if resumeDeletion {
+			p.ProAuto.StopRequested = false
+			if p.ProMigration != nil {
+				p.ProMigration.Paused = false
+				p.ProMigration.Notice = "已从保存的进度续跑删除账户"
+			}
+		}
+	})
 	if err != nil {
 		return p, err
 	}
-	finishStage := s.beginProManualStage(email, "merge")
+	finishStage := s.beginProManualStage(email, action)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	if quality != nil {
 		ctx = context.WithValue(ctx, proQualityMergeKey{}, quality)
@@ -64,7 +94,11 @@ func (s *Server) startProMergeJobWithQuality(email string, unlock func(), qualit
 	}
 	s.proMergeJobs[email] = cancel
 	s.proMergeWG.Add(1)
-	s.auditProEvent(p, "space_merge", "pending", "", "空间合并已提交后台，关闭或刷新页面不影响执行", nil)
+	label := "空间合并"
+	if action == "deactivate" {
+		label = "删除账户"
+	}
+	s.auditProEvent(p, action, "pending", "", label+"已提交后台，关闭或刷新页面不影响执行", nil)
 	go func() {
 		defer s.proMergeWG.Done()
 		defer cancel()
@@ -83,18 +117,22 @@ func (s *Server) startProMergeJobWithQuality(email string, unlock func(), qualit
 			unlock, runErr = lockProMutex(ctx, value.(*sync.Mutex))
 		}
 		if runErr == nil {
-			_, runErr = s.performProMerge(ctx, email)
+			if action == "deactivate" {
+				_, runErr = s.performProDeactivation(ctx, email)
+			} else {
+				_, runErr = s.performProMerge(ctx, email)
+			}
 		}
 		s.finishProQualityMerge(email, quality, runErr)
 		// Also clear the queued flag if preparation or lock acquisition failed.
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			p.ProWorkflowRunning = false
-			if runErr == nil && p.DailyMergeMatches() {
+			if runErr == nil && p.DailyMergeMatches() && (action != "deactivate" || p.DeletionAccepted()) {
 				p.ProDailyMerge.Completed = true
 			}
 			if runErr != nil {
 				p.ProLastError = runErr.Error()
-			} else if p.ProMigration != nil {
+			} else if p.ProMigration != nil && action == "merge" {
 				p.ProMigration.Paused = false
 				p.ProMigration.Notice = "迁移流程已完成"
 				if p.ProAuto.ID != "" {

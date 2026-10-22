@@ -10,15 +10,15 @@ import (
 	"chatgpt-space-merge/internal/nexovcc"
 )
 
-// One persisted clock is shared by page entry, background monitoring and the
-// capacity workflow. Reloading the browser or restarting Space cannot reset it.
+// Aggregate status and per-category clocks survive page reloads and restarts.
 type nexovccSyncState struct {
-	LastAttempt time.Time `json:"last_attempt_at,omitempty"`
-	LastSuccess time.Time `json:"last_success_at,omitempty"`
-	RetryAfter  time.Time `json:"retry_after,omitempty"`
-	NextRefresh time.Time `json:"next_refresh_at,omitempty"`
-	Failures    int       `json:"failures"`
-	Error       string    `json:"error,omitempty"`
+	Parts       map[string]nexovccSyncPart `json:"parts,omitempty"`
+	LastAttempt time.Time                  `json:"last_attempt_at,omitempty"`
+	LastSuccess time.Time                  `json:"last_success_at,omitempty"`
+	RetryAfter  time.Time                  `json:"retry_after,omitempty"`
+	NextRefresh time.Time                  `json:"next_refresh_at,omitempty"`
+	Failures    int                        `json:"failures"`
+	Error       string                     `json:"error,omitempty"`
 }
 
 func (s *Server) nexovccSyncState(cfg nexovcc.Settings) (nexovccSyncState, error) {
@@ -33,10 +33,16 @@ func (s *Server) nexovccSyncState(cfg nexovcc.Settings) (nexovccSyncState, error
 		}
 		state.LastSuccess = finance.At
 	}
-	interval := max(time.Duration(cfg.PageRefreshSeconds)*time.Second, time.Minute)
-	state.NextRefresh = state.LastSuccess.Add(interval)
-	if state.LastAttempt.After(state.LastSuccess) {
-		state.NextRefresh = state.LastAttempt.Add(interval)
+	parts, err := s.nexovccSyncParts(cfg)
+	if err != nil {
+		return state, err
+	}
+	state.Parts = parts
+	state.NextRefresh = time.Time{}
+	for _, part := range parts {
+		if state.NextRefresh.IsZero() || part.NextRefresh.Before(state.NextRefresh) {
+			state.NextRefresh = part.NextRefresh
+		}
 	}
 	if !state.RetryAfter.IsZero() {
 		state.NextRefresh = state.RetryAfter
@@ -72,6 +78,13 @@ func (s *Server) nexovccSyncWait(cfg nexovcc.Settings, automatic bool) (string, 
 }
 
 func (s *Server) syncNexovccLocked(ctx context.Context, forceAccount ...bool) (err error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer finishOperation()
+	ctx = bound
+
 	cfg, _, err := s.store.NexovccSettings()
 	if err != nil {
 		return err
@@ -81,11 +94,13 @@ func (s *Server) syncNexovccLocked(ctx context.Context, forceAccount ...bool) (e
 		return err
 	}
 	state.LastAttempt = time.Now()
+	state.Parts = nil
 	if err = s.store.NexovccCache("sync_state", state); err != nil {
 		return err
 	}
 	defer func() {
 		state.NextRefresh = time.Time{}
+		state.Parts = nil
 		if errors.Is(err, errNexovccReadYielded) {
 			// A user operation took priority, not an upstream failure. Resume later
 			// using the per-card checkpoints, without increasing the failure counter.

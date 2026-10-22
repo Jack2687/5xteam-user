@@ -19,6 +19,7 @@ func (s *Server) exportProAccounts(w http.ResponseWriter, r *http.Request) {
 		All        bool     `json:"all"`
 		Query      string   `json:"query"`
 		MergeState string   `json:"merge_state"`
+		Format     string   `json:"format"`
 	}
 	if decodeJSON(w, r, &input, 2<<20) != nil {
 		return
@@ -38,6 +39,14 @@ func (s *Server) exportProAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(emails) == 0 || len(emails) > 10000 {
 		writeAPI(w, 400, nil, "请选择 1～10000 个 Pro 账号导出")
+		return
+	}
+	if input.Format == "credentials" {
+		s.exportAccountCredentialsText(w, r, emails, true)
+		return
+	}
+	if input.Format != "" && input.Format != "json" {
+		writeAPI(w, 400, nil, "请选择 JSON 或账号密码 2FA 文本格式")
 		return
 	}
 	settings, _, _, err := s.store.ProSettings()
@@ -153,6 +162,21 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "账号正在执行任务")
 		return
 	}
+	cfg, _, _, cfgErr := s.store.ProSettings()
+	if cfgErr != nil {
+		writeAPI(w, 500, nil, "读取 Pro 配置失败")
+		return
+	}
+	if p.DeletionSubmitted() || cfg.AutoDeleteEnabled && (p.InviteStatus == "completed" || p.AcceptStatus == "completed" || p.TransferStatus == "completed" || p.SpaceMergedOnce) {
+		p, err = s.startProEndJob(email, lock.Unlock, nil, "manual_deactivate")
+		if err != nil {
+			writeAPI(w, 409, nil, err.Error())
+			return
+		}
+		locked = false
+		writeAPI(w, 202, p, "")
+		return
+	}
 	if p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" {
 		if p.ProPostMergeGroupsPending() {
 			p, err = s.startProMergeJob(email, lock.Unlock)
@@ -178,12 +202,14 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 200, p, "")
 		return
 	}
-	p, err = s.importedProTarget(p)
+	if !cfg.AutoDeleteEnabled {
+		p, err = s.importedProTarget(p)
+	}
 	if err != nil {
 		writeAPI(w, 409, nil, err.Error())
 		return
 	}
-	if proTransferNeedsConfirmation(p) {
+	if !cfg.AutoDeleteEnabled && proTransferNeedsConfirmation(p) {
 		writeAPI(w, 409, nil, errProTransferUncertain.Error())
 		return
 	}

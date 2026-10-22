@@ -5,6 +5,25 @@ import (
 	"time"
 )
 
+func TestDeletionStageAnnotationDoesNotMaskNewResults(t *testing.T) {
+	now := time.Now()
+	p := MailAccountProfile{
+		ProDeactivation:   &ProDeactivation{Status: "failed", Error: "old failure", UpdatedAt: now},
+		ProStageOverrides: map[string]ProStageOverride{"deactivate": {Status: "completed", UpdatedAt: now.Add(time.Second)}},
+	}
+	v := p.ProStages()
+	if v.Steps["deactivate"] != "completed" || !v.Manual["deactivate"] || v.Errors["deactivate"] != "" || p.DeletionConfirmed() {
+		t.Fatal("annotation failed or changed deletion facts", v)
+	}
+	p.ProDeactivation.UpdatedAt = now.Add(2 * time.Second)
+	p.ProDeactivation.Error = "new failure"
+	v = p.ProStages()
+	p.ApplyProStageOverrides(&v) // List and dialog apply overrides again after enriching payment data.
+	if v.Steps["deactivate"] != "failed" || v.Manual["deactivate"] || v.Errors["deactivate"] != "new failure" {
+		t.Fatal("stale annotation hid new result", v)
+	}
+}
+
 func TestProQuotaDisplayKeepsAutomationMilestone(t *testing.T) {
 	for _, tc := range []struct {
 		name, autoStep, manualStatus, manualError, wantStep, wantError string

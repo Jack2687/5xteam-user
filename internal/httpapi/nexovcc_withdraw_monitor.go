@@ -82,6 +82,13 @@ func (s *Server) startNexovccWithdrawMonitor(ctx context.Context) {
 // A busy issuer does not consume this interval: retry on the next local tick.
 // Do not cancel an in-flight supplier request just to run another query.
 func (s *Server) runNexovccWithdrawCheck(ctx context.Context) (bool, error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return false, nil
+	}
+	defer finishOperation()
+	ctx = bound
+
 	if ctx.Err() != nil || !s.proCardAdmissionMu.TryLock() {
 		return false, nil
 	}

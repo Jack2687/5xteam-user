@@ -31,7 +31,7 @@ function changeMatch(row){edit.value={type:'match',row,group_id:row.match?.group
 const groups=computed(()=>{
  if(!edit.value)return []
  const row=edit.value.row,serial=data.value.cards.find(c=>c.card.id===row.card_id)?.card.serial_no
- return (data.value.groups||[]).filter(g=>!g.non_pro&&g.valid&&Number(g.payment)>0&&g.serial_no===serial&&!data.value.cases.some(c=>c.id!==row.id&&c.match?.group?.id===g.id))
+ return (data.value.groups||[]).filter(g=>!g.non_pro&&!g.related_group_id&&g.valid&&Number(g.payment)>0&&g.serial_no===serial&&!data.value.cases.some(c=>c.id!==row.id&&c.match?.group?.id===g.id))
 })
 async function save(){
  const d=edit.value;if(!d||busy.value||!d.confirm)return

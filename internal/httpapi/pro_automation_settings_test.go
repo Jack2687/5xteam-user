@@ -39,6 +39,41 @@ func TestProAutomationSettingsSaveWithoutPushCredentials(t *testing.T) {
 	}
 }
 
+func TestProDeletionIntervalSettings(t *testing.T) {
+	s, st, _ := gptPayFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected upstream request") })
+	pro := model.DefaultProSettings()
+	input := map[string]any{"automation": pro, "gptpay": map[string]any{"plan_code": "pro5"}}
+	for _, interval := range []int{1, 86400, 37, 0, -1, 86401} {
+		pro.DeletionCheckIntervalSeconds = interval
+		input["automation"] = pro
+		want := 200
+		if interval < 1 || interval > 86400 {
+			want = 400
+		}
+		if rec := payCall(t, s.saveProAutomationSettings, "", "", input); rec.Code != want {
+			t.Fatal(interval, rec.Code, rec.Body.String())
+		}
+	}
+	encoded, _ := json.Marshal(pro)
+	var legacy map[string]any
+	if err := json.Unmarshal(encoded, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	delete(legacy, "deletion_check_interval_seconds")
+	input["automation"] = legacy
+	if rec := payCall(t, s.saveProAutomationSettings, "", "", input); rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	downstream := map[string]any{"provider": "cpa", "cpa": map[string]any{"url": "http://cpa.invalid"}, "cpa_key": "fixture-key", "deletion_check_interval_seconds": 999}
+	if rec := payCall(t, s.saveProSettings, "", "", downstream); rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	saved, _, _, _ := st.ProSettings()
+	if saved.DeletionCheckIntervalSeconds != 37 {
+		t.Fatal("invalid, legacy or downstream save changed deletion interval")
+	}
+}
+
 func TestProAutomationMergeConcurrencySettings(t *testing.T) {
 	s, st, _ := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected supplier call") })
 	pro := model.DefaultProSettings()

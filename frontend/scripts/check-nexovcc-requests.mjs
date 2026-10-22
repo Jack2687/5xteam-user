@@ -21,7 +21,7 @@ const context=vm.createContext({...nexovcc,ref,reactive,computed,watch,
   throw Error('Unexpected API '+url)
  }
 })
-vm.runInContext(code+';globalThis.view={cfg,save,submit,dialog,message};',context)
+vm.runInContext(code+';globalThis.view={cfg,save,submit,dialog,message,data,filter,syncCategoryTransactions,refreshPendingCards};',context)
 const {cfg,save,submit,dialog,message}=context.view
 cfg.templates=[{id:'t1',name:'Pro备用卡',product_id:'267',holder_id:'',amount:110,fee_buffer:10}]
 await save()
@@ -84,15 +84,29 @@ pickerContext.picker.toggle('267',true)
 assert.deepEqual(Array.from(pickerProps.modelValue),['268'])
 console.log('Passed: scheduled withdrawal settings, legacy template, multi-select, drag and keyboard priority, unavailable products')
 
-assert.equal(cfg.page_auto_refresh,true)
 assert.equal(cfg.http_522_retry_seconds,5)
 assert.equal(cfg.http_522_retries,2)
-cfg.page_auto_refresh=false
 cfg.http_522_retry_seconds=11
 cfg.http_522_retries=0
 await save()
 payload=requests.filter(r=>r.url==='/api/nexovcc/settings').at(-1).body
-assert.equal(payload.page_auto_refresh,false)
 assert.equal(payload.http_522_retry_seconds,11)
 assert.equal(payload.http_522_retries,0)
-console.log('Passed: 522 retry and page refresh settings defaults and explicit disabled values')
+console.log('Passed: 522 retry settings defaults and explicit disabled values')
+
+context.view.filter.value='normal_pending'
+context.view.data.cards=[{card:{id:'pending',status:'1',normal_pending:true}}]
+await context.view.refreshPendingCards()
+assert.equal(requests.filter(r=>r.url==='/api/nexovcc/run').at(-1).body.action,'pending_sync')
+await context.view.syncCategoryTransactions()
+assert.deepEqual(requests.filter(r=>r.url==='/api/nexovcc/run').at(-1).body,{action:'card_finance',card_category:'normal_pending',confirm:true})
+context.view.filter.value='normal'
+await context.view.syncCategoryTransactions()
+assert.equal(requests.filter(r=>r.url==='/api/nexovcc/run').at(-1).body.card_category,'normal')
+console.log('Passed: pending refresh and transaction buttons send isolated category actions')
+
+for(const [key,value] of Object.entries({balance_sync_seconds:60,card_sync_seconds:180,transaction_sync_seconds:300,account_sync_seconds:1800,product_sync_seconds:7200}))cfg[key]=value
+await save()
+payload=requests.filter(r=>r.url==='/api/nexovcc/settings').at(-1).body
+for(const key of ['balance_sync_seconds','card_sync_seconds','transaction_sync_seconds','account_sync_seconds','product_sync_seconds'])assert.equal(payload[key],cfg[key])
+console.log('Passed: five independent sync intervals round-trip through settings save')

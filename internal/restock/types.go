@@ -211,6 +211,9 @@ type Task struct {
 	Message            string                  `json:"message"`
 	OrderID            string                  `json:"order_id"`
 	CardID             string                  `json:"card_id"`
+	NextCardCheckAt    *time.Time              `json:"next_card_check_at,omitempty"`
+	StoppedAt          *time.Time              `json:"stopped_at,omitempty"`
+	StoppedFailure     bool                    `json:"stopped_failure,omitempty"`
 	AccountID          int64                   `json:"account_id"`
 	Cost               int64                   `json:"cost"`
 	CreatedAt          time.Time               `json:"created_at"`
@@ -229,7 +232,7 @@ func (t Task) Active() bool {
 	return t.Status != "ready" && t.Status != "failed" && t.Status != "cancelled"
 }
 func (t Task) Predictable() bool {
-	return t.Active() && t.ETA != nil && t.Status != "unknown" && t.Status != "attention"
+	return t.Active() && t.ETA != nil && t.Status != "unknown" && t.Status != "attention" && t.Status != "waiting_card"
 }
 
 type Limits struct {

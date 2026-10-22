@@ -1,4 +1,4 @@
-import { cents, money, financeTotals } from './nexovcc-finance.js'
+import { cents, money, financeTotals, balanceCostAdjustments } from './nexovcc-finance.js'
 
 const hasAmount = v => v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(Number(v))
 const timestamp = v => v && !String(v).startsWith('0001') ? Date.parse(v) : NaN
@@ -59,14 +59,44 @@ export function frozenBalanceDisplay(data) {
  const cards=(data.cards||[]).map(row=>({row,totals:financeTotals(data,row.card.serial_no)}))
  const active=cards.filter(({row})=>row.card.status!=='4')
  const rows=cards.filter(({row,totals})=>row.card.status==='4'&&totals.pending>0).map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:totals.pending,returned:cardFunding(data,row).returned}))
- const recoveredRows=active.filter(({totals})=>totals.balanceRecoveredPending>0).map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:totals.balanceRecoveredPending}))
- const pendingRows=active.map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:Math.max(0,totals.pending-totals.balanceRecoveredPending)})).filter(row=>row.amount>0)
+ const activeByID=new Map(active.map(({row})=>[row.card.id,row]))
+ const settledRefunds=new Map(),seenGroups=new Set()
+ let unlinkedSettledRefund=false
+ for(const c of data.cases||[]){
+  if(c.state!=='waiting'||c.payment_status!=='success'||c.removed_at)continue
+  const card=activeByID.get(c.card_id)
+  if(!card)continue
+  const group=c.match?.group
+  if(!group||!group.valid||group.serial_no!==card.card.serial_no){
+   if((data.groups||[]).some(g=>g.serial_no===card.card.serial_no&&g.valid&&g.settled&&!g.fully_returned))unlinkedSettledRefund=true
+   continue
+  }
+  if(!group.settled||group.fully_returned||seenGroups.has(group.id))continue
+  seenGroups.add(group.id)
+  const amount=Math.max(0,cents(group.difference))
+  settledRefunds.set(card.card.serial_no,(settledRefunds.get(card.card.serial_no)||0)+amount)
+ }
+ // Apply the existing balance-recovery checks to these waiting refunds only
+ // for the headline. Original settlement costs and refund evidence stay intact.
+ const displayData={...data,groups:(data.groups||[]).map(g=>seenGroups.has(g.id)?{...g,settled:false}:g)}
+ const displayRecovered=new Map(balanceCostAdjustments(displayData).map(r=>[r.serial,r.pendingAdjustment]))
+ const recoveredRows=active.map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:Math.max(totals.balanceRecoveredPending,displayRecovered.get(row.card.serial_no)||0)})).filter(row=>row.amount>0)
+ const recoveredBySerial=new Map(recoveredRows.map(row=>[row.serial,row.amount]))
+ const pendingRows=active.map(({row,totals})=>{
+  const refundPending=settledRefunds.get(row.card.serial_no)||0
+  const recovered=recoveredBySerial.get(row.card.serial_no)||0
+  const amount=Math.max(0,totals.pending+refundPending-recovered)
+  const item={serial:row.card.serial_no,last4:row.card.last4,amount}
+  const remainingRefund=Math.max(0,refundPending-Math.max(0,recovered-totals.pending))
+  if(remainingRefund)item.refundPending=remainingRefund
+  return item
+ }).filter(row=>row.amount>0)
  const historical=sum(rows,row=>row.amount),recovered=sum(recoveredRows,row=>row.amount)
  const knownSerials=new Set(cards.map(({row})=>row.card.serial_no))
- const ready=Number.isFinite(timestamp(data.finance?.at))&&active.every(({totals})=>!totals.unverified&&!totals.staleReviews)&&
+ const ready=!unlinkedSettledRefund&&Number.isFinite(timestamp(data.finance?.at))&&active.every(({totals})=>!totals.unverified&&!totals.staleReviews)&&
   !(data.groups||[]).some(g=>!knownSerials.has(g.serial_no))
  const current=ready?sum(pendingRows,row=>row.amount):null
- return {platform,historical,recovered,current,rows,recoveredRows,pendingRows}
+ return {platform,historical,recovered,current,rows,recoveredRows,pendingRows,...(unlinkedSettledRefund?{unlinkedSettledRefund:true}:{})}
 }
 
 export function cardReturnCounts(cases) {

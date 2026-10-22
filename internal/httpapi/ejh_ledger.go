@@ -2,6 +2,26 @@ package httpapi
 
 import "net/http"
 
+func (s *Server) saveEJHExternalTransfer(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Amount *string `json:"amount"`
+		Note   string  `json:"note"`
+	}
+	if decodeJSON(w, r, &in, 4<<10) != nil {
+		return
+	}
+	if in.Amount == nil {
+		writeAPI(w, http.StatusBadRequest, nil, "请填写累计平台外转出金额，留空按零记录")
+		return
+	}
+	result, err := s.store.SaveEJHExternalTransfer(*in.Amount, in.Note)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, nil, err.Error())
+		return
+	}
+	writeAPI(w, http.StatusOK, result, "")
+}
+
 func (s *Server) saveEJHRechargePeriod(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Month *string `json:"month"`

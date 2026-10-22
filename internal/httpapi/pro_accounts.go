@@ -26,6 +26,7 @@ type proAccountListItem struct {
 	FinancialCases     []proFinancialCase `json:"financial_cases"`
 	PushElapsedMinutes int64              `json:"push_elapsed_minutes"`
 	ForceMergeDeadline *time.Time         `json:"force_merge_deadline,omitempty"`
+	StateEnteredAt     *time.Time         `json:"state_entered_at,omitempty"`
 	model.MailAccountProfile
 	ActivationCard       *store.ProActivationCard `json:"activation_card,omitempty"`
 	StageProgress        model.ProStageDisplay    `json:"pro_stage_progress"`
@@ -80,7 +81,15 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 			row.FinancialCases = []proFinancialCase{}
 		}
 		if item.ProPushStartedAt != nil {
-			row.PushElapsedMinutes = max(0, int64(time.Since(*item.ProPushStartedAt)/time.Minute))
+			end := time.Now()
+			if stopped := item.ProPushEndTime(); stopped != nil {
+				end = *stopped
+				row.ProPushEndedAt = stopped
+			}
+			row.PushElapsedMinutes = max(0, int64(end.Sub(*item.ProPushStartedAt)/time.Minute))
+			if row.ProPushEndedAt == nil && (item.SpaceMergedOnce || item.DeletionSubmitted()) {
+				row.PushElapsedMinutes = -1 // historical stopping time was not recorded
+			}
 			row.ForceMergeDeadline = item.ProPushDeadline()
 		}
 		row.ProAuto.Error = row.ProAuto.DisplayError()
@@ -105,10 +114,17 @@ func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, http.StatusInternalServerError, nil, "读取 Pro 账号失败: "+err.Error())
 			return
 		}
-		rows, err := s.proAccountListWithCards(items)
+		profiles := make([]model.MailAccountProfile, len(items))
+		for i, item := range items {
+			profiles[i] = item.MailAccountProfile
+		}
+		rows, err := s.proAccountListWithCards(profiles)
 		if err != nil {
 			writeAPI(w, 500, nil, "读取开通银行卡失败")
 			return
+		}
+		for i := range rows {
+			rows[i].StateEnteredAt = items[i].StateEnteredAt
 		}
 		writeAPI(w, http.StatusOK, paginatedData(rows, total, page, map[string]any{"summary": summary}), "")
 		return
@@ -671,6 +687,9 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, "CPA 地址和 Management Key 不能为空")
 		return
 	}
+	input.AutoDeleteEnabled, input.AutoMergeEnabled = current.AutoDeleteEnabled, current.AutoMergeEnabled
+	input.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
+	input.TargetAdminID, input.TargetSeatType = current.TargetAdminID, current.TargetSeatType
 	if input.AutoMergeEnabled && strings.TrimSpace(input.TargetAdminID) == "" {
 		writeAPI(w, 400, nil, "开启自动合并前请选择目标母号")
 		return
@@ -1110,8 +1129,8 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	if err == nil && !applied {
 		return profile, errors.New("额度查询期间下游账号已变化，已丢弃旧响应，请重新查询")
 	}
-	if err == nil && auto && currentSettings.AutoMergeEnabled && !profile.SpaceMergedOnce && seven.UsedPercent >= currentSettings.QuotaUsedThreshold && !proTransferNeedsConfirmation(profile) {
-		profile, err = s.startProMergeJob(email, nil)
+	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoDeleteEnabled) && !profile.SpaceMergedOnce && !profile.DeletionSubmitted() && seven.UsedPercent >= currentSettings.QuotaUsedThreshold && !proTransferNeedsConfirmation(profile) {
+		profile, err = s.startProDispositionJob(email, nil, nil)
 	}
 	return profile, err
 }
@@ -1455,7 +1474,7 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 				if p.ProAuto.ID != "" || (p.ProMigration != nil && p.ProMigration.Paused) {
 					continue
 				}
-				needsQuota := !p.SpaceMergedOnce
+				needsQuota := !p.SpaceMergedOnce && !p.DeletionSubmitted()
 				needsCleanup := p.ProVM2CleanupPending() || p.SpaceMergedOnce && p.RemoveStatus != "completed"
 				if p.PushStatus == "completed" && (p.PushProvider == v.Provider || p.VM2 != nil) && !p.ProWorkflowRunning && (needsQuota || needsCleanup) {
 					emails = append(emails, p.Email)
@@ -1472,7 +1491,7 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 						return nil
 					}
 					if profile.SpaceMergedOnce && profile.RemoveStatus != "completed" {
-						_, e := s.performProMerge(jobCtx, email)
+						_, e := s.performProDisposition(jobCtx, email)
 						return e
 					}
 					_, e := s.performProQuota(jobCtx, email, true)

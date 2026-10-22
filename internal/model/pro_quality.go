@@ -70,6 +70,11 @@ type ProQualityState struct {
 }
 
 func (p *MailAccountProfile) ReconcileProQualityMerge() {
+	if p.ProQuality.Action == "merge" && p.DeletionAccepted() && !p.ProPostMergeGroupsPending() && !p.ProVM2CleanupPending() {
+		p.ProQuality.ActionStatus, p.ProQuality.ActionError = "completed", ""
+		p.ProQuality.NextMergeAt = nil
+		return
+	}
 	if p.ProQuality.Action == "merge" && p.TransferStatus == "completed" &&
 		(p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed") && !p.ProPostMergeGroupsPending() {
 		p.ProQuality.ActionStatus, p.ProQuality.ActionError = "completed", ""

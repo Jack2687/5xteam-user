@@ -96,7 +96,8 @@ func (s *Store) proRestockTasksWhere(where string, arg any) ([]restock.Task, err
 func (s *Store) SaveProRestockTask(t restock.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`UPDATE pro_restock_tasks SET status=?,cost=?,payload=? WHERE id=?`, t.Status, t.Cost, mustJSON(t), t.ID)
+	// A late worker response must never resurrect an operator-stopped task.
+	_, err := s.db.Exec(`UPDATE pro_restock_tasks SET status=?,cost=?,payload=? WHERE id=? AND json_extract(payload,'$.stopped_at') IS NULL`, t.Status, t.Cost, mustJSON(t), t.ID)
 	return err
 }
 
@@ -155,12 +156,12 @@ func restockLimits(q proCapacityQuery, now time.Time) (restock.Limits, error) {
 	var l restock.Limits
 	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	hour := now.Add(-time.Hour)
-	err := q.QueryRow(`SELECT coalesce(sum(CASE WHEN created_at>=? THEN 1 ELSE 0 END),0),coalesce(sum(CASE WHEN created_at>=? THEN 1 ELSE 0 END),0),coalesce(sum(CASE WHEN created_at>=? OR status NOT IN ('ready','failed','cancelled') THEN cost ELSE 0 END),0),coalesce(sum(CASE WHEN created_at>=? OR status NOT IN ('ready','failed','cancelled') THEN cost ELSE 0 END),0) FROM pro_restock_tasks WHERE status!='cancelled' AND coalesce(json_extract(payload,'$.managed_externally'),0)=0`, formatTime(hour), formatTime(day), formatTime(hour), formatTime(day)).Scan(&l.HourCount, &l.DayCount, &l.HourCost, &l.DayCost)
+	err := q.QueryRow(`SELECT coalesce(sum(CASE WHEN created_at>=? THEN 1 ELSE 0 END),0),coalesce(sum(CASE WHEN created_at>=? THEN 1 ELSE 0 END),0),coalesce(sum(CASE WHEN created_at>=? OR status NOT IN ('ready','failed','cancelled') THEN cost ELSE 0 END),0),coalesce(sum(CASE WHEN created_at>=? OR status NOT IN ('ready','failed','cancelled') THEN cost ELSE 0 END),0) FROM pro_restock_tasks WHERE (status!='cancelled' OR (json_extract(payload,'$.stopped_at') IS NOT NULL AND json_extract(payload,'$.submitted_at') IS NOT NULL)) AND coalesce(json_extract(payload,'$.managed_externally'),0)=0`, formatTime(hour), formatTime(day), formatTime(hour), formatTime(day)).Scan(&l.HourCount, &l.DayCount, &l.HourCost, &l.DayCost)
 	if err != nil {
 		return l, err
 	}
 	// Consecutive failures since the last ready task or explicit breaker reset.
-	err = q.QueryRow(`SELECT count(*) FROM pro_restock_tasks WHERE status IN ('failed','attention','unknown') AND created_at>coalesce((SELECT max(created_at) FROM pro_restock_tasks WHERE status='ready'),'') AND created_at>coalesce((SELECT reset_at FROM pro_restock_clock WHERE id=1),'')`).Scan(&l.Failures)
+	err = q.QueryRow(`SELECT count(*) FROM pro_restock_tasks WHERE (status IN ('failed','attention','unknown') OR json_extract(payload,'$.stopped_failure')=1) AND created_at>coalesce((SELECT max(created_at) FROM pro_restock_tasks WHERE status='ready'),'') AND created_at>coalesce((SELECT reset_at FROM pro_restock_clock WHERE id=1),'')`).Scan(&l.Failures)
 	if err != nil {
 		return l, err
 	}

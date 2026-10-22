@@ -205,8 +205,8 @@ func TestProOrderTimeoutCapturedBeforePushAndPreserved(t *testing.T) {
 		t.Fatal("failed push started countdown", err)
 	}
 	p, err = s.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.PushStatus = "completed" })
-	if err != nil || p.ProPushStartedAt == nil || p.ProPushDeadline() != nil {
-		t.Fatal("disabled account received deadline", err)
+	if err != nil || p.ProPushStartedAt == nil || p.ProPushDeadline() == nil {
+		t.Fatal("in-flight account did not adopt changed policy", err)
 	}
 	first := *p.ProPushStartedAt
 	s.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.PushStatus = "running" })
@@ -215,7 +215,7 @@ func TestProOrderTimeoutCapturedBeforePushAndPreserved(t *testing.T) {
 		t.Fatal("repush reset timer", err)
 	}
 	p, err = s.SaveMailAccountToPro(model.MailAccountProfile{Email: email}, model.MailAccountCredentials{Email: email})
-	if err != nil || p.ProPushTimeoutEnabled == nil || *p.ProPushTimeoutEnabled || !p.ProPushStartedAt.Equal(first) {
+	if err != nil || p.ProPushTimeoutEnabled == nil || !*p.ProPushTimeoutEnabled || !p.ProPushStartedAt.Equal(first) {
 		t.Fatal("credential import lost policy", err)
 	}
 }

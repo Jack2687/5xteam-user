@@ -61,6 +61,7 @@ func (s *Server) proFinancialCases(cases []ejh.Case) ([]proFinancialCase, error)
 }
 
 type nexovccJob struct {
+	Paused    bool               `json:"paused"`
 	ReadOnly  bool               `json:"read_only,omitempty"`
 	ID        string             `json:"id"`
 	Status    string             `json:"status"`
@@ -73,6 +74,9 @@ type nexovccJob struct {
 	CardLabel string             `json:"card_label,omitempty"`
 }
 type nexovccRuntime struct {
+	controlMu      sync.Mutex
+	control        nexovccControlState
+	gate           *nexovcc.RequestGate
 	financeNumbers map[string]string  // Memory only; never include card numbers in dashboard/cache.
 	readCancel     context.CancelFunc // jobMu: only read-only synchronization can yield.
 
@@ -94,6 +98,7 @@ type nexovccInput struct {
 	Action           string   `json:"action"`
 	RequestID        string   `json:"request_id"`
 	CardID           string   `json:"card_id"`
+	CardCategory     string   `json:"card_category,omitempty"`
 	CardIDs          []string `json:"card_ids,omitempty"`
 	TemplateID       string   `json:"template_id"`
 	Amount           string   `json:"amount"`
@@ -111,13 +116,17 @@ func (s *Server) nexovccRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/nexovcc/occupancy/{id}", s.getEJHOccupancyOrder)
 	m.HandleFunc("POST /api/nexovcc/occupancy/{id}/resolve", s.resolveNexovccOccupancy)
 	m.HandleFunc("POST /api/nexovcc/run", s.runNexovcc)
+	m.HandleFunc("POST /api/nexovcc/control", s.controlNexovcc)
 	m.HandleFunc("GET /api/nexovcc/job", func(w http.ResponseWriter, r *http.Request) {
-		s.nexovcc.jobMu.Lock()
-		job := s.nexovcc.job
-		s.nexovcc.jobMu.Unlock()
+		job, err := s.nexovccJobSnapshot()
+		if err != nil {
+			writeAPI(w, 500, nil, "读取环球停止状态失败")
+			return
+		}
 		writeAPI(w, 200, job, "")
 	})
 	m.HandleFunc("POST /api/nexovcc/cards/{id}/private", s.nexovccPrivate)
+	m.HandleFunc("PUT /api/nexovcc/cards/{id}/category", s.nexovccCardCategory)
 	m.HandleFunc("PUT /api/nexovcc/cases/{id}", s.nexovccCaseState)
 	m.HandleFunc("DELETE /api/nexovcc/cases/unopened", s.deleteNexovccUnopenedCases)
 	m.HandleFunc("PUT /api/nexovcc/cases/{id}/match", s.nexovccCaseMatch)
@@ -168,6 +177,9 @@ func (s *Server) saveNexovccSettings(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, 200, cfg, "")
 }
 func (s *Server) nexovccClientLocked() (*nexovcc.Client, nexovcc.Settings, error) {
+	if err := s.checkNexovccControl(); err != nil {
+		return nil, nexovcc.Settings{}, err
+	}
 	cfg, k, e := s.store.NexovccSettings()
 	if e != nil {
 		return nil, cfg, e
@@ -179,6 +191,7 @@ func (s *Server) nexovccClientLocked() (*nexovcc.Client, nexovcc.Settings, error
 	fingerprint := sha256.Sum256([]byte(fmt.Sprintf("%q/%q/%q/%q", k.Login, k.Password, k.FundPassword, k.TOTPSecret)))
 	if s.nexovcc.client == nil || fingerprint != s.nexovcc.fingerprint {
 		s.nexovcc.client = nexovcc.New(k, s.nexovcc.transport)
+		s.nexovcc.client.SetRequestGate(s.nexovcc.gate)
 		s.nexovcc.fingerprint = fingerprint
 	}
 	if s.nexovcc.transport == nil {
@@ -191,6 +204,11 @@ func (s *Server) nexovccClientLocked() (*nexovcc.Client, nexovcc.Settings, error
 }
 func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	control, err := s.nexovccControl()
+	if err != nil {
+		writeAPI(w, 500, nil, "读取环球停止状态失败")
+		return
+	}
 	cards, e := s.store.NexovccCards()
 	if e != nil {
 		writeAPI(w, 500, nil, "读取环球卡片失败")
@@ -253,7 +271,7 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取交易核实记录失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState, "withdraw": withdrawState}, "")
+	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState, "withdraw": withdrawState, "control": control}, "")
 }
 func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Lock()
@@ -263,11 +281,22 @@ func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Unlock()
 }
 func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
+	operationCtx, finishOperation, err := s.nexovccOperationContext(context.Background())
+	if err != nil {
+		writeAPI(w, 409, nil, err.Error())
+		return
+	}
+	started := false
+	defer func() {
+		if !started {
+			finishOperation()
+		}
+	}()
 	var in nexovccInput
 	if decodeJSON(w, r, &in, 16<<10) != nil {
 		return
 	}
-	allowed := map[string]bool{"sync": true, "finance": true, "card_finance": true, "balance": true, "open": true, "refresh": true, "deposit": true, "withdraw": true, "withdraw_all": true, "withdraw_cancel": true, "freeze": true, "unfreeze": true, "cancel": true, "remark": true, "resolve": true}
+	allowed := map[string]bool{"sync": true, "finance": true, "card_finance": true, "pending_sync": true, "balance": true, "open": true, "refresh": true, "deposit": true, "withdraw": true, "withdraw_all": true, "withdraw_cancel": true, "freeze": true, "unfreeze": true, "cancel": true, "remark": true, "resolve": true}
 	if !allowed[in.Action] {
 		writeAPI(w, 400, nil, "环球操作无效")
 		return
@@ -276,7 +305,15 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, "批量操作须选择 1～100 张卡，并提供有效请求编号")
 		return
 	}
-	if in.Action != "sync" && in.Action != "finance" && in.Action != "card_finance" && in.Action != "balance" && in.Action != "refresh" && !in.Confirm {
+	if in.CardCategory != "" && (in.Action != "card_finance" || in.CardID != "" || (in.CardCategory != "normal" && in.CardCategory != "normal_pending")) {
+		writeAPI(w, 400, nil, "请选择有效的卡片同步分类")
+		return
+	}
+	if in.AutomaticRefresh && (in.Action == "pending_sync" || in.CardCategory == "normal_pending") {
+		writeAPI(w, 400, nil, "正常待定卡仅支持手动单独刷新")
+		return
+	}
+	if in.Action != "sync" && in.Action != "finance" && in.Action != "card_finance" && in.Action != "pending_sync" && in.Action != "balance" && in.Action != "refresh" && !in.Confirm {
 		writeAPI(w, 400, nil, "请确认本次操作")
 		return
 	}
@@ -334,7 +371,7 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 503, nil, "服务正在关闭")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), max(15*time.Minute, time.Duration(len(in.CardIDs))*2*time.Minute))
+	ctx, cancel := context.WithTimeout(operationCtx, max(15*time.Minute, time.Duration(len(in.CardIDs))*2*time.Minute))
 	if !in.AutomaticRefresh {
 		ctx = nexovcc.WithImmediateRequests(ctx)
 	}
@@ -343,7 +380,9 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 	job := s.nexovcc.job
 	s.nexovcc.wg.Add(1)
 	s.nexovcc.jobMu.Unlock()
+	started = true
 	go func() {
+		defer finishOperation()
 		defer s.nexovcc.wg.Done()
 		defer cancel()
 		defer s.nexovcc.mu.Unlock()
@@ -355,11 +394,16 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		var e error
 		switch in.Action {
 		case "sync":
-			e = s.syncNexovccLocked(ctx)
-		case "finance", "card_finance":
+			if in.AutomaticRefresh {
+				ctx = nexovccScheduledSync(ctx)
+			}
+			e = s.syncNexovccLocked(ctx, !in.AutomaticRefresh)
+		case "finance", "card_finance", "pending_sync":
 			readCtx, finish := s.nexovccReadContext(ctx)
-			if in.Action == "card_finance" {
-				e = s.syncNexovccTransactionsLocked(readCtx, in.CardID)
+			if in.Action == "pending_sync" {
+				e = s.syncNexovccPendingCardsLocked(readCtx)
+			} else if in.Action == "card_finance" {
+				e = s.syncNexovccFinanceScopeLocked(readCtx, in.CardID, false, false, in.CardCategory)
 			} else {
 				e = s.syncNexovccFinanceLocked(readCtx, true)
 			}
@@ -380,7 +424,7 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		s.nexovcc.jobMu.Lock()
 		defer s.nexovcc.jobMu.Unlock()
 		s.nexovcc.job.Status = "completed"
-		if in.Action != "card_finance" || e != nil {
+		if (in.Action != "card_finance" && in.Action != "pending_sync") || e != nil {
 			s.nexovcc.job.Message = "操作完成"
 		}
 		if op.ID != "" {
@@ -437,19 +481,86 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 			}
 		}
 	}
+	scheduled, _ := ctx.Value(nexovccScheduledSyncKey{}).(bool)
+	force := len(forceAccount) > 0 && forceAccount[0]
+	parts := []struct {
+		key   string
+		force bool
+		run   func(context.Context) error
+	}{
+		{"balance", !scheduled, s.nexovccBalanceLocked},
+		{"cards", !scheduled, s.syncNexovccCardsLocked},
+		{"transactions", !scheduled, func(ctx context.Context) error { return s.syncNexovccTransactionsLocked(ctx, "") }},
+		{"account", force, s.syncNexovccAccountLocked},
+		{"products", force, func(ctx context.Context) error { _, err := s.syncNexovccProductsLocked(ctx); return err }},
+	}
+	for _, part := range parts {
+		if err = s.runNexovccSyncPartLocked(ctx, part.key, part.force, part.run); err != nil {
+			if (part.key == "transactions" || part.key == "account") && ctx.Err() == nil {
+				_ = s.store.NexovccCache("finance_error", err.Error())
+			}
+			return err
+		}
+	}
+	cfg, _, err := s.store.NexovccSettings()
+	if err != nil {
+		return err
+	}
+	currentParts, err := s.nexovccSyncParts(cfg)
+	if err != nil {
+		return err
+	}
+	if err = s.store.NexovccCache("finance_error", firstNonEmpty(currentParts["transactions"].Error, currentParts["account"].Error)); err != nil {
+		return err
+	}
+	// Only the query phase may yield. Do not expose a cancellation handle while
+	// advancing a previously submitted withdrawal/freeze/delete pipeline.
+	if finishRead() {
+		if parent.Err() != nil {
+			return parent.Err()
+		}
+		return errNexovccReadYielded
+	}
+	ctx = parent
+	// Reconcile submitted steps without replaying them. Explicitly requested
+	// close pipelines may advance to their next unsent step after confirmation.
+	ops, e := s.store.NexovccOperations()
+	if e != nil {
+		return e
+	}
+	for _, op := range ops {
+		if !op.Terminal() && op.Serial != "" {
+			card, readErr := s.store.NexovccCard(nexovcc.CardID(op.Serial))
+			if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+				return readErr
+			}
+			if card.NormalPending {
+				continue
+			}
+			op = s.verifyNexovccOperationLocked(ctx, op)
+			if e = s.store.SaveNexovccOperation(op); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
+}
+func (s *Server) syncNexovccCardsLocked(ctx context.Context) error {
 	c, _, e := s.nexovccClientLocked()
 	if e != nil {
 		return e
 	}
-	s.nexovccProgress("查询账户余额", 0, 3)
-	if e = s.nexovccBalanceLocked(ctx); e != nil {
-		return e
-	}
-	s.nexovccProgress("同步产品 / BIN", 1, 3)
-	if e = s.syncNexovccProductsIfDueLocked(ctx); e != nil {
-		return e
-	}
 	s.nexovccProgress("分页同步卡片", 2, 3)
+	localCards, e := s.store.NexovccCards()
+	if e != nil {
+		return e
+	}
+	pending := map[string]bool{}
+	for _, card := range localCards {
+		if card.NormalPending {
+			pending[card.Serial] = true
+		}
+	}
 	rows, e := c.Pages(ctx, "/api/card/findUserCardList")
 	if e != nil {
 		return e
@@ -457,13 +568,18 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 	failures := 0
 	normalCount, normalDone := 0, 0
 	for _, r := range rows {
-		if nexovcc.String(r["status"]) != "4" {
+		if nexovcc.String(r["status"]) != "4" && !pending[nexovcc.String(r["serial_no"])] {
 			normalCount++
 		}
 	}
 	for _, r := range rows {
 		if e = ctx.Err(); e != nil {
 			return e
+		}
+		// A supplier list cannot filter our local category. Keep its saved
+		// snapshot intact and issue no detail/balance requests for pending cards.
+		if pending[nexovcc.String(r["serial_no"])] {
+			continue
 		}
 		if number := nexovcc.String(r["card_no"]); nexovcc.ValidFinanceCardNumber(number) {
 			if s.nexovcc.financeNumbers == nil {
@@ -479,7 +595,7 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 		if e != nil {
 			return e
 		}
-		if card.Status == "4" {
+		if card.Status == "4" || card.NormalPending {
 			continue
 		}
 		normalDone++
@@ -507,32 +623,7 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 			}
 		}
 	}
-	if e = s.syncNexovccFinanceLocked(ctx, forceAccount...); e != nil {
-		return fmt.Errorf("卡片已同步，财务同步未完成：%w", e)
-	}
-	// Only the query phase may yield. Do not expose a cancellation handle while
-	// advancing a previously submitted withdrawal/freeze/delete pipeline.
-	if finishRead() {
-		if parent.Err() != nil {
-			return parent.Err()
-		}
-		return errNexovccReadYielded
-	}
-	ctx = parent
-	// Reconcile submitted steps without replaying them. Explicitly requested
-	// close pipelines may advance to their next unsent step after confirmation.
-	ops, e := s.store.NexovccOperations()
-	if e != nil {
-		return e
-	}
-	for _, op := range ops {
-		if !op.Terminal() && op.Serial != "" {
-			op = s.verifyNexovccOperationLocked(ctx, op)
-			if e = s.store.SaveNexovccOperation(op); e != nil {
-				return e
-			}
-		}
-	}
+
 	if failures > 0 {
 		return fmt.Errorf("%d 张卡余额或资料同步失败，请稍后重新同步", failures)
 	}
@@ -668,6 +759,13 @@ func (s *Server) readNexovccCardBalanceLocked(ctx context.Context, card nexovcc.
 	return card, nil
 }
 func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, automatic bool, checks ...func() error) (nexovcc.Operation, error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return nexovcc.Operation{}, gateErr
+	}
+	defer finishOperation()
+	ctx = bound
+
 	var op nexovcc.Operation
 	if !nexovcc.ValidRequestID(id) {
 		return op, fmt.Errorf("开卡请求编号无效")
@@ -768,7 +866,7 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if available < amount+buffer {
 		return op, fmt.Errorf("环球账户余额不足以覆盖开卡金额和预留费用")
 	}
-	op = nexovcc.Operation{PlanCode: t.PlanCode, ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	op = nexovcc.Operation{RestockTaskID: taskID, PlanCode: t.PlanCode, ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if e = s.store.BeginNexovccOperation(op, admission); e != nil {
 		return op, e
 	}
@@ -900,6 +998,13 @@ func (s *Server) verifyNexovccOperationLocked(ctx context.Context, op nexovcc.Op
 	return op
 }
 func (s *Server) resolveNexovccLocked(ctx context.Context, in nexovccInput) (nexovcc.Operation, error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return nexovcc.Operation{}, gateErr
+	}
+	defer finishOperation()
+	ctx = bound
+
 	op, e := s.store.NexovccOperation(in.RequestID)
 	if e != nil {
 		return op, e
@@ -1042,6 +1147,13 @@ func (s *Server) ensureProviderCard(ctx context.Context, checks ...func() error)
 	return s.ensureEJHCard(ctx, checks...)
 }
 func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) (gptpay.Card, error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return gptpay.Card{}, gateErr
+	}
+	defer finishOperation()
+	ctx = bound
+
 	if err := s.lockNexovccOperation(ctx); err != nil {
 		return gptpay.Card{}, err
 	}
@@ -1145,6 +1257,13 @@ func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) 
 // this startup attached to that exact operation; only repeat reads, never issue
 // another card. The caller holds the issuer and Pro allocation locks.
 func (s *Server) waitNexovccImportLocked(parent context.Context, op nexovcc.Operation, timeout, interval time.Duration, checks ...func() error) (nexovcc.Operation, error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(parent)
+	if gateErr != nil {
+		return op, gateErr
+	}
+	defer finishOperation()
+	parent = bound
+
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	for op.Action == "open" && op.Status == "import_pending" && op.Serial != "" {

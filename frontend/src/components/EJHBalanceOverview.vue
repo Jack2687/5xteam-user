@@ -9,6 +9,7 @@ import { formatTime } from '../utils'
 import EJHRefundFees from './EJHRefundFees.vue'
 import EJHFinanceTotals from './EJHFinanceTotals.vue'
 import EJHReconciliationBar from './EJHReconciliationBar.vue'
+import EJHExternalTransfer from './EJHExternalTransfer.vue'
 
 const props = defineProps({ data: { type: Object, required: true }, busy: Boolean, ready: Boolean, enabled: Boolean, progress: { type: Object, default: null }, failures: { type: Array, default: () => [] } })
 const display = value => props.enabled ? value : '---'
@@ -50,6 +51,7 @@ async function saveLedger() {
      <p v-if="error" role="alert" class="danger-text">{{error}}</p>
     </form>
     <template v-else><div class="overview-values"><div><strong>{{display(ledger.amount===''?'—':ledger.amount)}}</strong><span>USD</span></div></div><small>手动记录<span v-if="ledger.updated_at"> · {{display(formatTime(ledger.updated_at))}} 更新</span></small></template>
+    <EJHExternalTransfer :ledger="ledger" :disabled="busy||saving||editing||!ready" :masked="!enabled" @saved="emit('ledger-updated',$event)"/>
    </div>
    <div>
     <div class="overview-label"><span>EJH 账户余额</span></div>
@@ -77,7 +79,7 @@ async function saveLedger() {
    </div>
   </div>
   <EJHFinanceTotals :data="data" :masked="!enabled"/>
-  <footer class="overview-footer"><details><summary>统计说明</summary><p>实际到账＝充值总额 × 99%；充值手续费为 1%。实际损耗＝实际到账 − EJH 账户余额 − 卡片余额折合 USD − 在途卡内付款折合 USD。它是资金差额，授权撤销费和开卡费不能再重复加上。消费收益来自下游用户消耗；净利润＝消费收益 − 开卡费 − 充值手续费 − 授权撤销费 − 清算成本 − 清算退款手续费，全部折算为 R。1 USD = 6.7 R，开卡费按 1 USDT = 1 USD 记账。单卡结余未分摊充值手续费，由总账统一扣除。</p><p>充值总账为手动填写的累计金额。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 卡内余额和卡内付款按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片或付款不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次；有清算时，待退授权余款＝原授权 − 已清算 − 已撤销，清算成本另列。卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{display(failures.length)}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
+  <footer class="overview-footer"><details><summary>统计说明</summary><p>实际到账＝充值总额 × 99%；充值手续费为 1%。实际损耗＝实际到账 − 平台外转出 − EJH 账户余额 − 卡片余额折合 USD − 在途卡内付款折合 USD。它是资金差额，授权撤销费和开卡费不能再重复加上。消费收益来自下游用户消耗；净利润＝消费收益 − 开卡费 − 充值手续费 − 授权撤销费 − 清算成本 − 清算退款手续费，全部折算为 R。1 USD = 6.7 R，开卡费按 1 USDT = 1 USD 记账。单卡结余未分摊充值手续费，由总账统一扣除。</p><p>充值总账为手动填写的累计金额。平台外转出登记与本平台无关的累计消费，按 USD 从清算成本扣除，同时在资金核对单列转出，不重复计入成本；充值手续费仍按原充值总额计算。账户余额与卡内余额按最近查询结果分别展示；卡内余额、USD 折算和张数仅统计正常及销卡中的卡片，已销卡成功的历史余额不计入。统计不受分页与筛选影响。</p><p>非 USD 卡内余额和卡内付款按各卡初始开卡的 USD 结算金额 ÷ 原币额度折算，为历史比例估算，不代表当前汇率或实际销卡到账金额。缺少记录的卡片或付款不参与 USD 折算。</p><p>已付款在途统计账号回款中“已开通”和“已申请待回款”的付款流水。卡内付款为实际扣款或授权占用，不代表最终可回款金额；同笔付款只计一次；有清算时，待退授权余款＝原授权 − 已清算 − 已撤销，清算成本另列。卡内付款与结算按各自币种汇总。授权已有占用、尚无结算金额时显示待结算。未开通、已回款不计入；金额缺失不按零处理。统计不受搜索与分页影响。</p></details><details v-if="failures.length"><summary class="danger-text">{{display(failures.length)}} 项查询失败</summary><p v-for="(f,i) in failures" :key="i">{{f.label}}：{{f.error}}</p></details></footer>
  </section>
 </template>
 

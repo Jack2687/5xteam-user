@@ -79,20 +79,21 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 	state.Error = progress.Errors[state.Stage]
 	restockRetryAvailable := false
 	if state.ID == "" && state.OrderID == "" && p.ProRestockTaskID != "" {
-		if task, e := s.store.ProRestockDispatchTask(p.ProRestockTaskID); e == nil && task.CardProvider == "nexovcc" && task.Status == "attention" {
+		if task, e := s.store.ProRestockTask(p.ProRestockTaskID); e == nil && ((task.CardProvider == "nexovcc" && task.Status == "attention") || task.StoppedAt != nil) {
 			restockRetryAvailable = true
 			state.Error = task.Message
 		}
 	}
 	writeAPI(w, 200, struct {
 		model.ProAutoState
-		StageProgress         model.ProStageDisplay `json:"stage_progress"`
-		PaymentStatus         string                `json:"payment_status"`
-		PaymentRetryBlocked   bool                  `json:"payment_retry_blocked"`
-		PaymentRetryHint      string                `json:"payment_retry_hint"`
-		RestockRetryAvailable bool                  `json:"restock_retry_available"`
-		QuotaResumeAvailable  bool                  `json:"quota_resume_available"`
-	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success"}, "")
+		StageProgress         model.ProStageDisplay  `json:"stage_progress"`
+		PaymentStatus         string                 `json:"payment_status"`
+		PaymentRetryBlocked   bool                   `json:"payment_retry_blocked"`
+		PaymentRetryHint      string                 `json:"payment_retry_hint"`
+		RestockRetryAvailable bool                   `json:"restock_retry_available"`
+		QuotaResumeAvailable  bool                   `json:"quota_resume_available"`
+		Deactivation          *model.ProDeactivation `json:"pro_deactivation,omitempty"`
+	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success", p.ProDeactivation}, "")
 }
 
 func (s *Server) autoProUpdate(email, stage, status, message string) error {
@@ -160,6 +161,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
+	if p.DeletionSubmitted() {
+		writeAPI(w, 409, nil, "该账号已提交删除，请使用执行或续跑删除账户，不会重新开通或付款")
+		return
+	}
 	if !automatic {
 		r = r.WithContext(nexovcc.WithImmediateRequests(r.Context()))
 	}
@@ -247,7 +252,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	if pro.TargetAdminID == "" {
+	if !pro.AutoDeleteEnabled && pro.TargetAdminID == "" {
 		writeAPI(w, 400, nil, "请先在 Pro 全自动配置中选择目标母号")
 		return
 	}
@@ -370,7 +375,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		}
 		if latest.ProRestockTaskID != "" && input.RetryCurrent {
 			if latest.ProAuto.ID == "" {
-				task, taskErr := s.store.ProRestockDispatchTask(latest.ProRestockTaskID)
+				task, taskErr := s.store.ProRestockTask(latest.ProRestockTaskID)
 				if taskErr != nil {
 					lock.Unlock()
 					writeAPI(w, 500, nil, "读取原补货任务失败")
@@ -416,7 +421,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			lock.Unlock()
 			var waiting *nexovccCapacityWaitError
-			if errors.As(err, &waiting) {
+			if errors.As(err, &waiting) || strings.Contains(err.Error(), nexovcc.StoppedMessage) {
 				w.Header().Set("X-Pro-Card-Wait", "nexovcc")
 				s.auditProEvent(p, "login", "waiting", "pro_auto", err.Error(), nil)
 				writeAPI(w, 409, nil, err.Error())
@@ -466,8 +471,23 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	if err == nil && (p.ProAuto.StopVersion != stopVersion || (p.ProAuto.StopRequested && (automatic || !wasStopped))) {
 		err = errors.New("用户已停止该账号流程，本次启动已取消；已发出的开卡请求请在卡片记录中核对")
 	}
+	// An explicit continuation after stopping one restock is new manual work.
+	// Keep the cancelled intent for audit, but expose the resumed workflow to
+	// the monitor as external in-flight work until it is delivered.
+	detachStopped := false
+	if err == nil && !automatic && p.ProRestockTaskID != "" {
+		task, readErr := s.store.ProRestockTask(p.ProRestockTaskID)
+		if readErr != nil {
+			err = readErr
+		} else {
+			detachStopped = task.StoppedAt != nil
+		}
+	}
 	if err == nil {
 		p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+			if detachStopped {
+				p.ProRestockTaskID = ""
+			}
 			if !resume && !paidRecovery {
 				if p.ProPushStartedAt == nil && p.ProAuto.ID == "" {
 					p.CaptureProPushTimeout(pro)
@@ -863,8 +883,12 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	if err != nil {
 		return err
 	}
-	if p.ProAuto.Status == "completed" {
+	if p.DeletionConfirmed() || p.ProAuto.Status == "completed" {
 		return nil
+	}
+	if p.DeletionSubmitted() {
+		_, err = s.performProDeactivation(ctx, email)
+		return err
 	}
 	settings, _, _, err := s.proAccountPushSettings(p)
 	if err != nil {
@@ -873,7 +897,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	if settings.Provider != "sub2" && settings.Provider != "vm2api" {
 		return errors.New("Pro 全自动需使用 Sub2 或 vm2api 推送设置")
 	}
-	push, quota, merge := s.performProPush, s.performProQuota, s.performProMerge
+	push, quota, merge := s.performProPush, s.performProQuota, s.performProDisposition
 	if h := s.proAutoHooks; h != nil {
 		if h.Push != nil {
 			push = h.Push
@@ -881,7 +905,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 		if h.Quota != nil {
 			quota = h.Quota
 		}
-		if h.Merge != nil {
+		if h.Merge != nil && !settings.AutoDeleteEnabled {
 			merge = h.Merge
 		}
 	}
@@ -969,20 +993,27 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 			})
 			return saveErr
 		}
-		if err = s.autoProUpdate(email, "quota", "completed", "额度达到配置阈值，开始合并空间"); err != nil {
+		if err = s.autoProUpdate(email, "quota", "completed", "额度达到配置阈值，开始"+forceSettings.DispositionLabel()); err != nil {
 			return err
 		}
 	}
-	if err = s.autoProUpdate(email, "merge", "running", "执行邀请、进入、合并、移出四步流程"); err != nil {
+	action := forceSettings.Disposition()
+	merge = s.performProMerge
+	if action == "deactivate" {
+		merge = s.performProDeactivation
+	} else if s.proAutoHooks != nil && s.proAutoHooks.Merge != nil {
+		merge = s.proAutoHooks.Merge
+	}
+	if err = s.autoProUpdate(email, action, "running", "执行"+forceSettings.DispositionLabel()); err != nil {
 		return err
 	}
 	if _, err = merge(ctx, email); err != nil {
 		// Preserve original merge semantics, only reschedule a safe failed tail.
 		latest, _, readErr := s.store.MailAccountCredential(email)
-		if readErr == nil && ctx.Err() == nil && s.forcedMergeRetry(latest, forceSettings) && !proTransferNeedsConfirmation(latest) && !latest.ProAuto.StopRequested && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
+		if readErr == nil && ctx.Err() == nil && s.forcedMergeRetry(latest, forceSettings) && !proTransferNeedsConfirmation(latest) && !latest.DeletionSubmitted() && !latest.ProAuto.StopRequested && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				p.ProAuto.Status = "waiting_quota"
-				p.ProAuto.Steps["merge"] = "failed"
+				p.ProAuto.Steps[action] = "failed"
 				p.ProAuto.Steps["quota"] = "waiting"
 				next := time.Now().Add(time.Duration(max(30, forceSettings.RetryIntervalSeconds)) * time.Second)
 				p.ProAuto.NextCheckAt = &next
@@ -996,6 +1027,9 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 			return saveErr
 		}
 		return err
+	}
+	if action == "deactivate" {
+		return nil
 	}
 	if err = s.autoProUpdate(email, "merge", "completed", "空间四步流程完成"); err != nil {
 		return err
@@ -1036,6 +1070,7 @@ func (s *Server) startProAutomationMonitor() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				s.tickProDeactivations(ctx)
 				s.tickProSchedule(false)
 				items, err := s.store.DueProAutomations(time.Now())
 				if err != nil {
@@ -1084,6 +1119,9 @@ func (s *Server) stopProAutomations() {
 		s.proAutoCancel()
 	}
 	for _, cancel := range s.proAutoJobs {
+		cancel()
+	}
+	for _, cancel := range s.proRestockStartJobs {
 		cancel()
 	}
 	s.proAutoMu.Unlock()

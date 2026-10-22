@@ -13,10 +13,13 @@ import (
 )
 
 type EJHRechargeLedger struct {
-	HistoryMonthRecordedAt *time.Time `json:"history_month_recorded_at,omitempty"`
-	HistoryMonth           string     `json:"history_month,omitempty"`
-	Amount                 string     `json:"amount"`
-	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
+	HistoryMonthRecordedAt    *time.Time `json:"history_month_recorded_at,omitempty"`
+	HistoryMonth              string     `json:"history_month,omitempty"`
+	Amount                    string     `json:"amount"`
+	UpdatedAt                 *time.Time `json:"updated_at,omitempty"`
+	ExternalTransferAmount    string     `json:"external_transfer_amount,omitempty"`
+	ExternalTransferNote      string     `json:"external_transfer_note,omitempty"`
+	ExternalTransferUpdatedAt *time.Time `json:"external_transfer_updated_at,omitempty"`
 }
 
 var ejhLedgerAmount = regexp.MustCompile(`^\d{1,12}(\.\d{1,2})?$`)
@@ -59,8 +62,8 @@ func (s *Store) SaveEJHRechargeLedger(amount string) (EJHRechargeLedger, error) 
 	if previous.Amount == amount {
 		return previous, nil
 	}
-	out.HistoryMonth = previous.HistoryMonth
-	out.HistoryMonthRecordedAt = previous.HistoryMonthRecordedAt
+	out = previous
+	out.Amount, out.UpdatedAt = amount, &now
 	if err = s.ejhPutTx(tx, "recharge_ledger", "manual-usd", out); err != nil {
 		return out, err
 	}
@@ -73,6 +76,66 @@ func (s *Store) SaveEJHRechargeLedger(amount string) (EJHRechargeLedger, error) 
 	}
 	event := EJHRechargeEvent{ID: EJHID("recharge", now.String()), At: now, Before: previous.Amount, After: amount, Delta: new(big.Rat).Sub(after, before).FloatString(2), Baseline: previous.Amount == ""}
 	if err = s.ejhPutTx(tx, "finance_recharge", event.ID, event); err != nil {
+		return out, err
+	}
+	return out, tx.Commit()
+}
+
+type EJHExternalTransferEvent struct {
+	EJHRechargeEvent
+	Note string `json:"note,omitempty"`
+}
+
+// Record an accounting exclusion only. No money is moved at the issuer, and
+// the recharge principal, recharge fees and original trades remain unchanged.
+func (s *Store) SaveEJHExternalTransfer(amount, note string) (EJHRechargeLedger, error) {
+	amount, note = strings.TrimSpace(amount), strings.TrimSpace(note)
+	if amount == "" {
+		amount = "0"
+	}
+	if !ejhLedgerAmount.MatchString(amount) {
+		return EJHRechargeLedger{}, fmt.Errorf("平台外转出须为非负 USD 金额，最多 12 位整数和 2 位小数")
+	}
+	if len([]rune(note)) > 500 {
+		return EJHRechargeLedger{}, fmt.Errorf("平台外转出备注最多 500 字")
+	}
+	value, err := ejh.Money(amount)
+	if err != nil {
+		return EJHRechargeLedger{}, err
+	}
+	amount = value.FloatString(2)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return EJHRechargeLedger{}, err
+	}
+	defer tx.Rollback()
+	var out EJHRechargeLedger
+	if err = s.ejhGetTx(tx, "recharge_ledger", "manual-usd", &out); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return out, err
+	}
+	before := out.ExternalTransferAmount
+	if before == "" {
+		before = "0.00"
+	}
+	if before == amount && out.ExternalTransferNote == note {
+		return out, nil
+	}
+	now := time.Now()
+	previous, err := ejh.Money(before)
+	if err != nil {
+		return out, err
+	}
+	event := EJHExternalTransferEvent{EJHRechargeEvent: EJHRechargeEvent{
+		ID: EJHID("external-transfer", now.String()), At: now, Before: before, After: amount,
+		Delta: new(big.Rat).Sub(value, previous).FloatString(2), Baseline: out.ExternalTransferUpdatedAt == nil,
+	}, Note: note}
+	out.ExternalTransferAmount, out.ExternalTransferNote, out.ExternalTransferUpdatedAt = amount, note, &now
+	if err = s.ejhPutTx(tx, "recharge_ledger", "manual-usd", out); err != nil {
+		return out, err
+	}
+	if err = s.ejhPutTx(tx, "finance_external_transfer", event.ID, event); err != nil {
 		return out, err
 	}
 	return out, tx.Commit()

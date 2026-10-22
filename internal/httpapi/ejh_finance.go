@@ -34,6 +34,11 @@ func (s *Server) captureEJHFinance() {
 }
 
 func (s *Server) ejhFinance(w http.ResponseWriter, r *http.Request) {
+	transfers, err := store.EJHRecords[store.EJHExternalTransferEvent](s.store, "finance_external_transfer")
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
 	recharges, err := store.EJHRecords[store.EJHRechargeEvent](s.store, "finance_recharge")
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
@@ -60,5 +65,5 @@ func (s *Server) ejhFinance(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, map[string]any{"recharges": recharges, "consumption": usage, "usage_days": days, "snapshots": snapshots, "recording": state, "server_time": time.Now()}, "")
+	writeAPI(w, 200, map[string]any{"external_transfers": transfers, "recharges": recharges, "consumption": usage, "usage_days": days, "snapshots": snapshots, "recording": state, "server_time": time.Now()}, "")
 }

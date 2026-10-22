@@ -93,6 +93,45 @@ func (s *Store) SaveNexovccFinance(f nexovcc.Finance) error {
 }
 
 func (s *Store) saveNexovccFinanceTx(tx *sql.Tx, f nexovcc.Finance) error {
+	if err := s.matchNexovccFinanceTx(tx, f); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO nexovcc_cache VALUES('finance',?) ON CONFLICT(kind) DO UPDATE SET profile=excluded.profile`, mustJSON(f))
+	return err
+}
+
+// Rebuild derived matches from cached issuer evidence at startup. Closed and
+// normal-pending cards are intentionally not polled, but parser fixes still
+// need to update their historical costs and persisted return/admission flags.
+// Preserve the original cache, manual states, purposes and review history.
+func (s *Store) reconcileNexovccFinance() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockProCardAdmission(tx); err != nil {
+		return err
+	}
+	var raw string
+	if err = tx.QueryRow(`SELECT profile FROM nexovcc_cache WHERE kind='finance'`).Scan(&raw); err == sql.ErrNoRows {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	var f nexovcc.Finance
+	if err = json.Unmarshal([]byte(raw), &f); err != nil {
+		return err
+	}
+	if err = s.matchNexovccFinanceTx(tx, f); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) matchNexovccFinanceTx(tx *sql.Tx, f nexovcc.Finance) error {
 	rows, e := tx.Query(`SELECT o.profile,c.serial,u.status FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id JOIN nexovcc_cards c ON c.card_key=u.card_key ORDER BY o.created_at`)
 	if e != nil {
 		return e
@@ -183,7 +222,7 @@ func (s *Store) saveNexovccFinanceTx(tx *sql.Tx, f nexovcc.Finance) error {
 			continue
 		}
 		for _, g := range groupsBySerial[o.serial] {
-			if used[g.ID] || !g.Valid || g.Payment == "0.00" || g.Serial != o.serial || g.At.Before(o.order.CreatedAt.Add(-2*time.Minute)) || g.At.After(o.order.CreatedAt.Add(30*time.Minute)) {
+			if used[g.ID] || !g.Valid || g.RelatedGroupID != "" || g.Payment == "0.00" || g.Serial != o.serial || g.At.Before(o.order.CreatedAt.Add(-2*time.Minute)) || g.At.After(o.order.CreatedAt.Add(30*time.Minute)) {
 				continue
 			}
 			r := o.order.Remote
@@ -217,9 +256,6 @@ func (s *Store) saveNexovccFinanceTx(tx *sql.Tx, f nexovcc.Finance) error {
 				return e
 			}
 		}
-	}
-	if _, e = tx.Exec(`INSERT INTO nexovcc_cache VALUES('finance',?) ON CONFLICT(kind) DO UPDATE SET profile=excluded.profile`, mustJSON(f)); e != nil {
-		return e
 	}
 	return nil
 }

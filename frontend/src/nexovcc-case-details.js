@@ -14,12 +14,14 @@ export function caseDetails(row, finance = {}) {
  const ids = new Set(group?.trade_ids || [])
  const feeIds = new Set([...ids,...(group?.fee_trade_ids||[])])
  const trades = (finance.trades || []).filter(t => t.serial_no === group?.serial_no && ids.has(t.id))
+ const relatedTrades = (finance.trades || []).filter(t => t.serial_no === group?.serial_no && !ids.has(t.id) && feeIds.has(t.id))
  const funds = (finance.funds || []).filter(f => f.serial_no === group?.serial_no && feeIds.has(f.link) && feeKinds.includes(f.kind) && ![3003,3004,3005,5001].includes(f.kind))
  const feeTotal = funds.reduce((s,f) => s-cents(f.amount),0)
  const feesReady = !!group?.valid && validTime(finance.at) && feeTotal === amounts.fees && funds.every(f => f.currency === 'USD' && present(f.amount))
  const fee = kinds => feesReady ? funds.filter(f=>kinds.includes(f.kind)).reduce((s,f)=>s-cents(f.amount),0) : null
  const originalPayments = trades.some(t=>t.status==='COMPLETE') ? trades.filter(t=>t.status==='COMPLETE') : trades.filter(t=>t.status==='PENDING')
  const originalReturns = trades.filter(t=>['REVERSED','REFUNDED'].includes(t.status))
+ const refundCompleted = !!group?.fully_returned && originalReturns.some(t=>t.status==='REFUNDED')
  const original = rows => {
   const byCurrency = new Map()
   for(const t of rows){
@@ -32,12 +34,12 @@ export function caseDetails(row, finance = {}) {
  // Older groups can retain the original payment without raw records loaded.
  // Do not invent the merchant's returned amount by converting from USD.
  if(!merchantPaid.length && group?.valid && group.merchant_currency && present(group.merchant_amount)) merchantPaid.push({currency:group.merchant_currency,amount:cents(group.merchant_amount)})
- return {...amounts,merchantPaid,merchantReturned,trades,funds,feesReady,
+ return {...amounts,merchantPaid,merchantReturned,trades,relatedTrades,funds,feesReady,
   reversal:fee([2003,5004]),transaction:fee([2007,5008]),refundFee:fee([8888,5003]),otherFees:fee(feeKinds.filter(k=>![3003,5001,2003,5004,2007,5008,8888,5003].includes(k))),
   cardLoss:group?.valid ? group.fully_returned ? amounts.difference : 0 : null,
-  settlement:group?.valid ? group.settled && !group.fully_returned ? amounts.difference : 0 : null,
+  settlement:group?.valid ? (group.settled && !group.fully_returned ? amounts.difference : 0)+cents(group.related_settlement) : null,
   pending:group?.valid ? amounts.closed ? 0 : Math.max(0,amounts.difference) : null,
-  returnedAt:validTime(group?.returned_at) ? group.returned_at : '',
+  returnedAt:validTime(group?.returned_at) ? group.returned_at : '',refundCompleted,
   provisional:!amounts.closed,
   manualUnconfirmed:row.state==='returned' && (!group?.valid || !group.fully_returned),
  }

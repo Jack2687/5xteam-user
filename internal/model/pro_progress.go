@@ -29,6 +29,11 @@ func (p MailAccountProfile) ApplyProStageOverrides(v *ProStageDisplay) {
 		if edit.UpdatedAt.Before(p.ProAuto.StartedAt) {
 			continue
 		}
+		// A later deletion check or manual confirmation supersedes the display
+		// annotation; it must never mask a fresh execution result.
+		if stage == "deactivate" && p.ProDeactivation != nil && p.ProDeactivation.UpdatedAt.After(edit.UpdatedAt) {
+			continue
+		}
 		if v.Manual == nil {
 			v.Manual = map[string]bool{}
 		}
@@ -41,7 +46,7 @@ func (p MailAccountProfile) ApplyProStageOverrides(v *ProStageDisplay) {
 // OAuth/push results, never editable display overrides, to skip provisioning.
 func (p MailAccountProfile) CanResumeProQuota() bool {
 	a := p.ProAuto
-	if p.ManagementScope != "pro" || a.ID == "" || a.OrderID == "" || p.ProWorkflowRunning || p.SpaceMergedOnce ||
+	if p.ManagementScope != "pro" || p.DeletionSubmitted() || a.ID == "" || a.OrderID == "" || p.ProWorkflowRunning || p.SpaceMergedOnce ||
 		(p.ProMigration != nil && p.ProMigration.Paused) ||
 		p.TransferStatus != "" && p.TransferStatus != "not_started" || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" ||
 		p.ChatGPTStatus == "dead" || p.OAuthStatus != "completed" || !p.AccessTokenPresent || !p.RefreshTokenPresent ||
@@ -77,7 +82,7 @@ func (p MailAccountProfile) CanResumeProQuota() bool {
 // automation, replay payment, resume stopped/import-paused work or repeat merge.
 func (p *MailAccountProfile) ReconcileProAutoManual(now time.Time) bool {
 	a := &p.ProAuto
-	if p.ManagementScope != "pro" || a.ID == "" || a.StopRequested || p.ProWorkflowRunning || p.SpaceMergedOnce || p.TransferStatus == "completed" ||
+	if p.ManagementScope != "pro" || p.DeletionSubmitted() || a.ID == "" || a.StopRequested || p.ProWorkflowRunning || p.SpaceMergedOnce || p.TransferStatus == "completed" ||
 		(p.ProMigration != nil && p.ProMigration.Paused) || (a.Status != "failed" && a.Status != "interrupted" && a.Status != "awaiting_push") ||
 		(a.Stage != "oauth" && a.Stage != "push") || a.Steps["recharge"] != "completed" ||
 		p.ChatGPTStatus == "dead" || p.OAuthStatus != "completed" || !p.AccessTokenPresent || !p.RefreshTokenPresent ||
@@ -129,6 +134,9 @@ func (p *MailAccountProfile) ReconcileProAutoMerge(now time.Time) bool {
 			p.ProAuto.UpdatedAt = now
 		}
 		return changed
+	}
+	if p.DeletionSubmitted() {
+		return p.ReconcileProAutoDeletion(now)
 	}
 	if p.ProAuto.ID == "" || p.TransferStatus != "completed" {
 		return false
@@ -211,6 +219,29 @@ func (p MailAccountProfile) ProStages() ProStageDisplay {
 		}
 		if p.ProVM2CleanupPending() && p.VM2.Error != "" {
 			v.Errors["merge"] = p.VM2.Error
+		}
+	}
+	if d := p.ProDeactivation; d != nil {
+		status := d.Status
+		if d.SubmittedAt != nil && d.ConfirmedAt == nil {
+			status = "waiting"
+		}
+		delete(v.Errors, "deactivate")
+		if d.ConfirmedAt != nil {
+			status = "completed"
+		} else if d.Error != "" {
+			status = "failed"
+		}
+		v.Steps["deactivate"] = status
+		delete(v.Manual, "deactivate")
+		if d.ConfirmationSource == "manual" && d.ConfirmedAt != nil {
+			if v.Manual == nil {
+				v.Manual = map[string]bool{}
+			}
+			v.Manual["deactivate"] = true
+		}
+		if d.Error != "" {
+			v.Errors["deactivate"] = d.Error
 		}
 	}
 	p.ApplyProStageOverrides(&v)

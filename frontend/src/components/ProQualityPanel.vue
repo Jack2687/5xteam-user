@@ -40,7 +40,7 @@ async function loadGroups() {
   finally { busy.value = '' }
 }
 async function run() {
-  if (!window.confirm('立即读取 Sub2 最新降智结果，并按已保存的配置切换分组或执行空间四步合并，继续？')) return
+  if (!window.confirm('立即读取 Sub2 最新降智结果，并按已保存的配置切换分组或按配置执行合并/删除，继续？')) return
   busy.value = 'run'
   try { await api('/api/pro-quality/run', { method: 'POST' }); await load(); show('已开始查询并处理，可在账号列表查看结果', 'success'); emit('updated') }
   catch (e) { show(e.message) }
@@ -66,7 +66,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
         <label class="field"><span>连续检测失败次数</span><input v-model.number="form.error_failure_limit" aria-label="连续检测失败次数" type="number" min="1" max="20" step="1" required /><small>默认 2 次，达到次数后按降智处理；有效检测恢复后清零。</small></label>
         <div class="field"><span>检测条件</span><label class="quality-check"><input v-model="form.question_enabled" type="checkbox" />答题已确认异常</label><label class="quality-check"><input v-model="form.model_audit_enabled" type="checkbox" />模型已确认不一致</label></div>
         <label class="field"><span>触发条件</span><select v-model="form.condition_mode"><option value="any">任一勾选条件满足</option><option value="all">所有勾选条件同时满足</option></select></label>
-        <label class="field"><span>降智后处理</span><select v-model="form.action" aria-label="降智后处理"><option value="groups">切换分组</option><option value="merge">直接执行合并</option></select></label>
+        <label class="field"><span>降智后处理</span><select v-model="form.action" aria-label="降智后处理"><option value="groups">切换分组</option><option value="merge">按配置执行合并/删除</option></select></label>
         <label class="field"><span>结果处理并发</span><input v-model.number="form.concurrency" type="number" min="1" max="8" required /><small>空间合并仍按合并并发执行，同母号串行。</small></label>
       </div>
       <div v-if="form.action === 'groups'" class="quality-groups">
@@ -81,7 +81,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
         <label class="quality-check"><input v-model="form.auto_restore" type="checkbox" />恢复正常后自动恢复原分组</label>
         <label v-if="form.auto_restore" class="field recovery-count"><span>连续正常次数</span><input v-model.number="form.recovery_limit" type="number" min="1" max="20" required /></label>
       </div>
-      <p class="table-note">{{ form.action === 'merge' ? '确认降智或连续检测失败达到次数后，跳过额度等待执行四步合并。' : '降智或失败达限后切组，保留其他分组；切组失败下次查询重试。' }} 接口查询失败按查询轮次累计，同一条 Sub2 检测失败结果不重复计数；未确认、过期结果不触发。</p>
+      <p class="table-note">{{ form.action === 'merge' ? '确认降智或连续检测失败达到次数后，跳过额度等待，按全自动配置执行空间合并或删除账户。' : '降智或失败达限后切组，保留其他分组；切组失败下次查询重试。' }} 接口查询失败按查询轮次累计，同一条 Sub2 检测失败结果不重复计数；未确认、过期结果不触发。</p>
       <div class="panel-actions"><button class="btn primary" type="submit" :disabled="!!busy"><LoaderCircle v-if="busy === 'save'" class="spin" :size="15" /><Save v-else :size="15" />{{ busy === 'save' ? '保存中…' : '保存设置' }}</button><button class="btn ghost" type="button" :disabled="!!busy || running || !data?.settings?.enabled || !!data?.inactive_reason" @click="run"><LoaderCircle v-if="busy === 'run' || running" class="spin" :size="15" /><Play v-else :size="15" />立即查询并处理</button></div>
     </form>
     <p v-else class="table-note"><LoaderCircle class="spin" :size="15" />正在加载配置…</p>

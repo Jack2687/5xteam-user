@@ -12,6 +12,9 @@ import (
 func ejhCardID(order string) string { return store.EJHID("card", order) }
 
 func (s *Server) forcedMergeReason(p model.MailAccountProfile, c model.ProSettings, now time.Time) string {
+	if p.DeletionSubmitted() {
+		return ""
+	}
 	if p.DailyMergeMatches() && p.ManagementScope == "pro" && p.PushStatus == "completed" && !p.ProWorkflowRunning && !p.ProAuto.StopRequested && p.ProAuto.Status != "stopped" && (p.ProMigration == nil || !p.ProMigration.Paused) && !proTransferNeedsConfirmation(p) && !(p.TransferStatus == "completed" && p.RemoveStatus == "completed") {
 		r := p.ProDailyMerge
 		cfg, err := s.store.ProRestockConfig()
@@ -46,7 +49,7 @@ func (s *Server) forcedMergeRetry(p model.MailAccountProfile, c model.ProSetting
 }
 
 func forceMergeDue(p model.MailAccountProfile, c model.ProSettings, now time.Time) bool {
-	if p.ProAuto.StopRequested {
+	if p.ProAuto.StopRequested || p.DeletionSubmitted() {
 		return false
 	}
 	if p.ProPushDeadline() == nil || p.ManagementScope != "pro" || p.ProPushStartedAt == nil || p.PushStatus != "completed" || p.ProWorkflowRunning || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) || proTransferNeedsConfirmation(p) {
@@ -114,12 +117,12 @@ func (s *Server) tickProForceMerge(ctx context.Context) {
 			lock.Unlock()
 			continue
 		}
-		if _, e = s.startProMergeJob(p.Email, lock.Unlock); e != nil {
+		if _, e = s.startProDispositionJob(p.Email, lock.Unlock, nil); e != nil {
 			lock.Unlock()
 		} else {
-			message := "推送等待超时，跳过额度等待并执行四步"
+			message := "推送等待超时，跳过额度等待并执行" + cfg.DispositionLabel()
 			if reason == "daily_ejh" {
-				message = "每日 EJH 定点合并，执行已登记账号的四步流程"
+				message = "每日 EJH 定点处理，执行已登记账号的" + cfg.DispositionLabel()
 			}
 			s.auditProEvent(latest, "space_merge", "pending", cfg.Provider, message, map[string]any{"trigger": reason})
 		}

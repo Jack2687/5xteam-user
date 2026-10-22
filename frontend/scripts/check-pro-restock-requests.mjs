@@ -15,6 +15,7 @@ function fixture() {
   const context = vm.createContext({
     defineProps:()=>({defaultPageSize:50}), ref, reactive, computed, watch, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
     restockTaskActive, restockTaskProgress, restockTaskRows, restockTaskTimeline,
+    window: {confirm:()=>true},
     document: {activeElement: {focus() {}}},
     onMounted(fn) { mounted = fn }, onUnmounted(fn) { unmounted = fn },
     setInterval(fn) { const id = ++timerID; timers.set(id, fn); return id },
@@ -26,7 +27,7 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog, applyConfig, addNoRestockWindow, removeNoRestockWindow, scheduleSummary, taskFilter, taskSearch, taskPage, taskPageSize, taskRows, visibleTasks, taskDetail};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog, applyConfig, addNoRestockWindow, removeNoRestockWindow, scheduleSummary, taskFilter, taskSearch, taskPage, taskPageSize, taskRows, visibleTasks, taskDetail, stopTask, stoppingTask, canStopTask};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
 }
 
@@ -417,3 +418,27 @@ console.log('Passed: per-window takeover flags, default opt-out, multi-window pa
  f.unmounted()
 }
 console.log('Passed: high-demand visual settings validation and save/load')
+
+// A local stop removes only one task, never toggles global restock or resets the breaker.
+{
+ const f=fixture(),task={id:'stop/1',email:'stop@example.test',status:'attention',decision_id:'batch'}
+ f.state.value={config:{enabled:true,version:7},tasks:[task,{id:'other',status:'running'}]}
+ f.detail.value=task
+ const operation=f.stopTask(task);await tick()
+ assert.equal(f.requests[0].url,'/api/pro-restock/tasks/stop%2F1/stop')
+ assert.equal(f.requests[0].options.body.confirm,true)
+ const duplicate=f.stopTask(task);await duplicate
+ assert.equal(f.requests.length,1)
+ f.requests[0].resolve({...task,status:'cancelled',stopped_at:'2026-10-21T06:00:00Z',message:'已手动停止'})
+ await tick()
+ assert.equal(f.state.value.tasks[0].status,'cancelled')
+ assert.equal(f.state.value.tasks[1].status,'running')
+ assert.equal(f.state.value.config.enabled,true)
+ f.requests[1].resolve(f.state.value);await tick()
+ for(const r of f.requests.slice(2))r.resolve([])
+ await operation
+ assert.equal(f.stoppingTask.value,'')
+ assert.equal(f.taskDetail.value.status,'已手动停止')
+ assert.equal(f.canStopTask({status:'running'}),false)
+ f.unmounted()
+}

@@ -74,7 +74,7 @@ async function changeProvider(event) {
   })
   event.target.value = settings.provider
 }
-const automation = reactive({ purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
+const automation = reactive({ purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, auto_delete_enabled: false, deletion_check_interval_seconds: 300, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 const selectedAdmin = computed(() => props.adminAccounts.find(a => a.id === automation.target_admin_id))
 Object.assign(automation,{card_provider:'ejh',nexovcc_auto_open:false,nexovcc_template_id:'',nexovcc_daily_open_limit:1,nexovcc_daily_amount_limit:'',ejh_auto_open:false,ejh_template_id:'',ejh_daily_open_limit:1,ejh_daily_amount_limit:'',force_merge_enabled:false,force_merge_minutes:60})
 const nexovccTemplates=ref([])
@@ -111,7 +111,7 @@ const configSections = [
   { id: 'purchase', label: '开通设置', hint: '供应商、套餐与国家', icon: CreditCard },
   { id: 'schedule', label: '定时任务', hint: '自动开通与任务容量', icon: CalendarClock },
   { id: 'cards', label: '银行卡与补卡', hint: '用卡上限、卡台与预算', icon: CreditCard },
-  { id: 'merge', label: '空间合并', hint: '额度条件、超时与目标', icon: Workflow },
+  { id: 'merge', label: '空间合并/删除账户', hint: '额度条件、超时与目标', icon: Workflow },
   { id: 'advanced', label: '高级设置', hint: '并发、重试与会话', icon: SlidersHorizontal },
 ]
 const currentConfigSection = computed(() => configSections.find(s => s.id === configSection.value))
@@ -303,18 +303,20 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
             </div>
           </section>
           <section v-show="configSection === 'merge'" data-config-section="merge">
-            <p class="config-callout">手动账号使用下方检测开关；全自动任务沿用启动时的额度配置。合并、移出仍走原流程。</p>
-            <label class="field"><span>合并并发数</span><input v-model.number="automation.merge_concurrency" type="number" min="1" max="20" required /><small>同时执行的完整四步合并任务上限，包含邀请、进入、合并、移出及后续处理；同一母号严格串行，不同母号可并行。与高级设置的全流程并发分别计数。</small></label>
+            <p class="config-callout">自动合并与自动删除只能开启一个。额度达标、推送超时、降智直接处理和每日 EJH 定点处理均执行所选动作；全自动沿用启动时的额度配置。两个开关均关闭时保留原全自动合并行为。</p>
+            <label class="field"><span>合并/删除并发数</span><input v-model.number="automation.merge_concurrency" type="number" min="1" max="20" required /><small>同时执行的合并或删除账户任务上限，包含后续处理；同一母号严格串行，不同母号可并行。与高级设置的全流程并发分别计数。</small></label>
             <div class="settings-fields">        <label class="field"><span>7 天已用额度达到（%）</span><input v-model.number="automation.quota_used_threshold" type="number" min="0.01" max="100" step="0.01" required /></label>
         <label class="field"><span>额度检测间隔（秒）</span><input v-model.number="automation.quota_check_interval_seconds" type="number" min="10" max="86400" required /></label>
+        <label class="field wide"><span>删除结果核验间隔（秒）</span><input v-model.number="automation.deletion_check_interval_seconds" type="number" min="1" max="86400" step="1" required /><small>默认 300 秒。单独控制删除提交后的结果核验；修改后已有等待任务按新间隔安排。确认删除成功后停止核验，不再提交删除；未完成的分组调整仍可续跑。</small></label>
         <label class="toggle-row wide"><div><strong>定时查额度</strong><small>定时查询已推送且未合并的手动账号，并保存最新额度到数据库。</small></div><input v-model="automation.quota_enabled" type="checkbox" /><i></i></label>
-        <label class="toggle-row wide"><div><strong>查额度达标后自动合并</strong><small>查额度成功且达到阈值时执行合并；定时触发需同时开启“定时查额度”。401、超时或无 7 天额度数据不触发。</small></div><input v-model="automation.auto_merge_enabled" type="checkbox" /><i></i></label>
-        <label class="field wide"><span>目标母号</span><select v-model="automation.target_admin_id"><option value="">请选择母号</option><option v-for="admin in adminAccounts" :key="admin.id" :value="admin.id">{{ admin.label || admin.email }} · {{ admin.team_account_id || '无 Team ID' }}</option></select></label>
+        <label class="toggle-row wide"><div><strong>查额度达标后自动合并</strong><small>查额度成功且达到阈值时执行合并；定时触发需同时开启“定时查额度”。401、超时或无 7 天额度数据不触发。</small></div><input v-model="automation.auto_merge_enabled" @change="automation.auto_merge_enabled && (automation.auto_delete_enabled = false)" type="checkbox" /><i></i></label>
+        <label class="toggle-row wide"><div><strong>查额度达标后自动删除</strong><small>使用当前账号登录凭据执行个人账户删除。已受理立即调整所选分组，最终删除状态单独核验；回款仍以卡台流水为准。</small></div><input v-model="automation.auto_delete_enabled" @change="automation.auto_delete_enabled && (automation.auto_merge_enabled = false)" type="checkbox"/><i></i></label>
+        <label class="field wide"><span>目标母号（空间合并使用）</span><select v-model="automation.target_admin_id"><option value="">请选择母号</option><option v-for="admin in adminAccounts" :key="admin.id" :value="admin.id">{{ admin.label || admin.email }} · {{ admin.team_account_id || '无 Team ID' }}</option></select></label>
         <label class="field"><span>空间席位套餐</span><select v-model="automation.target_seat_type"><option value="default">Standard（普通空间）</option><option value="prolite">Premium（5x）</option></select></label>
         <div class="target-summary wide"><strong>{{ selectedAdmin?.label || selectedAdmin?.email || '尚未选择母号' }}</strong><span>{{ selectedAdmin?.team_account_id || '选择后显示目标 Team ID' }}</span></div>
 </div>
             <div class="config-divider"><h4>推送等待时限</h4><p>从首次推送开始计时，重试和重启不清零。</p></div>
-            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>推送超时执行原空间四步流程</strong><small>开通时保存到账号，修改仅影响新账号；从首次成功推送开始计时。重试和重启不清零，停止、暂停和待确认任务除外。合并仅标记待回款，不调用退款接口。</small></div><input v-model="automation.force_merge_enabled" type="checkbox"/><i></i></label>
+            <div class="settings-fields">        <label class="toggle-row wide"><div><strong>推送超时执行合并/删除</strong><small>保存后同步更新尚未开始合并/删除的在途账号，仍从首次成功推送开始计时。缩短至已超时会在后续检查时执行；重试和重启不清零，停止、暂停和待确认任务仍遵守原规则。按当前选择执行合并或删除，仅标记待回款，不调用退款接口。</small></div><input v-model="automation.force_merge_enabled" type="checkbox"/><i></i></label>
         <label class="field"><span>首次推送后最多等待（分钟）</span><input v-model.number="automation.force_merge_minutes" type="number" min="1" max="525600" :required="automation.force_merge_enabled"/></label>
 </div>
           </section>

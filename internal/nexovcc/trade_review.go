@@ -129,6 +129,7 @@ func ReviewedGroups(f Finance, reviews []TradeReview) ([]TradeGroup, []TradeRevi
 	adjusted := f
 	adjusted.Trades = append([]Trade{}, f.Trades...)
 	claimed := map[string]bool{}
+	manualRefunds := map[string]bool{}
 	for i := range out {
 		r := &out[i]
 		r.Applied = false
@@ -176,6 +177,7 @@ func ReviewedGroups(f Finance, reviews []TradeReview) ([]TradeGroup, []TradeRevi
 					adjusted.Trades[j].Authorization = target.Authorization
 				}
 			}
+			manualRefunds[target.ID] = true
 			claimed[target.ID] = true
 		default:
 			r.Problem = "未知核实方式"
@@ -184,7 +186,7 @@ func ReviewedGroups(f Finance, reviews []TradeReview) ([]TradeGroup, []TradeRevi
 		claimed[g.ID] = true
 		r.Applied = true
 	}
-	groups := Groups(adjusted)
+	groups := groupsWithCompletedRefunds(adjusted, manualRefunds)
 	for i := range groups {
 		for j := range out {
 			if out[j].Applied && out[j].Kind == "other_fee" && out[j].GroupID == groups[i].ID {

@@ -188,7 +188,7 @@ func nexovccBalanceWithdrawal(q nexovccCaseQuery, card nexovcc.Card, key string)
 		return nil, err
 	}
 	for id, g := range groups {
-		if g.Payment != "0.00" && !g.FullyReturned && !waiting[id] {
+		if g.Payment != "0.00" && !g.ReturnResolved() && !waiting[id] {
 			return nil, nil // Unmatched/manual payments are not a Pro refund request.
 		}
 	}

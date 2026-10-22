@@ -32,6 +32,7 @@ type MailAccountProfile struct {
 	ProPushTimeoutEnabled      *bool                       `json:"pro_push_timeout_enabled,omitempty"`
 	ProPushTimeoutMinutes      int                         `json:"pro_push_timeout_minutes,omitempty"`
 	ProPushDownstream          *ProDownstreamRef           `json:"pro_push_downstream,omitempty"`
+	ProPushEndedAt             *time.Time                  `json:"pro_push_ended_at,omitempty"`
 	ProPushStartedAt           *time.Time                  `json:"pro_push_started_at,omitempty"`
 	ProForceMergeNextAt        *time.Time                  `json:"pro_force_merge_next_at,omitempty"`
 	ProForceMergeAttempts      int                         `json:"pro_force_merge_attempts,omitempty"`
@@ -80,6 +81,7 @@ type MailAccountProfile struct {
 	UserCostDownstreamSnapshot float64                     `json:"user_cost_downstream_snapshot"`
 	CostCheckedAt              *time.Time                  `json:"cost_checked_at,omitempty"`
 	SpaceMergedOnce            bool                        `json:"space_merged_once"`
+	ProDeactivation            *ProDeactivation            `json:"pro_deactivation,omitempty"`
 	SpaceMergedAt              *time.Time                  `json:"space_merged_at,omitempty"`
 	TargetAdminID              string                      `json:"target_admin_id,omitempty"`
 	TargetTeamID               string                      `json:"target_team_id,omitempty"`

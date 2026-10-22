@@ -16,6 +16,13 @@ func nexovccClosing(action string) bool { return action == "cancel" || action ==
 // Keep the card's durable operation lock across all three external mutations.
 // A submitted step is never replayed merely because its HTTP request timed out.
 func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexovcc.Operation, error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return nexovcc.Operation{}, gateErr
+	}
+	defer finishOperation()
+	ctx = bound
+
 	var op nexovcc.Operation
 	if !nexovcc.ValidRequestID(in.RequestID) {
 		return op, fmt.Errorf("操作请求编号无效")
@@ -39,7 +46,7 @@ func (s *Server) actionNexovccLocked(ctx context.Context, in nexovccInput) (nexo
 		// Automatic withdrawals select verified local card/finance records.
 		// Recheck the live spendable balance before transactional admission.
 		card, err = s.store.NexovccCard(in.CardID)
-		if err == nil && (!card.Imported || card.Status != "1" || card.Control == "frozen" || card.Error != "") {
+		if err == nil && (card.NormalPending || !card.Imported || card.Status != "1" || card.Control == "frozen" || card.Error != "") {
 			err = fmt.Errorf("自动提现卡片状态待更新，请等待下一轮同步")
 		}
 		if err == nil {
@@ -235,6 +242,13 @@ func (s *Server) nexovccWaitGap(ctx context.Context, after time.Time, gap time.D
 }
 
 func (s *Server) advanceNexovccCloseLocked(ctx context.Context, op nexovcc.Operation) (nexovcc.Operation, error) {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return op, gateErr
+	}
+	defer finishOperation()
+	ctx = bound
+
 	client, _, err := s.nexovccClientLocked()
 	if err != nil {
 		return op, err

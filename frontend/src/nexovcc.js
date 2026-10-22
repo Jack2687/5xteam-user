@@ -1,5 +1,5 @@
 export const providerName = value => value === 'nexovcc' ? '环球' : value === 'ejh' ? 'EJH' : '其他'
-export const operationNames = {open:'开卡',deposit:'充值',withdraw:'自定义提现',withdraw_all:'提现留 1U',withdraw_cancel:'提现留 1U 并销卡',freeze:'冻结',unfreeze:'解冻',cancel:'一键销卡',remark:'修改备注',card_finance:'同步交易明细'}
+export const operationNames = {open:'开卡',deposit:'充值',withdraw:'自定义提现',withdraw_all:'提现留 1U',withdraw_cancel:'提现留 1U 并销卡',freeze:'冻结',unfreeze:'解冻',cancel:'一键销卡',remark:'修改备注',card_finance:'同步交易明细',pending_sync:'刷新正常待定卡'}
 export const operationStates = {submitted:'已提交',processing:'处理中',import_pending:'待同步入库',unknown:'结果待核实',succeeded:'成功',failed:'失败'}
 export const returnStates = {unopened:'未开通',opened:'已开通',waiting:'已申请待回款',returned:'已回款'}
 export const terminal = op => ['succeeded','failed'].includes(op.status)

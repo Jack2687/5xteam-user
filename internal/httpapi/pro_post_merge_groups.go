@@ -30,8 +30,11 @@ func (s *Server) finishProPostMergeGroups(ctx context.Context, p model.MailAccou
 	if !p.ProPostMergeGroupsPending() {
 		return p, nil
 	}
-	if p.TransferStatus != "completed" || (p.RemoveStatus != "completed" && p.RemoveStatus != "team_removed") {
-		return p, errors.New("空间合并并移出成功后才能调整 Sub2 分组")
+	if p.ProPostMergeGroups.Action == "deactivate" && !p.DeletionAccepted() {
+		return p, errors.New("删除请求尚未受理，暂不调整删除后分组")
+	}
+	if !p.DeletionAccepted() && (p.TransferStatus != "completed" || (p.RemoveStatus != "completed" && p.RemoveStatus != "team_removed")) {
+		return p, errors.New("合并移出成功或删除请求受理后才能调整 Sub2 分组")
 	}
 	target := *p.ProPostMergeGroups
 	p, err := s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {
@@ -42,7 +45,7 @@ func (s *Server) finishProPostMergeGroups(ctx context.Context, p model.MailAccou
 		return p, err
 	}
 	details := map[string]any{"account_id": target.AccountID, "group_ids": target.GroupIDs}
-	s.auditProEvent(p, "post_merge_groups", "running", "sub2", "移出完成，开始调整 Sub2 分组", details)
+	s.auditProEvent(p, "post_merge_groups", "running", "sub2", "合并已移出或删除已受理，开始调整 Sub2 分组", details)
 	settings, password, _, err := s.store.ProSettings()
 	if err == nil {
 		switch {
@@ -74,8 +77,8 @@ func (s *Server) finishProPostMergeGroups(ctx context.Context, p model.MailAccou
 	}
 	status, message, lastError := "completed", "Sub2 分组调整完成", ""
 	if err != nil {
-		err = fmt.Errorf("空间已移出，Sub2 分组调整失败（可单独重试）: %w", err)
-		status, message, lastError = "failed", "空间已移出，Sub2 分组调整失败", err.Error()
+		err = fmt.Errorf("后续 Sub2 分组调整失败（可单独重试）: %w", err)
+		status, message, lastError = "failed", "Sub2 分组调整失败", err.Error()
 		details["error"] = lastError
 	}
 	out, saveErr := s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {

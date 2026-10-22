@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -88,6 +90,17 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 			return card, secret, err
 		}
 		taskProvider, strictProvider = task.CardProvider, task.StrictCardProvider
+		if taskProvider == "nexovcc" {
+			op, err := s.store.NexovccRestockOperation(taskID)
+			if err == nil {
+				if op.Status != "succeeded" || op.CardID == "" || (selected != "" && selected != op.CardID) {
+					return card, secret, fmt.Errorf("原环球开卡尚未确认或卡片不匹配，保留原卡等待同步")
+				}
+				selected, autoOpen = op.CardID, false
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return card, secret, err
+			}
+		}
 	} else {
 		cfg, _, _, err := s.store.ProSettings()
 		if err != nil {

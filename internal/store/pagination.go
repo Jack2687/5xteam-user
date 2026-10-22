@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"chatgpt-space-merge/internal/model"
 )
@@ -57,6 +58,7 @@ type ProAccountsPageSummary struct {
 	OAuthReady int `json:"oauth_ready"`
 	Pushed     int `json:"pushed"`
 	Merged     int `json:"merged"`
+	Deleted    int `json:"deleted"`
 	Unmerged   int `json:"unmerged"`
 	InProgress int `json:"in_progress"`
 }
@@ -422,7 +424,12 @@ func (s *Store) FreeAccountsPageContext(ctx context.Context, spaceState string, 
 	return items, total, summary, rows.Err()
 }
 
-func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]model.MailAccountProfile, int, ProAccountsPageSummary, error) {
+type ProAccountPageItem struct {
+	model.MailAccountProfile
+	StateEnteredAt *time.Time
+}
+
+func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]ProAccountPageItem, int, ProAccountsPageSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -433,8 +440,8 @@ func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]
 	if err := s.db.QueryRow(cte+` SELECT COUNT(*),
 		COALESCE(SUM(json_extract(profile,'$.access_token_present')=1 AND json_extract(profile,'$.refresh_token_present')=1),0),
 		COALESCE(SUM(json_extract(profile,'$.push_status')='completed'),0), COALESCE(SUM(merge_state='merged'),0),
-		COALESCE(SUM(merge_state='unmerged'),0), COALESCE(SUM(merge_state='in_progress'),0) FROM accounts`).Scan(
-		&summary.All, &summary.OAuthReady, &summary.Pushed, &summary.Merged, &summary.Unmerged, &summary.InProgress); err != nil {
+  COALESCE(SUM(merge_state='unmerged'),0), COALESCE(SUM(merge_state='in_progress'),0), COALESCE(SUM(merge_state='deleted'),0) FROM accounts`).Scan(
+		&summary.All, &summary.OAuthReady, &summary.Pushed, &summary.Merged, &summary.Unmerged, &summary.InProgress, &summary.Deleted); err != nil {
 		return nil, 0, summary, err
 	}
 	like := "%" + query + "%"
@@ -443,16 +450,17 @@ func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]
 	if err := s.db.QueryRow(cte+` SELECT COUNT(*) FROM accounts`+where, query, like, mergeState, mergeState).Scan(&total); err != nil {
 		return nil, 0, summary, err
 	}
-	rows, err := s.db.Query(cte+` SELECT profile, encrypted_credentials FROM accounts`+where+` ORDER BY `+proAccountsOrderSQL(mergeState)+` LIMIT ? OFFSET ?`, query, like, mergeState, mergeState, limit, offset)
+	rows, err := s.db.Query(cte+` SELECT profile, encrypted_credentials, strftime('%Y-%m-%dT%H:%M:%fZ',`+proAccountsEventTimeSQL(mergeState)+`) FROM accounts`+where+` ORDER BY `+proAccountsOrderSQL(mergeState)+` LIMIT ? OFFSET ?`, query, like, mergeState, mergeState, limit, offset)
 	if err != nil {
 		return nil, 0, summary, err
 	}
 	defer rows.Close()
-	items := make([]model.MailAccountProfile, 0, limit)
+	items := make([]ProAccountPageItem, 0, limit)
 	for rows.Next() {
 		var raw, encrypted string
+		var eventTime sql.NullString
 		var item model.MailAccountProfile
-		if rows.Scan(&raw, &encrypted) != nil || json.Unmarshal([]byte(raw), &item) != nil {
+		if rows.Scan(&raw, &encrypted, &eventTime) != nil || json.Unmarshal([]byte(raw), &item) != nil {
 			continue
 		}
 		if plain, decryptErr := s.decrypt(encrypted); decryptErr == nil {
@@ -461,7 +469,13 @@ func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]
 				item = mailProfileWithCredentials(item, credentials)
 			}
 		}
-		items = append(items, item)
+		row := ProAccountPageItem{MailAccountProfile: item}
+		if eventTime.Valid {
+			if at, err := time.Parse(time.RFC3339Nano, eventTime.String); err == nil {
+				row.StateEnteredAt = &at
+			}
+		}
+		items = append(items, row)
 	}
 	return items, total, summary, rows.Err()
 }

@@ -25,12 +25,22 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	// Older clients omit the new field; retain its saved value. Explicit zero
 	// still fails validation after decoding.
 	input.Automation.MergeConcurrency = current.MergeConcurrency
+	input.Automation.AutoDeleteEnabled = current.AutoDeleteEnabled
+	input.Automation.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.Automation.PurchaseScheduleEnabled, input.Automation.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
 	input.Automation.EJHPlanTemplates, input.Automation.NexovccPlanTemplates = current.EJHPlanTemplates, current.NexovccPlanTemplates
 	if err := decodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	v := input.Automation
+	if v.DeletionCheckIntervalSeconds < 1 || v.DeletionCheckIntervalSeconds > 86400 {
+		writeAPI(w, 400, nil, "删除结果核验间隔须为 1～86400 秒")
+		return
+	}
+	if err := v.ValidateDisposition(); err != nil {
+		writeAPI(w, 400, nil, err.Error())
+		return
+	}
 	if v.MergeConcurrency < 1 || v.MergeConcurrency > 20 {
 		writeAPI(w, 400, nil, "合并并发数须为 1～20")
 		return
@@ -39,7 +49,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	if v.ScheduledEnabled && (v.MaxUnmerged < 1 || v.MaxUnmerged > 10000 || v.ScheduleIntervalSeconds < 10 || v.ScheduleIntervalSeconds > 86400 || strings.TrimSpace(v.TargetAdminID) == "") {
+	if v.ScheduledEnabled && (v.MaxUnmerged < 1 || v.MaxUnmerged > 10000 || v.ScheduleIntervalSeconds < 10 || v.ScheduleIntervalSeconds > 86400 || (!v.AutoDeleteEnabled && strings.TrimSpace(v.TargetAdminID) == "")) {
 		writeAPI(w, 400, nil, "定时开通需设置目标母号、最大未合并数（1～10000）和检查间隔（10～86400 秒）")
 		return
 	}

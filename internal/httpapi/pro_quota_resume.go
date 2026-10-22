@@ -40,7 +40,7 @@ func (s *Server) resumeProQuota(w http.ResponseWriter, r *http.Request, expected
 		writeAPI(w, 409, nil, "当前推送连接或合并状态不允许恢复，请先核对配置")
 		return
 	}
-	if p.TargetAdminID == "" && cfg.TargetAdminID == "" {
+	if !cfg.AutoDeleteEnabled && p.TargetAdminID == "" && cfg.TargetAdminID == "" {
 		writeAPI(w, 409, nil, "请先选择合并目标母号")
 		return
 	}

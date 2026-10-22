@@ -15,7 +15,7 @@ FROM python:3.11-alpine3.20
 # Python 3.12 changes ast.dump output even when the source is identical.
 RUN apk add --no-cache nodejs npm libstdc++ ca-certificates tzdata \
     && python3 -m pip install --no-cache-dir "curl_cffi>=0.16,<0.17" pyotp \
-    && python3 -c "import sys, curl_cffi, pyotp; assert sys.version_info[:2] == (3, 11); print('python protocol dependencies ok'); from curl_cffi.requests.impersonate import BrowserType; BrowserType('chrome150')"
+    && python3 -c "import sys, curl_cffi, pyotp; assert sys.version_info[:2] == (3, 11); print('python protocol dependencies ok'); from curl_cffi.requests.impersonate import BrowserType; BrowserType('chrome150'); BrowserType('chrome142')"
 RUN addgroup -S app && adduser -S -G app app
 WORKDIR /app
 COPY --from=builder /out/chatgpt-space-merge /app/chatgpt-space-merge
@@ -23,6 +23,7 @@ COPY --from=builder /out/chatgpt-space-merge /app/chatgpt-space-merge
 COPY --from=builder /src/internal/protocol_login.py /app/internal/protocol_login.py
 COPY --from=builder /src/internal/protocol_codex_oauth.py /app/internal/protocol_codex_oauth.py
 COPY --from=builder /src/internal/protocol_pro_auto.py /app/internal/protocol_pro_auto.py
+COPY --from=builder /src/internal/protocol_pro_deactivate.py /app/internal/protocol_pro_deactivate.py
 COPY --from=builder /src/internal/protocol_proxy_probe.py /app/internal/protocol_proxy_probe.py
 COPY --from=builder /src/internal/protocol_oauth_token.py /app/internal/protocol_oauth_token.py
 # Bundle the local manager OAuth port and the runtime used by the other flows.

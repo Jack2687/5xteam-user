@@ -209,9 +209,9 @@ async function copyCredential(kind) {
     if (requestID === credentialRequestID) credentialDialog.error = "复制失败，请选中凭证后手动复制";
   }
 }
-function downloadJSON(filename, value) {
-  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
-    type: "application/json;charset=utf-8",
+function downloadJSON(filename, value, text = false) {
+  const blob = new Blob([text ? value : `${JSON.stringify(value, null, 2)}\n`], {
+    type: text ? "text/plain;charset=utf-8" : "application/json;charset=utf-8",
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -221,6 +221,16 @@ function downloadJSON(filename, value) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+function exportAccountText() {
+  if (!credentialDialog.loaded || hasChanges.value || credentialDialog.saving || credentialDialog.exporting) return;
+  const fields = [credentialDialog.email, credentialDialog.gptPassword, credentialDialog.totpSecret];
+  if (fields.some(value => /[\r\n]/.test(value) || value.includes('----'))) {
+    credentialDialog.error = '字段包含换行或分隔符，无法按文本格式导出';
+    return;
+  }
+  downloadJSON(`${credentialDialog.email.replace(/[^a-z0-9@._-]+/gi, '_')}.txt`, fields.join('----') + '\r\n', true);
+  emit('exported', '账号----密码----2FA 文本已导出');
 }
 async function exportCredentialFormat(format) {
   if (hasChanges.value || credentialDialog.saving || credentialDialog.exporting || !credentialDialog.accessToken || !credentialDialog.refreshToken) return;
@@ -385,6 +395,7 @@ defineExpose({ open: openCredentialDialog });
           <label class="credential-token-field"><span><strong>Account ID</strong></span><input v-model="credentialDialog.accountID" aria-label="Account ID" placeholder="未获取" spellcheck="false" /></label>
           </fieldset>
           <footer class="credential-export-actions">
+            <button class="btn ghost" type="button" :disabled="!credentialDialog.loaded || hasChanges || credentialDialog.saving || !!credentialDialog.exporting" :title="hasChanges ? '请先保存修改' : '缺失字段留空，2FA 为绑定密钥'" @click="exportAccountText"><Download :size="15"/>导出账号----密码----2FA</button>
             <button
               class="btn ghost"
               type="button"

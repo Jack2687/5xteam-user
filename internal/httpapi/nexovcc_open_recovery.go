@@ -58,6 +58,13 @@ func (s *Server) findNexovccOpenSerialLocked(ctx context.Context, op nexovcc.Ope
 // A manual retry of a failed restock first recovers an already issued card.
 // This path only queries; it cannot issue a second card or clear uncertainty.
 func (s *Server) recoverNexovccOpenForProRetry(ctx context.Context) error {
+	bound, finishOperation, gateErr := s.nexovccOperationContext(ctx)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer finishOperation()
+	ctx = bound
+
 	if err := s.lockNexovccOperation(ctx); err != nil {
 		return err
 	}

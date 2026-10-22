@@ -9,19 +9,19 @@ import (
 // workflow. Existing full-auto jobs pin their threshold at start; the separate
 // quota sweep uses current Pro settings when its automatic merge is enabled.
 func applyRestockExitPolicy(a *restock.Account, p model.MailAccountProfile, settings model.ProSettings) {
-	if p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) || proTransferNeedsConfirmation(p) {
+	if p.DeletionSubmitted() || p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) || proTransferNeedsConfirmation(p) {
 		return
 	}
 	if p.ProAuto.ID != "" && p.ProAuto.Status != "completed" && p.ProAuto.QuotaUsedThreshold > 0 && p.ProAuto.QuotaUsedThreshold <= 100 {
 		t := p.ProAuto.QuotaUsedThreshold
 		a.QuotaMergeThreshold = &t
 	}
-	if settings.QuotaEnabled && settings.AutoMergeEnabled && !p.SpaceMergedOnce && settings.QuotaUsedThreshold > 0 && settings.QuotaUsedThreshold <= 100 {
+	if settings.QuotaEnabled && (settings.AutoMergeEnabled || settings.AutoDeleteEnabled) && !p.SpaceMergedOnce && settings.QuotaUsedThreshold > 0 && settings.QuotaUsedThreshold <= 100 {
 		if a.QuotaMergeThreshold == nil || settings.QuotaUsedThreshold < *a.QuotaMergeThreshold {
 			t := settings.QuotaUsedThreshold
 			a.QuotaMergeThreshold = &t
 		}
 	}
 	a.ExitDeadline = p.ProPushDeadline()
-	a.Leaving = p.ProWorkflowRunning || (p.ProAuto.Stage == "merge" && p.ProAuto.Status == "running")
+	a.Leaving = p.ProWorkflowRunning || ((p.ProAuto.Stage == "merge" || p.ProAuto.Stage == "deactivate") && p.ProAuto.Status == "running")
 }

@@ -38,9 +38,13 @@ func (s *Server) syncNexovccProductsIfDueLocked(ctx context.Context) error {
 	if err := s.store.NexovccCached("products_at", &at); err != nil {
 		return err
 	}
-	if !at.IsZero() && time.Since(at) < 30*time.Minute {
+	cfg, _, err := s.store.NexovccSettings()
+	if err != nil {
+		return err
+	}
+	if !at.IsZero() && time.Since(at) < time.Duration(cfg.WithSyncDefaults().ProductSyncSeconds)*time.Second {
 		return nil
 	}
-	_, err := s.syncNexovccProductsLocked(ctx)
+	_, err = s.syncNexovccProductsLocked(ctx)
 	return err
 }

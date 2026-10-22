@@ -108,10 +108,12 @@ func TestNexovccPageOptOutStillAllowsScopedManualFullSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := s.nexovcc.transport
-	calls, ledgers := 0, 0
+	calls, ledgers, summaries := 0, 0, 0
 	s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
 		calls++
-		if strings.Contains(r.Path, "findLog") {
+		if r.Path == "/api/findLogRecharge" || r.Path == "/api/findLogReportCardDay" {
+			summaries++
+		} else if strings.Contains(r.Path, "findLog") {
 			ledgers++
 			if r.Body["card_no"] != "4242424242424242" || (r.Path != "/api/findLogWebFunds" && r.Path != "/api/findLogCardTrades") {
 				t.Errorf("manual full refresh broadened ledger scope: %s", r.Path)
@@ -129,11 +131,11 @@ func TestNexovccPageOptOutStillAllowsScopedManualFullSync(t *testing.T) {
 	w = httptest.NewRecorder()
 	s.runNexovcc(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"action":"sync"}`)))
 	s.nexovcc.wg.Wait()
-	if w.Code != 202 || s.nexovcc.job.Status != "completed" || ledgers != 2 {
+	if w.Code != 202 || s.nexovcc.job.Status != "completed" || ledgers != 2 || summaries != 2 {
 		t.Fatal(w.Code, s.nexovcc.job, ledgers)
 	}
 	var f nexovcc.Finance
-	if err = s.store.NexovccCached("finance", &f); err != nil || !f.AccountAt.Equal(now) || !f.CardSyncedAt(op.Serial).After(now) {
-		t.Fatal("manual sync forced account history or missed card", err)
+	if err = s.store.NexovccCached("finance", &f); err != nil || !f.AccountAt.After(now) || !f.CardSyncedAt(op.Serial).After(now) {
+		t.Fatal("manual sync missed account summary or same-card ledger", err)
 	}
 }

@@ -219,3 +219,84 @@ func TestFinanceRegularSettlementThenRefund(t *testing.T) {
 		t.Fatalf("ordinary settlement/refund changed: %+v", got)
 	}
 }
+
+func TestFinanceCrossAuthorizationRefundCountsResidualAsCost(t *testing.T) {
+	at := time.Date(2026, 10, 22, 11, 42, 0, 0, time.FixedZone("CST", 8*3600))
+	f := Finance{Trades: []Trade{
+		{ID: "payment-4276", Serial: "card-4276", Authorization: "UX0VKI", Currency: "USD", Amount: "141.82", MerchantAmount: "8919.64", MerchantCurrency: "PHP", Merchant: "OPENAI*CHATGPTSUBSCR", Status: "COMPLETE", At: at},
+		{ID: "refund-4276", Serial: "card-4276", Authorization: "3JWWV3", Currency: "USD", Amount: "141.23", MerchantAmount: "8898.46", MerchantCurrency: "PHP", Merchant: "OPENAI*CHATGPTSUBSCR", Status: "REFUNDED", At: at.Add(42 * time.Minute)},
+	}, Funds: []Fund{
+		{ID: "payment-fee", Serial: "card-4276", Link: "payment-4276", Currency: "USD", Kind: 2007, Amount: "-2.42"},
+		{ID: "refund-fee", Serial: "card-4276", Link: "refund-4276", Currency: "USD", Kind: 8888, Amount: "-4.74"},
+	}}
+
+	groups := Groups(f)
+	if len(groups) != 1 {
+		t.Fatalf("cross-authorization refund should be attributed to the unique original payment: %+v", groups)
+	}
+	g := groups[0]
+	if !g.Valid || !g.FullyReturned || g.Authorization != "UX0VKI" || g.Payment != "141.82" || g.Returned != "141.23" || g.Difference != "0.59" || g.Fees != "7.16" || g.Cost != "7.75" || !g.ReturnedAt.Equal(at.Add(42*time.Minute)) {
+		t.Fatalf("refund residual or fees were not preserved as cost: %+v", g)
+	}
+	if len(g.TradeIDs) != 2 {
+		t.Fatalf("group should include both raw transactions: %+v", g.TradeIDs)
+	}
+}
+
+func TestFinanceCrossAuthorizationRefundRequiresUniqueWithinBalanceCandidate(t *testing.T) {
+	at := time.Now()
+	base := func() Finance {
+		return Finance{Trades: []Trade{
+			{ID: "payment", Serial: "card", Authorization: "paid", Currency: "USD", Amount: "141.82", MerchantAmount: "8919.64", MerchantCurrency: "PHP", Merchant: "OPENAI*CHATGPTSUBSCR", Status: "COMPLETE", At: at},
+			{ID: "refund", Serial: "card", Authorization: "refund", Currency: "USD", Amount: "141.23", MerchantAmount: "8898.46", MerchantCurrency: "PHP", Merchant: "OPENAI*CHATGPTSUBSCR", Status: "REFUNDED", At: at.Add(time.Minute)},
+		}}
+	}
+	for _, mode := range []string{"ambiguous", "over original"} {
+		t.Run(mode, func(t *testing.T) {
+			f := base()
+			if mode == "ambiguous" {
+				other := f.Trades[0]
+				other.ID, other.Authorization, other.At = "other-payment", "other-paid", at.Add(-time.Minute)
+				f.Trades = append(f.Trades, other)
+			} else {
+				f.Trades[1].Amount = "141.83"
+			}
+			groups := Groups(f)
+			if len(groups) != 2 && mode == "over original" || len(groups) != 3 && mode == "ambiguous" {
+				t.Fatalf("uncertain transactions were merged: %+v", groups)
+			}
+			for _, g := range groups {
+				if g.FullyReturned {
+					t.Fatalf("uncertain refund released the original payment: %+v", groups)
+				}
+			}
+		})
+	}
+}
+
+func TestFinanceCrossAuthorizationRefundAfterAuthorizationAndSettlement(t *testing.T) {
+	at := time.Now().Add(-time.Hour)
+	pending := Trade{ID: "authorized", Serial: "2438", Authorization: "D5F3XG", Currency: "USD", Amount: "141.50", MerchantAmount: "8919.64", MerchantCurrency: "PHP", Merchant: "OPENAI*CHATGPTSUBSCR", Status: "PENDING", At: at}
+	settled := pending
+	settled.ID, settled.Status, settled.At = "settled", "COMPLETE", at.Add(time.Minute)
+	refund := settled
+	refund.ID, refund.Authorization, refund.Status, refund.At = "refund", "NEWREF", "REFUNDED", at.Add(2*time.Minute)
+	refund.Amount, refund.MerchantAmount = "141.23", "8898.46"
+	for _, rows := range [][]Trade{{pending, settled, refund}, {refund, settled, pending}} {
+		groups := Groups(Finance{Trades: rows})
+		if len(groups) != 1 || !groups[0].Valid || !groups[0].FullyReturned || groups[0].Payment != "141.50" || groups[0].Cost != "0.27" {
+			t.Fatalf("authorization and settlement must represent one returned payment: %+v", groups)
+		}
+	}
+	duplicate := pending
+	duplicate.ID = "second-payment"
+	groups := Groups(Finance{Trades: []Trade{pending, duplicate, settled, refund}})
+	if len(groups) != 2 {
+		t.Fatalf("ambiguous payment history must not be auto-merged: %+v", groups)
+	}
+	for _, g := range groups {
+		if g.FullyReturned {
+			t.Fatalf("ambiguous history must not release a card: %+v", g)
+		}
+	}
+}

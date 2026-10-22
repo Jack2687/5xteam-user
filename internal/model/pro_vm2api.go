@@ -21,5 +21,5 @@ type ProVM2Binding struct {
 
 func (p MailAccountProfile) ProVM2CleanupPending() bool {
 	return p.VM2 != nil && p.VM2.DeletedAt == nil &&
-		(p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed")
+		(p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" || p.DeletionAccepted())
 }

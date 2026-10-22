@@ -7,14 +7,10 @@ import (
 	"chatgpt-space-merge/internal/store"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
-	"net/http/httptest"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -54,7 +50,18 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if profile.ProAuto.ID != "" {
 			t.OrderID = profile.ProAuto.OrderID
 		}
-		t.CardID, t.AccountID = profile.ProAuto.CardID, profile.Sub2AccountID
+		if profile.ProAuto.ID != "" {
+			t.CardID = profile.ProAuto.CardID
+		}
+		t.AccountID = profile.Sub2AccountID
+		if waiting, err := s.trackRestockCardImport(t, profile); err != nil {
+			return nil, 0, err
+		} else if waiting {
+			if err = s.store.SaveProRestockTask(*t); err != nil {
+				return nil, 0, err
+			}
+			continue
+		}
 		if t.OrderID == "" && profile.ProAuto.ID != "" {
 			order, _, lookupErr := s.store.GPTPayOrder(profile.ProAuto.PaymentOrderID())
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
@@ -284,7 +291,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 	queued := max(busy, jobs)
 	for i := range tasks {
 		t := &tasks[i]
-		if !t.Active() || t.Status == "unknown" || t.Status == "attention" {
+		if !t.Active() || t.Status == "unknown" || t.Status == "attention" || t.Status == "waiting_card" {
 			continue
 		}
 		remaining := lead
@@ -451,6 +458,9 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	limits, e := s.store.ProRestockLimits(now)
 	if e != nil {
 		return e
+	}
+	if c.Enabled && c.Mode == "auto" && limits.Failures < c.FailureLimit && ctx.Err() == nil {
+		s.continueProRestockCardImports(ctx, c, p)
 	}
 	s.observeTakeoverRecovery(c, snap, tasks)
 	tc, _, te := s.store.ProTakeoverConfig()
@@ -619,29 +629,12 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		if e = s.store.ClaimProRestockDispatch(t); e != nil {
 			return
 		}
-		body, _ := json.Marshal(map[string]any{"provider": taskPay.Provider, "plan_code": taskPay.PlanCode, "card_id": card, "country": taskPay.Country, "credit_quantity": taskPay.CreditQuantity})
-		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body))).WithContext(context.WithValue(ctx, proRestockContextKey{}, t.ID))
-		r.SetPathValue("email", t.Email)
-		w := httptest.NewRecorder()
-		s.startProAutomation(w, r)
-		if w.Code != http.StatusAccepted {
-			t.Status = "attention"
-			t.Message = "启动未获确认；请检查账号和卡片记录，保留预算与在途"
-			var reply struct {
-				Error string `json:"error"`
-			}
-			if json.Unmarshal(w.Body.Bytes(), &reply) == nil && reply.Error != "" {
-				t.Message = reply.Error
-			}
-			if w.Header().Get("X-Pro-Card-Wait") == "nexovcc" {
-				// No payment/opening was submitted. Keep this same account and
-				// batch reservation; a future scan resumes after the refund.
-				t.Status, t.SubmittedAt = "reserved", nil
-				_ = s.store.SaveProRestockTask(t)
-				return
-			}
-			_ = s.store.SaveProRestockTask(t)
+		workCtx, finish, err := s.beginRestockStart(ctx, t.ID)
+		if err != nil {
+			return
 		}
+		s.startClaimedProRestock(workCtx, t, taskPay, card)
+		finish()
 	}
 }
 

@@ -647,6 +647,10 @@ func (s *Server) exportMailAccountCredentialsBatch(w http.ResponseWriter, r *htt
 	}
 	format := strings.ToLower(strings.TrimSpace(input.Format))
 	reportMailExportProgress(r.Context(), "processing", 0, len(emails))
+	if format == "credentials" {
+		s.exportAccountCredentialsText(w, r, emails, false)
+		return
+	}
 	if format == "text" {
 		s.exportMailAccountsText(w, r, emails, input.IncludeAT, input.IncludeRT)
 		return

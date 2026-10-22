@@ -67,3 +67,53 @@ func TestZeroAuthorizationFeeBelongsToUniqueSimultaneousReturn(t *testing.T) {
 		})
 	}
 }
+
+func TestZeroAuthorizationSettlementRetainsExpenseAssociation(t *testing.T) {
+	for _, mode := range []string{"matched", "different time", "different merchant", "large charge", "merchant amount changed", "unrelated currency", "ambiguous return"} {
+		t.Run(mode, func(t *testing.T) {
+			f := refundDescriptorFinance(t)
+			switch mode {
+			case "different time":
+				f.Trades[5].At = f.Trades[5].At.Add(time.Second)
+			case "different merchant":
+				f.Trades[1].Merchant = "OTHER"
+			case "large charge":
+				f.Trades[1].Amount = "10.00"
+			case "merchant amount changed":
+				f.Trades[1].MerchantAmount = "1.44"
+			case "unrelated currency":
+				f.Trades[1].MerchantCurrency = "EUR"
+			case "ambiguous return":
+				for _, index := range []int{4, 6} {
+					other := f.Trades[index]
+					other.ID += "-duplicate"
+					other.Authorization = "second-return"
+					f.Trades = append(f.Trades, other)
+				}
+			}
+			groups := Groups(f)
+			for _, g := range groups {
+				if g.Authorization == "small-charge" {
+					if (g.RelatedGroupID != "") != (mode == "matched") || g.ReturnResolved() != (mode == "matched") {
+						t.Fatalf("wrong charge resolution: %+v", g)
+					}
+					if g.FullyReturned {
+						t.Fatal("a charge is not a refund")
+					}
+				}
+				if g.Authorization == "prior-reversed" {
+					want := "5.42"
+					if mode == "matched" {
+						want = "6.44"
+					}
+					if g.Cost != want {
+						t.Fatalf("fee/charge lost or misassigned: %+v", g)
+					}
+				}
+			}
+			if mode == "matched" && !ClosedFinanceComplete(Card{Serial: "fixture-refund-card", Status: "4"}, f, groups, false) {
+				t.Fatal("posted refund plus final related charge and closure receipt must balance")
+			}
+		})
+	}
+}

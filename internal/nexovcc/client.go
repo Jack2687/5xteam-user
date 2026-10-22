@@ -66,7 +66,10 @@ type Client struct {
 	http522Retries  int
 	http522Interval time.Duration
 	retryProgress   func(string)
+	gate            *RequestGate // Set once before the client is shared.
 }
+
+func (c *Client) SetRequestGate(gate *RequestGate) { c.gate = gate }
 
 func New(c Credentials, transport Transport) *Client {
 	interval := time.Duration(0) // Injected transports own their test clock.
@@ -236,6 +239,11 @@ func (c *Client) call(ctx context.Context, path string, body map[string]any) (an
 }
 
 func (c *Client) callOnce(ctx context.Context, path string, body map[string]any) (any, error) {
+	if c.gate != nil {
+		if err := c.gate.Check(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.coolingDown(); err != nil && !ImmediateRequests(ctx) {
 		return nil, err
 	}
@@ -257,6 +265,11 @@ func (c *Client) callOnce(ctx context.Context, path string, body map[string]any)
 			return nil, &Error{Message: err.Error()}
 		}
 		body["verify_code"] = otp
+	}
+	if c.gate != nil {
+		if err := c.gate.Check(ctx); err != nil {
+			return nil, err
+		}
 	}
 	r, e := c.transport(ctx, Request{path, body, c.cookie})
 	c.nextRequest = c.now().Add(c.requestInterval)
@@ -342,8 +355,19 @@ func (c *Client) login(ctx context.Context) error {
 var paths = map[string]bool{"/api/getBalanceInfo": true, "/api/product/findUserProductList": true, "/api/card/findUserCardList": true, "/api/card/getUserCardDetail": true, "/api/card/getUserCardBalance": true, "/api/card/createUserCard": true, "/api/card/userCardDeposit": true, "/api/card/userCardWithdraw": true, "/api/card/lockUserCard": true, "/api/card/unLockUserCard": true, "/api/card/deleteUserCard": true, "/api/card/updateCardRemark": true}
 
 func (c *Client) Do(ctx context.Context, path string, body map[string]any) (any, error) {
+	if c.gate != nil {
+		bound, finish, err := c.gate.Bind(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer finish()
+		ctx = bound
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if ctx.Err() != nil {
+		return nil, &Error{Message: StoppedMessage}
+	}
 	if err := c.coolingDown(); err != nil && !ImmediateRequests(ctx) {
 		return nil, err
 	}

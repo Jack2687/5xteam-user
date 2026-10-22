@@ -32,7 +32,7 @@ func nexovccRecycleCandidate(card nexovcc.Card, cases []store.NexovccCase, group
 	}
 	// Include supplier payments which have no local account match as well.
 	for _, g := range groups {
-		if g.Serial == card.Serial && (!g.Valid || (g.Payment != "0.00" && !g.FullyReturned)) {
+		if g.Serial == card.Serial && (!g.Valid || (g.Payment != "0.00" && !g.ReturnResolved())) {
 			return false
 		}
 	}

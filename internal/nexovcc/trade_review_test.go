@@ -42,7 +42,7 @@ func TestReviewedGroupsRefundLinkPreservesPrincipalAndFees(t *testing.T) {
 	original := append([]Trade{}, f.Trades...)
 	review := TradeReview{GroupID: source.ID, TargetID: target.ID, Kind: "refund_link", Fingerprint: ReviewFingerprint(f, source, target)}
 	groups, rows := ReviewedGroups(f, []TradeReview{review})
-	if len(groups) != 1 || !rows[0].Applied || !groups[0].Valid || groups[0].Payment != "142.12" || groups[0].Returned != "141.57" || groups[0].Cost != "4.95" || groups[0].Fees != "4.40" {
+	if len(groups) != 1 || !rows[0].Applied || !groups[0].Valid || !groups[0].FullyReturned || groups[0].Payment != "142.12" || groups[0].Returned != "141.57" || groups[0].Cost != "4.95" || groups[0].Fees != "4.40" {
 		t.Fatal(groups, rows)
 	}
 	if !reflect.DeepEqual(original, f.Trades) {

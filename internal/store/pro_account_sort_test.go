@@ -25,6 +25,43 @@ func saveProSortFixture(t *testing.T, s *Store, p model.MailAccountProfile) {
 	}
 }
 
+func TestProAccountEventTimeOrder(t *testing.T) {
+	s := transferStore(t)
+	base := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	// Later payment completion must not move an earlier-started workflow above
+	// one that just started. The exposed timestamp must match backend pagination.
+	for i := 0; i < 12; i++ {
+		started := base.Add(time.Duration(i) * time.Minute).In(time.FixedZone("UTC+8", 28800))
+		p := model.MailAccountProfile{Email: fmt.Sprintf("flow-%02d@example.com", i), ProAuto: model.ProAutoState{ID: fmt.Sprint(i), Status: "running", StartedAt: started, StageTimes: map[string]time.Time{"recharge:completed": base.Add(time.Duration(100-i) * time.Minute)}}}
+		if i == 11 {
+			p.ProAuto.StageTimes = nil
+		}
+		saveProSortFixture(t, s, p)
+	}
+	for page := 0; page < 3; page++ {
+		rows, total, _, err := s.ProAccountsPage("", "in_progress", 5, page*5)
+		if err != nil || total != 12 {
+			t.Fatal(total, err)
+		}
+		for j, p := range rows {
+			i := 11 - page*5 - j
+			want := base.Add(time.Duration(i) * time.Minute)
+			if p.Email != fmt.Sprintf("flow-%02d@example.com", i) || p.StateEnteredAt == nil || !p.StateEnteredAt.Equal(want) {
+				t.Fatalf("event mismatch: %s %v want %v", p.Email, p.StateEnteredAt, want)
+			}
+		}
+	}
+	accepted := base.Add(time.Hour)
+	confirmed := base.Add(4 * time.Hour)
+	manual := base.Add(2 * time.Hour)
+	saveProSortFixture(t, s, model.MailAccountProfile{Email: "accepted@example.com", ProDeactivation: &model.ProDeactivation{AcceptedAt: &accepted, ConfirmedAt: &confirmed}})
+	saveProSortFixture(t, s, model.MailAccountProfile{Email: "manual-confirmed@example.com", ProDeactivation: &model.ProDeactivation{ConfirmedAt: &manual}})
+	rows, _, _, err := s.ProAccountsPage("", "deleted", 1, 0)
+	if err != nil || len(rows) != 2 || rows[0].Email != "manual-confirmed@example.com" || !rows[0].StateEnteredAt.Equal(manual) {
+		t.Fatalf("deletion should use entry, not later confirmation: %v %v", rows, err)
+	}
+}
+
 func TestProAccountsSortByLifecycleBeforePagination(t *testing.T) {
 	s := transferStore(t)
 	base := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)

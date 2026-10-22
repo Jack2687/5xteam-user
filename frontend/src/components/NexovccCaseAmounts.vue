@@ -23,7 +23,7 @@ const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(
   <div class="amount-grid">
    <div><span>付款{{value.provisional?'（授权占用）':''}}</span><strong>{{money(value.paid)}} USD</strong><small v-for="m in value.merchantPaid.filter(m=>m.currency!=='USD')" :key="m.currency">{{money(m.amount)}} {{m.currency}}</small><small>{{rmb(value.paid)}} R</small></div>
    <div><span>已确认回款</span><strong>{{money(value.returned)}} USD</strong><small v-for="m in value.merchantReturned.filter(m=>m.currency!=='USD')" :key="m.currency">{{money(m.amount)}} {{m.currency}}</small><small>{{rmb(value.returned)}} R</small></div>
-   <div><span>差额（付款 − 回款）</span><strong>{{money(value.difference)}} USD</strong><small>{{rmb(value.difference)}} R</small><small>{{!row.match?'待匹配流水':value.closed?'已结算差额':'待回款，不计成本'}}</small></div>
+   <div><span>差额（付款 − 回款）</span><strong>{{money(value.difference)}} USD</strong><small>{{rmb(value.difference)}} R</small><small>{{!row.match?'待匹配流水':value.refundCompleted?'退款已完成，差额计入卡内损耗':value.closed?'已结算差额':'待回款，不计成本'}}</small></div>
    <div><span>消费收益</span><strong>{{money(value.revenue)}} R</strong><small>{{value.revenue===null?'消费尚未同步':'Sub2 实际消费'}}</small></div>
   </div>
   <p v-if="['opened','waiting'].includes(row.state)||value.pending>0" class="return-note">尚待回款：<b>{{money(value.pending)}} USD</b>（已扣清算）</p>
@@ -36,7 +36,7 @@ const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(
   <small v-if="row.revenue_note" class="note">{{row.revenue_note}}</small>
   <details><summary>查看流水与匹配依据 <span>{{row.match?(row.match.method==='auto'?'自动匹配':'人工关联'):'待匹配'}}</span></summary>
    <div class="evidence"><p>授权码：{{row.match?.group?.authorization||'—'}}<br>匹配依据：{{row.match?.evidence||'尚无匹配记录，可核实后关联同卡流水。'}}</p><p v-if="row.manual_state">人工状态依据：{{row.reason||'—'}}</p><p v-if="row.match&&!value.feesReady" class="warning">费用明细待同步核实，未将缺失金额当成零。</p>
-    <div v-for="trade in value.trades" :key="trade.id" class="trade-line"><span>{{tradeStates[trade.status]||trade.status}} · {{at(trade.at)}}<small>{{trade.id}}</small></span><strong>{{trade.amount}} {{trade.currency}}<small>{{trade.merchant_amount}} {{trade.merchant_currency}}</small></strong></div>
+    <div v-for="trade in [...value.trades,...value.relatedTrades]" :key="trade.id" class="trade-line"><span>{{tradeStates[trade.status]||trade.status}} · {{at(trade.at)}}<small>{{trade.id}} · 授权码 {{trade.authorization||'—'}}</small></span><strong>{{trade.amount}} {{trade.currency}}<small>{{trade.merchant_amount}} {{trade.merchant_currency}}</small></strong></div>
     <div class="links"><button @click="$emit('details',{row,options:{type:'trades'}})">交易明细</button><button :disabled="!row.match" @click="$emit('details',{row,options:{type:'funds'}})">费用明细</button><button :disabled="running||row.payment_status!=='success'" @click="$emit('match',row)">关联流水</button></div>
    </div>
   </details>

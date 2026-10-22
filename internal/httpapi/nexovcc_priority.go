@@ -44,6 +44,9 @@ func (s *Server) yieldNexovccRead() bool {
 
 func (s *Server) lockNexovccOperation(ctx context.Context) error {
 	for !s.nexovcc.mu.TryLock() {
+		if err := s.checkNexovccControl(); err != nil {
+			return err
+		}
 		s.yieldNexovccRead()
 		t := time.NewTimer(20 * time.Millisecond)
 		select {
@@ -52,6 +55,10 @@ func (s *Server) lockNexovccOperation(ctx context.Context) error {
 			return ctx.Err()
 		case <-t.C:
 		}
+	}
+	if err := s.checkNexovccControl(); err != nil {
+		s.nexovcc.mu.Unlock()
+		return err
 	}
 	return nil
 }

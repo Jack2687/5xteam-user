@@ -21,6 +21,7 @@ func (s *Server) registerProRestock(mux *http.ServeMux) {
 		writeAPI(w, 200, items, "")
 	})
 	mux.HandleFunc("GET /api/pro-restock", s.getProRestock)
+	mux.HandleFunc("POST /api/pro-restock/tasks/{id}/stop", s.stopProRestockTask)
 	mux.HandleFunc("PUT /api/pro-restock/config", s.saveProRestockConfig)
 	mux.HandleFunc("GET /api/pro-restock/groups", s.getProRestockGroups)
 	mux.HandleFunc("POST /api/pro-restock/evaluate", func(w http.ResponseWriter, r *http.Request) {

@@ -14,13 +14,19 @@ func TestProAutoStageEditsPersistWithoutExecution(t *testing.T) {
 	f := newProExecutionFixture(t)
 	_, err := f.s.store.UpdateProAccount(f.email, func(p *model.MailAccountProfile) {
 		p.ProAuto = model.ProAutoState{ID: "auto", Status: "failed", Stage: "oauth", OrderID: "paid-order", StartedAt: time.Now().Add(-time.Hour), Steps: map[string]string{"recharge": "completed", "oauth": "failed"}}
+		now := time.Now()
+		p.ProDeactivation = &model.ProDeactivation{Status: "queued", SubmittedAt: &now, AcceptedAt: &now, UpdatedAt: now, NextCheckAt: &now, Steps: map[string]string{"submit": "completed", "confirm": "waiting"}}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	before, credentials, _ := f.s.store.MailAccountCredential(f.email)
-	for _, stage := range []string{"login", "recharge", "oauth", "push", "quota", "merge"} {
-		for _, status := range []string{"not_started", "pending", "failed", "completed", "skipped", "interrupted", "unknown"} {
+	for _, stage := range []string{"login", "recharge", "oauth", "push", "quota", "merge", "deactivate"} {
+		statuses := []string{"not_started", "pending", "failed", "completed", "skipped", "interrupted", "unknown"}
+		if stage == "quota" || stage == "deactivate" {
+			statuses = append(statuses, "waiting")
+		}
+		for _, status := range statuses {
 			p, _, _ := f.s.store.MailAccountCredential(f.email)
 			body, _ := json.Marshal(map[string]any{"stage": stage, "status": status, "expected_status": p.ProStages().Steps[stage], "expected_updated_at": p.UpdatedAt})
 			out := f.request(f.s.updateProAutoStage, "PUT", "/auto-stage", string(body))
@@ -31,7 +37,7 @@ func TestProAutoStageEditsPersistWithoutExecution(t *testing.T) {
 			if saved.ProStages().Steps[stage] != status || !saved.ProStages().Manual[stage] {
 				t.Fatal("manual status not persisted")
 			}
-			if !reflect.DeepEqual(saved.ProAuto, before.ProAuto) || !reflect.DeepEqual(c, credentials) || saved.PushStatus != before.PushStatus || saved.TransferStatus != before.TransferStatus || saved.SpaceMergedOnce != before.SpaceMergedOnce {
+			if !reflect.DeepEqual(saved.ProAuto, before.ProAuto) || !reflect.DeepEqual(saved.ProDeactivation, before.ProDeactivation) || !reflect.DeepEqual(c, credentials) || saved.PushStatus != before.PushStatus || saved.TransferStatus != before.TransferStatus || saved.SpaceMergedOnce != before.SpaceMergedOnce {
 				t.Fatal("editing changed execution or credentials")
 			}
 			rows, err := f.s.proAccountListWithCards([]model.MailAccountProfile{saved})
@@ -56,6 +62,17 @@ func TestProAutoStageEditsPersistWithoutExecution(t *testing.T) {
 	p, _, _ = f.s.store.MailAccountCredential(f.email)
 	if p.ProStages().Steps["quota"] != "waiting" || p.ProStages().Manual["quota"] {
 		t.Fatal("automatic result did not supersede edit")
+	}
+	if _, err := f.s.deletionUpdate(f.email, "confirm", "failed", "latest check"); err != nil {
+		t.Fatal(err)
+	}
+	p, _, _ = f.s.store.MailAccountCredential(f.email)
+	if p.ProStages().Manual["deactivate"] {
+		t.Fatal("new deletion result did not supersede annotation")
+	}
+	rows, err := f.s.proAccountListWithCards([]model.MailAccountProfile{p})
+	if err != nil || rows[0].StageProgress.Manual["deactivate"] {
+		t.Fatal("list reapplied stale deletion annotation", err)
 	}
 }
 

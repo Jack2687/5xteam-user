@@ -1,0 +1,286 @@
+{
+  "at": "2026-10-22T11:01:58.480632615+08:00",
+  "card_at": {
+    "fixture-refund-card": "2026-10-22T11:01:58.480632615+08:00"
+  },
+  "expected_groups": [
+    {
+      "purpose_revision": 0,
+      "id": "c61dcb514bd536da9b7b111438da8ef16d4dc19a7926b2ee144ad7f0cf44470c",
+      "serial_no": "fixture-refund-card",
+      "authorization": "payment",
+      "payment": "141.82",
+      "returned": "141.23",
+      "difference": "0.59",
+      "cost": "7.75",
+      "fees": "7.16",
+      "merchant_amount": "8919.64",
+      "merchant_currency": "PHP",
+      "fully_returned": true,
+      "settled": true,
+      "valid": true,
+      "problem": "",
+      "at": "2026-10-20T16:21:17+08:00",
+      "returned_at": "2026-10-22T02:00:51+08:00",
+      "trade_ids": [
+        "trade-3",
+        "trade-4",
+        "trade-1"
+      ]
+    },
+    {
+      "purpose_revision": 0,
+      "id": "ef7784e8369294f64350f9f0e8d973df133a883a5ab366b5547452a38b8ac573",
+      "serial_no": "fixture-refund-card",
+      "authorization": "small-charge",
+      "payment": "0.02",
+      "returned": "0.00",
+      "difference": "0.02",
+      "cost": "0.02",
+      "fees": "0.00",
+      "merchant_amount": "1.43",
+      "merchant_currency": "PHP",
+      "fully_returned": false,
+      "settled": true,
+      "valid": true,
+      "problem": "",
+      "at": "2026-10-20T15:46:47+08:00",
+      "returned_at": "0001-01-01T00:00:00Z",
+      "trade_ids": [
+        "trade-2",
+        "trade-6"
+      ],
+      "related_group_id": "cd122879fdc326cac01e75452c1547a53b1d20e3f58ed4fef89242cf9b19429b"
+    },
+    {
+      "purpose_revision": 0,
+      "id": "cd122879fdc326cac01e75452c1547a53b1d20e3f58ed4fef89242cf9b19429b",
+      "serial_no": "fixture-refund-card",
+      "authorization": "prior-reversed",
+      "payment": "141.82",
+      "returned": "141.82",
+      "difference": "0.00",
+      "cost": "6.44",
+      "fees": "6.42",
+      "merchant_amount": "8919.64",
+      "merchant_currency": "PHP",
+      "fully_returned": true,
+      "settled": false,
+      "valid": true,
+      "problem": "",
+      "at": "2026-10-20T15:38:12+08:00",
+      "returned_at": "2026-10-20T15:46:47+08:00",
+      "trade_ids": [
+        "trade-5",
+        "trade-7"
+      ],
+      "fee_trade_ids": [
+        "trade-2",
+        "trade-6"
+      ],
+      "related_settlement": "0.02"
+    }
+  ],
+  "funds": [
+    {
+      "amount": "1.00",
+      "at": "2026-10-22T09:30:09+08:00",
+      "currency": "USD",
+      "id": "fund-1",
+      "kind": 3002,
+      "last4": "0000",
+      "link": "",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "168.39",
+      "at": "2026-10-22T09:19:47+08:00",
+      "currency": "USD",
+      "id": "fund-2",
+      "kind": 4002,
+      "last4": "0000",
+      "link": "",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-4.74",
+      "at": "2026-10-22T02:00:51+08:00",
+      "currency": "USD",
+      "id": "fund-3",
+      "kind": 8888,
+      "last4": "0000",
+      "link": "trade-1",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-2.42",
+      "at": "2026-10-20T16:21:20+08:00",
+      "currency": "USD",
+      "id": "fund-4",
+      "kind": 2007,
+      "last4": "0000",
+      "link": "trade-4",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-3.00",
+      "at": "2026-10-20T15:46:48+08:00",
+      "currency": "USD",
+      "id": "fund-5",
+      "kind": 2003,
+      "last4": "0000",
+      "link": "trade-5",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-1.00",
+      "at": "2026-10-20T15:46:48+08:00",
+      "currency": "USD",
+      "id": "fund-6",
+      "kind": 2007,
+      "last4": "0000",
+      "link": "trade-6",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-2.42",
+      "at": "2026-10-20T15:38:14+08:00",
+      "currency": "USD",
+      "id": "fund-7",
+      "kind": 2007,
+      "last4": "0000",
+      "link": "trade-7",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-0.20",
+      "at": "2026-10-20T15:30:19+08:00",
+      "currency": "USD",
+      "id": "fund-8",
+      "kind": 3004,
+      "last4": "0000",
+      "link": "",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-0.50",
+      "at": "2026-10-20T15:30:19+08:00",
+      "currency": "USD",
+      "id": "fund-9",
+      "kind": 3003,
+      "last4": "0000",
+      "link": "",
+      "serial_no": "fixture-refund-card"
+    },
+    {
+      "amount": "-170.00",
+      "at": "2026-10-20T15:30:19+08:00",
+      "currency": "USD",
+      "id": "fund-10",
+      "kind": 3001,
+      "last4": "0000",
+      "link": "",
+      "serial_no": "fixture-refund-card"
+    }
+  ],
+  "trades": [
+    {
+      "amount": "141.23",
+      "at": "2026-10-22T02:00:51+08:00",
+      "authorization": "refund",
+      "currency": "USD",
+      "id": "trade-1",
+      "last4": "0000",
+      "merchant": "OPENAI *CHATGPT SUBSCR SAN FRANCISCOCAUS",
+      "merchant_amount": "8898.46",
+      "merchant_currency": "PHP",
+      "serial_no": "fixture-refund-card",
+      "status": "REFUNDED",
+      "type": "ReturnOL"
+    },
+    {
+      "amount": "0.02",
+      "at": "2026-10-21T02:15:08+08:00",
+      "authorization": "small-charge",
+      "currency": "USD",
+      "id": "trade-2",
+      "last4": "0000",
+      "merchant": "OPENAI *CHATGPT SUBSCR OPENAI.COM   CAUS",
+      "merchant_amount": "1.43",
+      "merchant_currency": "PHP",
+      "serial_no": "fixture-refund-card",
+      "status": "COMPLETE",
+      "type": "Auth"
+    },
+    {
+      "amount": "141.82",
+      "at": "2026-10-21T02:14:54+08:00",
+      "authorization": "payment",
+      "currency": "USD",
+      "id": "trade-3",
+      "last4": "0000",
+      "merchant": "OPENAI *CHATGPT SUBSCR OPENAI.COM   CAUS",
+      "merchant_amount": "8919.64",
+      "merchant_currency": "PHP",
+      "serial_no": "fixture-refund-card",
+      "status": "COMPLETE",
+      "type": "Auth"
+    },
+    {
+      "amount": "141.82",
+      "at": "2026-10-20T16:21:17+08:00",
+      "authorization": "payment",
+      "currency": "USD",
+      "id": "trade-4",
+      "last4": "0000",
+      "merchant": "OPENAI *CHATGPT SUBSCR  +14158799686 CAUS",
+      "merchant_amount": "8919.64",
+      "merchant_currency": "PHP",
+      "serial_no": "fixture-refund-card",
+      "status": "PENDING",
+      "type": "Auth"
+    },
+    {
+      "amount": "141.82",
+      "at": "2026-10-20T15:46:47+08:00",
+      "authorization": "prior-reversed",
+      "currency": "USD",
+      "id": "trade-5",
+      "last4": "0000",
+      "merchant": "Auth PARTIAL Reversal-OPENAI *CHATGPT SUBSCR  +1",
+      "merchant_amount": "8919.64",
+      "merchant_currency": "PHP",
+      "serial_no": "fixture-refund-card",
+      "status": "REVERSED",
+      "type": "Auth"
+    },
+    {
+      "amount": "0.00",
+      "at": "2026-10-20T15:46:47+08:00",
+      "authorization": "small-charge",
+      "currency": "USD",
+      "id": "trade-6",
+      "last4": "0000",
+      "merchant": "OPENAI *CHATGPT SUBSCR +14158799686 CAUS",
+      "merchant_amount": "1.43",
+      "merchant_currency": "PHP",
+      "serial_no": "fixture-refund-card",
+      "status": "PENDING",
+      "type": "Auth"
+    },
+    {
+      "amount": "141.82",
+      "at": "2026-10-20T15:38:12+08:00",
+      "authorization": "prior-reversed",
+      "currency": "USD",
+      "id": "trade-7",
+      "last4": "0000",
+      "merchant": "OPENAI *CHATGPT SUBSCR  +14158799686 CAUS",
+      "merchant_amount": "8919.64",
+      "merchant_currency": "PHP",
+      "serial_no": "fixture-refund-card",
+      "status": "PENDING",
+      "type": "Auth"
+    }
+  ]
+}

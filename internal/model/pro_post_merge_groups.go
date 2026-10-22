@@ -5,6 +5,7 @@ import "time"
 // Snapshot the target when removal starts. Retries update only this account on
 // the same downstream and never repeat successful OpenAI removal operations.
 type ProPostMergeGroups struct {
+	Action     string           `json:"action,omitempty"`
 	Status     string           `json:"status"`
 	GroupIDs   []int64          `json:"group_ids"`
 	AccountID  int64            `json:"account_id"`

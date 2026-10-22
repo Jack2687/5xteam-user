@@ -14,6 +14,9 @@ import (
 // Only automation fields are changed here. Downstream credentials and groups
 // may be edited separately, so never overwrite them from an automation form.
 func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Settings, key string) (model.ProSettings, gptpay.Settings, error) {
+	if err := input.ValidateDisposition(); err != nil {
+		return input, pay, err
+	}
 	if err := input.ValidatePurchaseWindows(); err != nil {
 		return input, pay, err
 	}
@@ -39,7 +42,10 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 			return v, pay, err
 		}
 	}
+	previousDeletionInterval := v.DeletionCheckInterval()
+	v.DeletionCheckIntervalSeconds = int(input.DeletionCheckInterval() / time.Second)
 	v.QuotaEnabled, v.AutoMergeEnabled = input.QuotaEnabled, input.AutoMergeEnabled
+	v.AutoDeleteEnabled = input.AutoDeleteEnabled
 	v.CardProvider = input.AutoCardProvider()
 	v.PurchaseScheduleEnabled, v.PurchaseWindows = input.PurchaseScheduleEnabled, input.PurchaseWindows
 	v.EJHPlanTemplates, v.NexovccPlanTemplates = input.EJHPlanTemplates, input.NexovccPlanTemplates
@@ -52,6 +58,9 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	v.RetryCount, v.RetryIntervalSeconds, v.Concurrency = input.RetryCount, input.RetryIntervalSeconds, input.Concurrency
 	v.MergeConcurrency = input.MergeConcurrency
 	normalizeProSettings(&v)
+	if err = syncProPushTimeoutTx(tx, v); err != nil {
+		return v, pay, err
+	}
 	v.NextQuotaSweepAt = nil
 	if v.QuotaEnabled {
 		next := time.Now().Add(time.Duration(v.QuotaCheckIntervalSeconds) * time.Second)
@@ -62,6 +71,11 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	}
 	if err = s.saveGPTPaySettingsTx(tx, &pay, key); err != nil {
 		return v, pay, err
+	}
+	if v.DeletionCheckInterval() != previousDeletionInterval {
+		if err = rescheduleProDeactivationsTx(tx, v.DeletionCheckInterval()); err != nil {
+			return v, pay, err
+		}
 	}
 	if _, err = tx.Exec(`INSERT INTO pro_schedule_clock VALUES(1,?) ON CONFLICT(id) DO UPDATE SET next_at=excluded.next_at`, time.Now().Add(time.Duration(v.ScheduleIntervalSeconds)*time.Second).UTC().Format(time.RFC3339Nano)); err != nil {
 		return v, pay, err

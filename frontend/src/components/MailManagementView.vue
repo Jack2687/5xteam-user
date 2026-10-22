@@ -142,7 +142,7 @@ const selectedEmails = ref(new Set());
 const selectionOpen = ref(false);
 const selectionError = ref("");
 const selectionConditions = reactive({ at_status: "invalid", require_rt: false, require_password: false, require_totp: false, require_dead: false, include_used: true });
-const textExportDialog = reactive({ open: false, emails: [], includeAT: false, includeRT: false, error: "" });
+const textExportDialog = reactive({ open: false, emails: [], format: "credentials", includeAT: false, includeRT: false, error: "" });
 const exportProgress = reactive({ open: false, label: "", stage: "processing", total: 0, processed: 0, received: 0, size: 0, error: "", summary: "" });
 const exportProgressPercent = computed(() => exportProgress.total ? Math.floor(exportProgress.processed * 100 / exportProgress.total) : 0);
 const exportProgressLabel = computed(() => ({ processing: "正在处理账号", generating: "正在生成文件", downloading: "正在下载文件", completed: "导出完成", failed: "导出失败" })[exportProgress.stage] || "正在准备");
@@ -821,14 +821,14 @@ async function runMailExport(body, label) {
 
 function openTextExport() {
   if (!selectedAccounts.value.length) return;
-  Object.assign(textExportDialog, { open: true, emails: [...selectedEmails.value], includeAT: false, includeRT: false, error: "" });
+  Object.assign(textExportDialog, { open: true, emails: [...selectedEmails.value], format: "credentials", includeAT: false, includeRT: false, error: "" });
 }
 async function exportSelectedText() {
   busy.value = "export-text";
   textExportDialog.error = "";
   textExportDialog.open = false;
   try {
-    const result = await runMailExport({ emails: textExportDialog.emails, format: "text", include_at: textExportDialog.includeAT, include_rt: textExportDialog.includeRT }, "文本");
+    const result = await runMailExport({ emails: textExportDialog.emails, format: textExportDialog.format, include_at: textExportDialog.includeAT, include_rt: textExportDialog.includeRT }, "文本");
     const warnings = [["AT", "X-Export-Missing-AT"], ["RT", "X-Export-Missing-RT"], ["接码链接", "X-Export-Missing-Pickup"]]
       .map(([name, header]) => [name, Number(result.headers.get(header) || 0)])
       .filter(([, count]) => count > 0)
@@ -1818,7 +1818,9 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
         <form class="modal mail-options-dialog" role="dialog" aria-modal="true" aria-labelledby="mail-text-export-title" @submit.prevent="exportSelectedText">
           <header><h2 id="mail-text-export-title">导出文本</h2><IconButton label="关闭文本导出" :disabled="!!busy" @click="textExportDialog.open = false"><X :size="16" /></IconButton></header>
           <div class="mail-options-scope"><span>已选账号</span><strong>{{ textExportDialog.emails.length }}</strong></div>
-          <fieldset :disabled="!!busy" class="mail-options-fields">
+          <label class="field"><span>导出格式</span><select v-model="textExportDialog.format" :disabled="!!busy"><option value="credentials">账号----密码----2FA</option><option value="text">原文本格式（可附带 AT / RT）</option></select></label>
+          <p v-if="textExportDialog.format==='credentials'">每行一个账号，2FA 为绑定密钥；缺失字段留空。</p>
+          <fieldset v-if="textExportDialog.format==='text'" :disabled="!!busy" class="mail-options-fields">
             <label class="mail-option-check"><input v-model="textExportDialog.includeAT" type="checkbox" />附带 AT</label>
             <label class="mail-option-check"><input v-model="textExportDialog.includeRT" type="checkbox" />附带 RT</label>
           </fieldset>

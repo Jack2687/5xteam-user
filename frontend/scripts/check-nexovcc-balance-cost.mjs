@@ -56,6 +56,26 @@ overview.cases[1].state='waiting';overview.cases[1].requested_at=before
 assert.equal(frozenBalanceDisplay(overview).current,14182,'an application alone does not mean the money returned')
 assert.equal(frozenBalanceDisplay(laterRefundFixture()).current,0)
 function laterRefundFixture(){const d=structuredClone(pending);Object.assign(d.groups[0],{fully_returned:true,returned:'141.21',difference:'0.61',returned_at:before});return d}
+const settledAwaitingRefund=structuredClone(pending)
+settledAwaitingRefund.cards[0].card.balance='28.18'
+settledAwaitingRefund.cards[0].card.normal_pending=true
+settledAwaitingRefund.groups[0].settled=true
+settledAwaitingRefund.cases[0].match={group:settledAwaitingRefund.groups[0]}
+assert.equal(financeTotals(settledAwaitingRefund,'card').pending,0,'settled transactions are not raw unsettled authorizations')
+assert.deepEqual(frozenBalanceDisplay(settledAwaitingRefund).pendingRows,[{serial:'card',last4:'9731',amount:14182,refundPending:14182}], 'a settled payment linked to an account awaiting return remains in the frozen display until refund evidence arrives')
+assert.equal(frozenBalanceDisplay(settledAwaitingRefund).current,14182)
+const recoveredSettlement=structuredClone(settledAwaitingRefund)
+recoveredSettlement.cards[0].card.balance='169.39'
+const recoveredSettlementBefore=structuredClone(recoveredSettlement)
+assert.equal(frozenBalanceDisplay(recoveredSettlement).current,0,'settled refunds already restored to balance must not count twice')
+assert.equal(frozenBalanceDisplay(recoveredSettlement).recovered,14182)
+assert.deepEqual(recoveredSettlement,recoveredSettlementBefore,'display recovery must not change settlement, costs or refund status')
+settledAwaitingRefund.groups[0].fully_returned=true
+assert.equal(frozenBalanceDisplay(settledAwaitingRefund).current,0,'a posted refund clears the waiting amount')
+const ambiguousSettledAwaitingRefund=structuredClone(settledAwaitingRefund)
+ambiguousSettledAwaitingRefund.groups[0].fully_returned=false
+delete ambiguousSettledAwaitingRefund.cases[0].match
+assert.equal(frozenBalanceDisplay(ambiguousSettledAwaitingRefund).current,null,'do not report zero if a settled waiting refund cannot be matched')
 const late=structuredClone(pending)
 Object.assign(late.groups[0],{fully_returned:true,returned:'141.21',difference:'0.61',returned_at:before})
 assert.equal(financeTotals(late,'card').balanceDifference,0)

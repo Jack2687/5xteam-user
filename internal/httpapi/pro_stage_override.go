@@ -21,13 +21,13 @@ func (s *Server) updateProAutoStage(w http.ResponseWriter, r *http.Request) {
 	if decodeJSON(w, r, &input, 8<<10) != nil {
 		return
 	}
-	label := map[string]string{"login": "登录", "recharge": "开通", "oauth": "RT/AT", "push": "推送", "quota": "额度", "merge": "合并"}[input.Stage]
+	label := map[string]string{"login": "登录", "recharge": "开通", "oauth": "RT/AT", "push": "推送", "quota": "额度", "merge": "合并", "deactivate": "删除"}[input.Stage]
 	valid := false
 	switch input.Status {
 	case "not_started", "pending", "completed", "failed", "skipped", "interrupted", "unknown":
 		valid = true
 	case "waiting":
-		valid = input.Stage == "quota"
+		valid = input.Stage == "quota" || input.Stage == "deactivate"
 	}
 	if label == "" || !valid || input.ExpectedStatus == nil || input.ExpectedUpdatedAt.IsZero() {
 		writeAPI(w, 400, nil, "无效的全自动阶段、状态或版本，请刷新后重试")

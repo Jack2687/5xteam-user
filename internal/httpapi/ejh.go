@@ -47,6 +47,7 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 func (s *Server) ejhRoutes(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/ejh/refund-fees/{id}", s.saveEJHRefundFee)
 	m.HandleFunc("PUT /api/ejh/recharge-ledger", s.saveEJHRechargeLedger)
+	m.HandleFunc("PUT /api/ejh/external-transfer", s.saveEJHExternalTransfer)
 	m.HandleFunc("PUT /api/ejh/recharge-period", s.saveEJHRechargePeriod)
 	m.HandleFunc("DELETE /api/ejh/cases/unopened", s.deleteEJHUnopenedCases)
 	m.HandleFunc("DELETE /api/ejh/cases/{id}", s.deleteEJHUnopenedCases)

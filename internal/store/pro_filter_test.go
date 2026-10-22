@@ -19,6 +19,10 @@ func TestProAccountFiltersPartitionProgressAndExport(t *testing.T) {
 		credentials model.MailAccountCredentials
 	}{
 		{"new", "unmerged", model.MailAccountProfile{}, model.MailAccountCredentials{}},
+		{"delete-failed", "in_progress", model.MailAccountProfile{ProDeactivation: &model.ProDeactivation{Status: "failed"}}, model.MailAccountCredentials{}},
+		{"delete-uncertain", "in_progress", model.MailAccountProfile{ProDeactivation: &model.ProDeactivation{Status: "unknown", SubmittedAt: &now}}, model.MailAccountCredentials{}},
+		{"delete-queued", "deleted", model.MailAccountProfile{ProDeactivation: &model.ProDeactivation{Status: "queued", SubmittedAt: &now, AcceptedAt: &now}}, model.MailAccountCredentials{}},
+		{"merged-then-deleted", "deleted", model.MailAccountProfile{SpaceMergedOnce: true, ProDeactivation: &model.ProDeactivation{Status: "completed", SubmittedAt: &now, AcceptedAt: &now, ConfirmedAt: &now}}, model.MailAccountCredentials{}},
 		{"defaults", "unmerged", model.MailAccountProfile{InviteStatus: "pending", AcceptStatus: "not_started", ProAuto: model.ProAutoState{Steps: map[string]string{"login": "not_started", "merge": "pending"}}, ProManualStages: map[string]model.ProStageProgress{"login": {Status: "pending"}}}, model.MailAccountCredentials{}},
 		{"credentials-only", "unmerged", model.MailAccountProfile{}, model.MailAccountCredentials{AccessToken: "at", RefreshToken: "rt"}},
 		{"manual-login-completed", "unmerged", model.MailAccountProfile{ProManualStages: map[string]model.ProStageProgress{"login": {Status: "completed"}}}, model.MailAccountCredentials{AccessToken: "at", ChatGPTSession: "{}"}},
@@ -66,7 +70,7 @@ func TestProAccountFiltersPartitionProgressAndExport(t *testing.T) {
 	for state, expected := range want {
 		t.Run(state, func(t *testing.T) {
 			items, total, summary, err := s.ProAccountsPage("", state, 100, 0)
-			if err != nil || total != len(expected) || summary.All != len(tests) || summary.Unmerged != len(want["unmerged"]) || summary.InProgress != len(want["in_progress"]) || summary.Merged != len(want["merged"]) {
+			if err != nil || total != len(expected) || summary.All != len(tests) || summary.Unmerged != len(want["unmerged"]) || summary.InProgress != len(want["in_progress"]) || summary.Merged != len(want["merged"]) || summary.Deleted != len(want["deleted"]) {
 				t.Fatalf("bad total/summary: %d %+v %v", total, summary, err)
 			}
 			var listed []string
