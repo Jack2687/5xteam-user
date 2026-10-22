@@ -145,8 +145,26 @@ func TestProNexovccRestockCanRecoverBeforeWorkflowCreated(t *testing.T) {
 			}}
 			windowTick(t, s)
 			tasks, _ := s.store.ProRestockTasks()
-			if len(tasks) != 1 || tasks[0].Status != "attention" {
+			wantStatus := "attention"
+			if mode == "import_pending" {
+				wantStatus = "waiting_card"
+			}
+			if len(tasks) != 1 || tasks[0].Status != wantStatus {
 				t.Fatal("startup not preserved", tasks)
+			}
+			if mode == "import_pending" {
+				// Current issuance is automatically resumed in waiting_card. This
+				// regression covers legacy unbound operations that required retry;
+				// current recovery is covered by the card-import integration tests.
+				ops, err := s.store.NexovccOperations()
+				if err != nil || len(ops) != 1 || ops[0].RestockTaskID != tasks[0].ID {
+					t.Fatal("issuance lost its task", ops, err)
+				}
+				ops[0].RestockTaskID = ""
+				if err := s.store.SaveNexovccOperation(ops[0]); err != nil {
+					t.Fatal(err)
+				}
+				tasks[0].Status = "attention"
 			}
 			// Reproduce a persisted scheduled task that failed before ProAuto was
 			// created. Its extra groups must survive both detachment and retries.

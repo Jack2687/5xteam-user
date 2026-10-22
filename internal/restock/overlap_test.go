@@ -69,7 +69,7 @@ func TestRestockOverlapDifferentNeedsAndHardLimits(t *testing.T) {
 		{"stale", func(_ *Config, s *Snapshot, _ *Limits) { s.At = now.Add(-time.Hour) }, 0},
 		{"pause", func(c *Config, _ *Snapshot, _ *Limits) {
 			c.NoRestockEnabled = true
-			c.NoRestockStart, c.NoRestockEnd = now.Add(-time.Minute).Format("15:04"), now.Add(time.Minute).Format("15:04")
+			c.NoRestockStart, c.NoRestockEnd = now.In(scheduleLocation).Add(-time.Minute).Format("15:04"), now.In(scheduleLocation).Add(time.Minute).Format("15:04")
 		}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

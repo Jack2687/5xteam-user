@@ -5,7 +5,8 @@ COPY go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
 COPY webui ./webui
-RUN go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/chatgpt-space-merge ./cmd/server
+# Keep temporary SQLite test databases off the container overlay filesystem.
+RUN --mount=type=tmpfs,target=/tmp go test -timeout 30m ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/chatgpt-space-merge ./cmd/server
 
 FROM python:3.11-alpine3.20
 # Protocol login/OAuth flows are executed by the Go service through Python.
