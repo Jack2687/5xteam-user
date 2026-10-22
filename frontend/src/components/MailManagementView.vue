@@ -173,7 +173,7 @@ const loginDialogTone = computed(() =>
 );
 const loginDialogStatus = computed(() =>
   loginDialog.status === "success"
-    ? loginDialog.mode === "oauth" ? "RT / AT 获取成功" : "AT 获取成功"
+    ? loginDialog.mode === "siwc" ? "SIWC RT / AT 获取成功" : loginDialog.mode === "oauth" ? "RT / AT 获取成功" : "AT 获取成功"
     : loginDialogTerminal.value
       ? "执行失败"
       : "正在执行",
@@ -187,7 +187,7 @@ const batchLoginTerminal = computed(
   () => batchLoginDialog.total > 0 && batchLoginDialog.finished >= batchLoginDialog.total,
 );
 const batchLoginTitle = computed(() =>
-  batchLoginDialog.mode === "oauth" ? "批量登录并获取 RT / AT" : "批量获取临时 AT",
+  batchLoginDialog.mode === "siwc" ? "批量获取 SIWC RT / AT" : batchLoginDialog.mode === "oauth" ? "批量登录并获取 RT / AT" : "批量获取临时 AT",
 );
 const atCheckTerminal = computed(
   () => atCheckDialog.total > 0 && atCheckDialog.finished >= atCheckDialog.total,
@@ -484,6 +484,9 @@ function logStep(value) {
       strategy: "选择登录方式",
       egress: "确认出口",
       oauth_init: "初始化 OAuth",
+      siwc_consent: "SIWC 确认授权",
+      siwc_token: "交换 SIWC RT / AT",
+      siwc_verify: "校验 SIWC 凭证",
       authorize: "建立授权会话",
       sentinel: "生成安全令牌",
       identifier: "提交账号",
@@ -529,7 +532,7 @@ function retryLogin() {
     (item) => item.email === loginDialog.email,
   );
   if (account) {
-    if (loginDialog.mode === 'oauth') startAccountOAuthTask(account);
+    if (['oauth', 'siwc'].includes(loginDialog.mode)) startAccountOAuthTask(account, loginDialog.mode);
     else startAccountTask(account, loginDialog.mode);
   }
 }
@@ -1003,12 +1006,12 @@ async function startAccountTask(account, mode = "login") {
     setMessage(error.message, "error");
   }
 }
-async function startAccountOAuthTask(account) {
-  const taskName = "登录并获取 RT / AT";
+async function startAccountOAuthTask(account, mode = "oauth") {
+  const taskName = mode === "siwc" ? "登录并获取 SIWC RT / AT" : "登录并获取 RT / AT";
   busy.value = account.email;
   Object.assign(loginDialog, {
     open: true,
-    mode: "oauth",
+    mode,
     email: account.email,
     jobId: "",
     status: "queued",
@@ -1018,17 +1021,17 @@ async function startAccountOAuthTask(account) {
     logs: [{ time: new Date().toISOString(), level: "info", step: "start", message: `正在创建${taskName}任务` }],
   });
   try {
-    const started = await api(`/api/mail/accounts/${encodeURIComponent(account.email)}/oauth`, { method: "POST", body: {} });
+    const started = await api(`/api/mail/accounts/${encodeURIComponent(account.email)}/${mode}`, { method: "POST", body: {} });
     const job = started.job || started;
     if (!job.job_id) throw new Error(`${taskName}任务没有返回任务 ID`);
-    loginJobs[account.email] = { ...job, taskMode: "oauth", startedAt: Date.now() };
+    loginJobs[account.email] = { ...job, taskMode: mode, startedAt: Date.now() };
     updateLoginDialog(account.email, job);
-    setMessage(`${account.email}：正在登录并获取 RT / AT`);
+    setMessage(`${account.email}：正在${taskName}`);
     const timer = startTimer(async () => {
       try {
         const result = await api(`/api/mail/oauth/${encodeURIComponent(job.job_id)}`);
         const current = result.job || result;
-        loginJobs[account.email] = { ...current, taskMode: "oauth", startedAt: loginJobs[account.email]?.startedAt || Date.now() };
+        loginJobs[account.email] = { ...current, taskMode: mode, startedAt: loginJobs[account.email]?.startedAt || Date.now() };
         updateLoginDialog(account.email, current);
         if (["success", "failed", "cancelled", "challenge"].includes(current.status) || ["success", "failed", "cancelled", "challenge"].includes(current.state)) {
           stopTimer(timer);
@@ -1036,7 +1039,7 @@ async function startAccountOAuthTask(account) {
           delete loginJobs[account.email];
           if (current.status === "success") {
             await loadAccounts();
-            setMessage(`${account.email}：RT / AT 已获取并保存`, "success");
+            setMessage(`${account.email}：${mode === "siwc" ? "SIWC " : ""}RT / AT 已获取并保存`, "success");
           } else {
             setMessage(`${account.email}：${current.error || current.error_hint || `${taskName}失败`}`, "error");
           }
@@ -1079,7 +1082,7 @@ async function runSelectedMailTask(mode) {
       expanded: targets.length <= 5 || index === 0,
     })),
   });
-  setMessage(`正在批量${mode === 'oauth' ? '登录并获取 RT / AT' : '获取临时 AT'}：0/${targets.length}`);
+  setMessage(`正在批量${mode === 'siwc' ? '获取 SIWC RT / AT' : mode === 'oauth' ? '登录并获取 RT / AT' : '获取临时 AT'}：0/${targets.length}`);
   const results = await Promise.all(targets.map(async (account) => {
     const task = batchLoginDialog.items.find((item) => item.email === account.email);
     try {
@@ -1099,13 +1102,13 @@ async function runSelectedMailTask(mode) {
       return false;
     } finally {
       batchLoginDialog.finished += 1;
-      setMessage(`正在批量${mode === 'oauth' ? '登录并获取 RT / AT' : '获取临时 AT'}：${batchLoginDialog.finished}/${targets.length}`);
+      setMessage(`正在批量${mode === 'siwc' ? '获取 SIWC RT / AT' : mode === 'oauth' ? '登录并获取 RT / AT' : '获取临时 AT'}：${batchLoginDialog.finished}/${targets.length}`);
     }
   }));
   busy.value = '';
   await loadAccounts();
   const succeeded = results.filter(Boolean).length;
-  setMessage(`批量${mode === 'oauth' ? '登录并获取 RT / AT' : '获取临时 AT'}完成：成功 ${succeeded}，失败 ${targets.length - succeeded}`, succeeded === targets.length ? 'success' : 'error');
+  setMessage(`批量${mode === 'siwc' ? '获取 SIWC RT / AT' : mode === 'oauth' ? '登录并获取 RT / AT' : '获取临时 AT'}完成：成功 ${succeeded}，失败 ${targets.length - succeeded}`, succeeded === targets.length ? 'success' : 'error');
 }
 function startLogin(account) {
   return startAccountTask(account, "login");
@@ -1375,6 +1378,9 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
             <button class="btn ghost" type="button" :disabled="!!busy || !selectedAccounts.length" @click="runSelectedMailTask('oauth')">
               <FileKey2 :size="15" />登录并获取 RT / AT<span v-if="selectedAccounts.length">（{{ selectedAccounts.length }}）</span>
             </button>
+            <button class="btn ghost" type="button" :disabled="!!busy || !selectedAccounts.length" @click="runSelectedMailTask('siwc')">
+              <FileKey2 :size="15" />获取 SIWC RT / AT<span v-if="selectedAccounts.length">（{{ selectedAccounts.length }}）</span>
+            </button>
             <button
               class="btn primary"
               type="button"
@@ -1607,7 +1613,8 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
                             startAccountOAuthTask(account);
                           "
                         >
-                          <FileKey2 :size="14" />登录并获取 RT / AT</button
+                          <FileKey2 :size="14" />登录并获取 RT / AT</button><button class="action-menu-item" type="button" :disabled="!!busy || !!loginJobFor(account)" @click="closeActionMenu(); startAccountOAuthTask(account, 'siwc')">
+                          <FileKey2 :size="14" />{{ account.siwc_present ? '重新获取 SIWC RT / AT' : '获取 SIWC RT / AT' }}</button
                         ><button
                           class="action-menu-item"
                           type="button"
@@ -2108,7 +2115,7 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
           </div>
           <div>
             <span class="overline">CHATGPT LOGIN</span>
-            <h2 id="login-dialog-title">{{ loginDialog.mode === 'oauth' ? '登录并获取 RT / AT' : '登录并获取临时 AT' }}</h2>
+            <h2 id="login-dialog-title">{{ loginDialog.mode === 'siwc' ? '登录并获取 SIWC RT / AT' : loginDialog.mode === 'oauth' ? '登录并获取 RT / AT' : '登录并获取临时 AT' }}</h2>
             <p>{{ loginDialog.email }}</p>
           </div>
           <StatusPill :tone="loginDialogTone">{{
@@ -2184,7 +2191,7 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
           <div>
             <strong>{{
               loginDialog.status === "success"
-                ? loginDialog.mode === "oauth" ? "Codex RT / AT 已安全保存" : "ChatGPT 临时 AT 已安全保存"
+                ? loginDialog.mode === "siwc" ? "SIWC RT / AT 已安全保存" : loginDialog.mode === "oauth" ? "Codex RT / AT 已安全保存" : "ChatGPT 临时 AT 已安全保存"
                 : loginDialog.error || "登录未完成"
             }}</strong
             ><small v-if="loginDialog.errorHint">{{

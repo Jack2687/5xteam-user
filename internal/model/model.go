@@ -26,6 +26,7 @@ type Settings struct {
 // MailAccountProfile is the local mailbox projection used by registration.
 // Secrets are encrypted in Store and never returned by list APIs.
 type MailAccountProfile struct {
+	SIWCPresent                bool                        `json:"siwc_present"`
 	ProQuality                 ProQualityState             `json:"pro_quality"`
 	ProQualitySince            *time.Time                  `json:"pro_quality_since,omitempty"`
 	ProDailyMerge              *ProDailyMergeRequest       `json:"pro_daily_merge,omitempty"`
@@ -149,17 +150,34 @@ type AccountPlanCheckResult struct {
 }
 
 type MailAccountCredentials struct {
-	Email            string `json:"email"`
-	MailPassword     string `json:"mail_password"`
-	ClientID         string `json:"client_id"`
-	MailRefreshToken string `json:"mail_refresh_token"`
-	PickupURL        string `json:"pickup_url"`
-	GptPassword      string `json:"gpt_password"`
-	TotpSecret       string `json:"totp_secret"`
-	AccessToken      string `json:"access_token"`
-	RefreshToken     string `json:"refresh_token"`
-	IDToken          string `json:"id_token"`
-	ChatGPTSession   string `json:"chatgpt_session"`
+	SIWC             *SIWCCredentials `json:"siwc,omitempty"`
+	Email            string           `json:"email"`
+	MailPassword     string           `json:"mail_password"`
+	ClientID         string           `json:"client_id"`
+	MailRefreshToken string           `json:"mail_refresh_token"`
+	PickupURL        string           `json:"pickup_url"`
+	GptPassword      string           `json:"gpt_password"`
+	TotpSecret       string           `json:"totp_secret"`
+	AccessToken      string           `json:"access_token"`
+	RefreshToken     string           `json:"refresh_token"`
+	IDToken          string           `json:"id_token"`
+	ChatGPTSession   string           `json:"chatgpt_session"`
+}
+
+// SIWC credentials are separate from the Codex and Web login credentials.
+type SIWCCredentials struct {
+	AccessToken    string    `json:"access_token"`
+	RefreshToken   string    `json:"refresh_token"`
+	IDToken        string    `json:"id_token"`
+	ClientID       string    `json:"client_id"`
+	AuthMode       string    `json:"auth_mode"`
+	ExtAgentHostID string    `json:"ext_agent_host_id"`
+	Email          string    `json:"email"`
+	Subject        string    `json:"subject"`
+	ExpiresAt      int64     `json:"expires_at"`
+	GrantedScopes  []string  `json:"granted_scopes"`
+	PlanUseEnabled bool      `json:"plan_use_enabled"`
+	SavedAt        time.Time `json:"saved_at"`
 }
 
 type MailMessage struct {

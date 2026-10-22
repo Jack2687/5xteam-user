@@ -86,10 +86,10 @@ window.fetch = async (path, options = {}) => {
     const more = offset + limit < fixture.logEvents.length
     return json({ account: item, events: fixture.logEvents.slice(offset, offset + limit), has_more: more, next_cursor: more ? String(offset + limit) : '' })
   }
-  if (url.pathname.startsWith('/api/mail/accounts/') && url.pathname.endsWith('/oauth')) {
+  if (url.pathname.startsWith('/api/mail/accounts/') && (url.pathname.endsWith('/oauth') || url.pathname.endsWith('/siwc'))) {
     const email = decodeURIComponent(url.pathname.split('/')[4])
     const jobID = 'codex-oauth-' + (oauthJobs.size + 1)
-    oauthJobs.set(jobID, { email, started: Date.now() })
+    oauthJobs.set(jobID, { email, mode: url.pathname.endsWith('/siwc') ? 'siwc' : 'oauth', started: Date.now() })
     return json({ job: fixture.oauthMissingJob ? {} : { job_id: jobID, status: 'queued', logs: [] } })
   }
   if (url.pathname.startsWith('/api/mail/oauth/')) {
@@ -101,9 +101,14 @@ window.fetch = async (path, options = {}) => {
     if (done && !fixture.oauthFail) {
       const item = items.find(item => item.email === job.email)
       const stored = savedCredentials.get(job.email) || { email: job.email }
-      Object.assign(stored, { revision: 'oauth-done', access_token: 'fixture-codex-at', refresh_token: 'fixture-codex-rt' })
+      if (job.mode === 'siwc') {
+        stored.siwc = { access_token: 'fixture-siwc-at', refresh_token: 'fixture-siwc-rt', client_id: 'oaiapp_fixture', expires_at: Math.floor(Date.now()/1000)+3600, plan_use_enabled: true }
+        item.siwc_present = true
+      } else {
+        Object.assign(stored, { revision: 'oauth-done', access_token: 'fixture-codex-at', refresh_token: 'fixture-codex-rt' })
+      }
       savedCredentials.set(job.email, stored)
-      Object.assign(item, { access_token_present: true, refresh_token_present: true, oauth_status: 'completed' })
+      if (job.mode !== 'siwc') Object.assign(item, { access_token_present: true, refresh_token_present: true, oauth_status: 'completed' })
     }
     return json({ job: { status: done ? (fixture.oauthFail ? 'failed' : 'success') : 'running', error: done && fixture.oauthFail ? '模拟 OAuth 验证失败' : '', logs: steps.slice(0, step).map(message => ({ time: new Date().toISOString(), message })), result: done && !fixture.oauthFail ? { access_token: 'fixture-codex-at', refresh_token: 'fixture-codex-rt' } : null } })
   }
@@ -194,6 +199,7 @@ window.fetch = async (path, options = {}) => {
       return json(item)
     }
     const format = url.searchParams.get('format')
+    if (format === 'siwc') return json({ accounts: [{ name: item.email, platform: 'openai', type: 'oauth', credentials: { ...stored.siwc, auth_mode: 'siwc' } }] })
     if (format) {
       const credentials = { access_token: stored.access_token, refresh_token: stored.refresh_token, plan_type: item.current_plan_type }
       return json(format === 'cpa' ? { type: 'codex', email: item.email, ...credentials } : { accounts: [{ name: item.email, credentials }] })

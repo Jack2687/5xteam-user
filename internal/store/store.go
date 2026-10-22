@@ -393,6 +393,7 @@ func normalizeMailManagementScope(scope string) string {
 }
 
 func mailProfileWithCredentials(p model.MailAccountProfile, c model.MailAccountCredentials) model.MailAccountProfile {
+	p.SIWCPresent = c.SIWC != nil && c.SIWC.AccessToken != "" && c.SIWC.RefreshToken != ""
 	c.MailPassword = cleanImportedCredential(c.MailPassword)
 	c.ClientID = cleanImportedCredential(c.ClientID)
 	c.MailRefreshToken = cleanImportedCredential(c.MailRefreshToken)
@@ -512,6 +513,19 @@ func (s *Store) saveImportedMailAccount(profile model.MailAccountProfile, creden
 			profile.ProManagedAt = &now
 		}
 	}
+	// Re-importing ordinary mailbox credentials must preserve the separate SIWC bundle.
+	if credentials.SIWC == nil && encrypted != "" {
+		plain, err := s.decrypt(encrypted)
+		if err != nil {
+			return model.MailAccountProfile{}, err
+		}
+		var oldCredentials model.MailAccountCredentials
+		if err := json.Unmarshal([]byte(plain), &oldCredentials); err != nil {
+			return model.MailAccountProfile{}, err
+		}
+		credentials.SIWC = oldCredentials.SIWC
+	}
+	profile.SIWCPresent = credentials.SIWC != nil && credentials.SIWC.AccessToken != "" && credentials.SIWC.RefreshToken != ""
 	sealed, err := s.encrypt(mustJSON(credentials))
 	if err != nil {
 		return model.MailAccountProfile{}, err

@@ -1343,6 +1343,9 @@ func (s *Server) executeOpenAILoginWithProxy(parent context.Context, email, prox
 	payload := map[string]any{"email": email, "pickup_url": login.credentials.PickupURL,
 		"proxy": proxyURL, "sms_provider": provider, "sms_config": smsCfg,
 		"allow_sms": settings.AllowSMS, "stdio_rpc": true, "credential_mode": credentialMode}
+	if credentialMode == "siwc" {
+		payload["siwc_host_id"] = s.store.MailSIWCHostID(email, login.credentials)
+	}
 	if credentialMode == "chatgpt_at" {
 		payload["allow_sms"] = false
 	}

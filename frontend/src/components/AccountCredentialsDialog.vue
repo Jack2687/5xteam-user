@@ -13,6 +13,7 @@ const credentialDialog = reactive({
   email: "",
   gptPassword: "",
   totpSecret: "",
+  siwc: null,
   accessToken: "",
   refreshToken: "",
   chatgptSession: "",
@@ -40,7 +41,8 @@ async function openCredentialDialog(account) {
     email: account.email,
     gptPassword: "",
     totpSecret: "",
-    accessToken: "",
+    siwc: null,
+  accessToken: "",
     refreshToken: "",
     chatgptSession: "",
     accountID: "",
@@ -62,6 +64,7 @@ async function openCredentialDialog(account) {
     Object.assign(credentialDialog, {
       gptPassword: credentials.gpt_password || "",
       totpSecret: credentials.totp_secret || "",
+      siwc: credentials.siwc || null,
       accessToken: credentials.access_token || "",
       refreshToken: credentials.refresh_token || "",
       chatgptSession: formatChatGPTSession(credentials.chatgpt_session),
@@ -86,7 +89,8 @@ function closeCredentialDialog(force = false) {
     email: "",
     gptPassword: "",
     totpSecret: "",
-    accessToken: "",
+    siwc: null,
+  accessToken: "",
     refreshToken: "",
     chatgptSession: "",
     accountID: "",
@@ -190,6 +194,8 @@ async function copyCredential(kind) {
   const value = {
     at: credentialDialog.accessToken,
     rt: credentialDialog.refreshToken,
+    "siwc-at": credentialDialog.siwc?.access_token,
+    "siwc-rt": credentialDialog.siwc?.refresh_token,
     password: credentialDialog.gptPassword,
     totp: credentialDialog.totpSecret,
     "totp-code": totpCode.value,
@@ -233,7 +239,8 @@ function exportAccountText() {
   emit('exported', '账号----密码----2FA 文本已导出');
 }
 async function exportCredentialFormat(format) {
-  if (hasChanges.value || credentialDialog.saving || credentialDialog.exporting || !credentialDialog.accessToken || !credentialDialog.refreshToken) return;
+  const tokens = format === 'siwc' ? credentialDialog.siwc : { access_token: credentialDialog.accessToken, refresh_token: credentialDialog.refreshToken };
+  if (hasChanges.value || credentialDialog.saving || credentialDialog.exporting || !tokens?.access_token || !tokens?.refresh_token) return;
   const requestID = credentialRequestID;
   const email = credentialDialog.email;
   credentialDialog.exporting = format;
@@ -244,10 +251,10 @@ async function exportCredentialFormat(format) {
     );
     if (requestID !== credentialRequestID) return;
     const safeEmail = email.replace(/[^a-z0-9@._-]+/gi, "_");
-    const suffix = format === "cpa" ? "cpa-auth" : "sub2api-account";
+    const suffix = format === "siwc" ? "siwc-sub2api-account" : format === "cpa" ? "cpa-auth" : "sub2api-account";
     downloadJSON(`${safeEmail}-${suffix}.json`, credentials);
     emit("exported",
-      `${email}：${format === "cpa" ? "CPA" : "Sub2"} JSON 已导出`,
+      `${email}：${format === "siwc" ? "SIWC" : format === "cpa" ? "CPA" : "Sub2"} JSON 已导出`,
     );
   } catch (error) {
     if (requestID === credentialRequestID) credentialDialog.error = error.message;
@@ -393,8 +400,21 @@ defineExpose({ open: openCredentialDialog });
             ></textarea>
           </label>
           <label class="credential-token-field"><span><strong>Account ID</strong></span><input v-model="credentialDialog.accountID" aria-label="Account ID" placeholder="未获取" spellcheck="false" /></label>
+          <div class="credential-token-field">
+            <span><strong>SIWC 授权</strong></span>
+            <p v-if="!credentialDialog.siwc?.access_token" class="muted">未获取，请在邮件管理点击“获取 SIWC RT / AT”。</p>
+            <template v-else>
+              <p class="muted">{{ credentialDialog.siwc.plan_use_enabled ? '已授权 ChatGPT 计划用量' : '未授予 ChatGPT 计划用量权限' }} · AT 有效期至 {{ new Date(credentialDialog.siwc.expires_at * 1000).toLocaleString() }}</p>
+              <p class="muted">Client ID：{{ credentialDialog.siwc.client_id }}</p>
+            </template>
+          </div>
+          <label v-for="kind in ['at', 'rt']" :key="kind" class="credential-token-field">
+            <span><strong>SIWC {{ kind.toUpperCase() }}</strong><button type="button" :disabled="!credentialDialog.siwc?.[kind === 'at' ? 'access_token' : 'refresh_token']" @click="copyCredential('siwc-' + kind)"><Check v-if="credentialDialog.copied === 'siwc-' + kind" :size="14" /><Copy v-else :size="14" />{{ credentialDialog.copied === 'siwc-' + kind ? '已复制' : '复制 SIWC ' + kind.toUpperCase() }}</button></span>
+            <textarea :value="credentialDialog.siwc?.[kind === 'at' ? 'access_token' : 'refresh_token'] || ''" :aria-label="'SIWC ' + kind.toUpperCase()" placeholder="未获取" rows="3" readonly spellcheck="false" @focus="$event.target.select()"></textarea>
+          </label>
           </fieldset>
           <footer class="credential-export-actions">
+            <button class="btn ghost" type="button" :disabled="hasChanges || credentialDialog.saving || !!credentialDialog.exporting || !credentialDialog.siwc?.access_token || !credentialDialog.siwc?.refresh_token" @click="exportCredentialFormat('siwc')"><LoaderCircle v-if="credentialDialog.exporting === 'siwc'" class="spin" :size="15" /><Download v-else :size="15" />导出 SIWC JSON</button>
             <button class="btn ghost" type="button" :disabled="!credentialDialog.loaded || hasChanges || credentialDialog.saving || !!credentialDialog.exporting" :title="hasChanges ? '请先保存修改' : '缺失字段留空，2FA 为绑定密钥'" @click="exportAccountText"><Download :size="15"/>导出账号----密码----2FA</button>
             <button
               class="btn ghost"

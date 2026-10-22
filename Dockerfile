@@ -15,7 +15,7 @@ FROM python:3.11-alpine3.20
 # to 3.11 because parity.json contains AST hashes generated with Python 3.11;
 # Python 3.12 changes ast.dump output even when the source is identical.
 RUN apk add --no-cache nodejs npm libstdc++ ca-certificates tzdata \
-    && python3 -m pip install --no-cache-dir "curl_cffi>=0.16,<0.17" pyotp \
+    && python3 -m pip install --no-cache-dir "curl_cffi>=0.16,<0.17" pyotp "PyJWT[crypto]==2.10.1" \
     && python3 -c "import sys, curl_cffi, pyotp; assert sys.version_info[:2] == (3, 11); print('python protocol dependencies ok'); from curl_cffi.requests.impersonate import BrowserType; BrowserType('chrome150'); BrowserType('chrome142')"
 RUN addgroup -S app && adduser -S -G app app
 WORKDIR /app
@@ -30,10 +30,12 @@ COPY --from=builder /src/internal/protocol_oauth_token.py /app/internal/protocol
 # Bundle the local manager OAuth port and the runtime used by the other flows.
 COPY --from=builder /src/internal/codex_runtime /app/internal/codex_runtime
 COPY --from=builder /src/internal/test_protocol_codex_oauth.py /tmp/test_protocol_codex_oauth.py
+COPY --from=builder /src/internal/test_protocol_siwc.py /tmp/test_protocol_siwc.py
 RUN npm --prefix /app/internal/codex_runtime/manager_oauth ci --omit=dev --ignore-scripts \
     && PYTHONPATH=/app/internal/codex_runtime python3 -c "import manager_oauth.adapter, manager_oauth.sentinel_vm, manager_oauth.sms_providers; print('manager OAuth runtime ok')" \
     && node -e "require('/app/internal/codex_runtime/manager_oauth/openai_sentinel_token.cjs'); console.log('manager OAuth Node fallback ok')" \
-    && PYTHONPATH=/app/internal/codex_runtime python3 /tmp/test_protocol_codex_oauth.py
+    && PYTHONPATH=/app/internal/codex_runtime python3 /tmp/test_protocol_codex_oauth.py \
+    && PYTHONPATH=/app/internal/codex_runtime python3 /tmp/test_protocol_siwc.py
 RUN test -f /app/internal/codex_runtime/sentinel/sentinel-runner.js \
     && test -f /app/internal/codex_runtime/sentinel/sdk.js \
     && node --version \

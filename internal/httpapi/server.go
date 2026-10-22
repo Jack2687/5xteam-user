@@ -388,6 +388,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/mail/accounts/{email}/register-at", s.startMailAccountRegistrationWithAT)
 	mux.HandleFunc("POST /api/mail/accounts/{email}/login", s.startMailAccountLogin)
 	mux.HandleFunc("POST /api/mail/accounts/{email}/oauth", s.startMailAccountOAuth)
+	mux.HandleFunc("POST /api/mail/accounts/{email}/siwc", s.startMailAccountSIWC)
 	mux.HandleFunc("GET /api/mail/oauth/{job_id}", s.freeAccountOAuthStatus)
 	mux.HandleFunc("POST /api/mail/accounts/credentials/export-batch", s.exportMailAccountCredentialsBatch)
 	mux.HandleFunc("POST /api/mail/accounts/credentials/export-progress", s.exportMailAccountCredentialsProgress)

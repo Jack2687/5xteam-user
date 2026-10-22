@@ -648,7 +648,7 @@ def _run_once(payload, rpc=None):
     pickup = str(payload.get("pickup_url") or "").strip()
     provider = str(payload.get("sms_provider") or "").strip()
     mode = "password_totp" if payload.get("login_mode") == "password_totp" else "email_otp"
-    credential_mode = "chatgpt_at" if payload.get("credential_mode") == "chatgpt_at" else "codex_rt"
+    credential_mode = payload.get("credential_mode") if payload.get("credential_mode") in {"chatgpt_at", "siwc"} else "codex_rt"
     local = {"email": email, "password": str(payload.get("gpt_password") or "") if mode == "password_totp" else "",
              "_totp_secret": str(payload.get("totp_secret") or ""),
              "force_email_code": mode == "email_otp", "email_code_login": mode == "email_otp",
@@ -665,10 +665,18 @@ def _run_once(payload, rpc=None):
              "hero_managed": rpc is not None,
              "generic_accounts": [{"email": email, "pickup_url": pickup, "imap_host": pickup,
                                    "mode": "mailtoken" if urlsplit(pickup).fragment else "directurl"}] if pickup else []}
+    if credential_mode == "siwc":
+        local["siwc_host_id"] = str(payload.get("siwc_host_id") or "").strip()
+        if not local["siwc_host_id"]:
+            return {"success": False, "error": "SIWC 缺少宿主标识", "retryable": False}
     bridge.configure({**payload, **local}, rpc)
     flow = None
     try:
-        flow = ProjectProtocolLogin("local", local)
+        if credential_mode == "siwc":
+            from .siwc import SIWCProtocolLogin
+            flow = SIWCProtocolLogin("local", local)
+        else:
+            flow = ProjectProtocolLogin("local", local)
         bridge.emit("login_method", "login_start", "开始本次 ChatGPT 登录" if credential_mode == "chatgpt_at" else "开始本次 OAuth 登录")
         session = flow.login()
         if credential_mode == "chatgpt_at" and getattr(flow, "rate_limit_error", None) is not None:

@@ -17,12 +17,12 @@ function pause(ms, signal) {
 // Mail and Pro share exactly the same task endpoints and polling protocol.
 // Never retry the POST: a lost response must not create a duplicate login.
 export async function runMailAccountTask(account, mode, onUpdate = () => {}, { signal, request = api, wait = pause } = {}) {
-  const kind = mode === 'oauth' ? 'oauth' : 'login'
+  const kind = mode === 'siwc' ? 'siwc' : mode === 'oauth' ? 'oauth' : 'login'
   const started = await request(`/api/mail/accounts/${encodeURIComponent(account.email)}/${kind}`, { method: 'POST', body: {}, signal })
   let job = started.job || started
   if (!job.job_id) throw new Error('任务没有返回任务 ID')
   onUpdate(job)
-  const path = `/api/mail/${kind}/${encodeURIComponent(job.job_id)}`
+  const path = `/api/mail/${kind === 'siwc' ? 'oauth' : kind}/${encodeURIComponent(job.job_id)}`
   while (!mailTaskTerminal(job)) {
     await wait(1800, signal)
     const result = await request(path, { signal, cache: 'no-store' })

@@ -444,6 +444,10 @@ func (s *Server) startMailAccountLogin(w http.ResponseWriter, r *http.Request) {
 // startMailAccountOAuth runs Codex OAuth directly from Mail Management. It
 // does not require or create a Team rotation record.
 func (s *Server) startMailAccountOAuth(w http.ResponseWriter, r *http.Request) {
+	s.startMailAccountOAuthMode(w, r, "codex_rt")
+}
+
+func (s *Server) startMailAccountOAuthMode(w http.ResponseWriter, r *http.Request, mode string) {
 	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	if !strings.Contains(email, "@") {
 		writeAPI(w, http.StatusBadRequest, nil, "邮箱地址无效")
@@ -470,16 +474,22 @@ func (s *Server) startMailAccountOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	if duplicate {
 		s.oauthMu.Unlock()
-		writeAPI(w, http.StatusConflict, nil, "该账号的 Codex OAuth 正在处理中")
+		writeAPI(w, http.StatusConflict, nil, "该账号的 OAuth 正在处理中")
 		return
 	}
 	jobID := randomRegistrationID()
 	job := map[string]any{"job_id": jobID, "email": email, "trigger": "mail_oauth", "mail_only": true, "status": "queued", "state": "queued", "logs": []any{}, "error": "", "result": nil}
+	job["credential_mode"] = mode
 	s.oauthJobs[jobID] = job
+	initial := cloneRegistrationJob(job)
 	s.oauthMu.Unlock()
-	_ = s.store.StartProManualStage(email, "oauth", jobID)
-	go s.runMailAccountOAuth(jobID, email)
-	writeAPI(w, http.StatusAccepted, map[string]any{"success": true, "job": cloneRegistrationJob(job)}, "")
+	if mode == "siwc" {
+		go s.runMailAccountSIWC(jobID, email)
+	} else {
+		_ = s.store.StartProManualStage(email, "oauth", jobID)
+		go s.runMailAccountOAuth(jobID, email)
+	}
+	writeAPI(w, http.StatusAccepted, map[string]any{"success": true, "job": initial}, "")
 }
 
 func (s *Server) runMailAccountOAuth(jobID, email string) {
@@ -568,6 +578,10 @@ func (s *Server) exportMailAccountCredentials(w http.ResponseWriter, r *http.Req
 		return
 	}
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "siwc" {
+		s.exportMailSIWCCredentials(w, r, email)
+		return
+	}
 	if format == "" || format == "raw" {
 		profile, local, err := s.store.MailAccountCredential(email)
 		if err != nil {
@@ -596,6 +610,7 @@ func (s *Server) exportMailAccountCredentials(w http.ResponseWriter, r *http.Req
 			"refresh_token":      credentials.RefreshToken,
 			"chatgpt_account_id": credentials.AccountID,
 			"chatgpt_session":    chatGPTSessionValue(credentials.ChatGPTSession),
+			"siwc":               local.SIWC,
 		}, "")
 		return
 	}
