@@ -21,6 +21,8 @@ class SIWCScenario(Scenario):
 
     def request(self, method, url, **kw):
         path = urlsplit(url).path
+        if path in ("/api/accounts/session/select", "/api/accounts/client_auth_session_dump", "/api/accounts/dynamic-agent-clients/consent/grant"):
+            assert kw.get("headers", {}).get("openai-sentinel-token"), "HAR requires the login Sentinel token"
         if path in ("/oauth/token", "/oauth/authorize", "/api/accounts/workspace/select", "/api/accounts/organization/select"):
             raise AssertionError("SIWC used a Codex-only endpoint: " + path)
         if path == "/api/accounts/authorize":
@@ -51,6 +53,7 @@ class SIWCScenario(Scenario):
             callback += "&state=duplicate" if self.o.get("duplicate_state") else ""
             return Response(url, body={"continue_url": callback, "page": {"type": "external_url"}})
         if path == "/api/accounts/oauth/token":
+            assert kw["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
             self.tokens += 1
             data = {k: v[0] for k, v in parse_qs(kw["data"].decode()).items()}
             self.calls.append({"path": path, "body": data, **kw})

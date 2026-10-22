@@ -20,6 +20,12 @@ REDIRECT = "http://127.0.0.1:1456/auth/callback"
 
 
 class SIWCProtocolLogin(ProjectProtocolLogin):
+    def request(self, url, **kwargs):
+        if urlsplit(url).path in {"/api/accounts/session/select", "/api/accounts/client_auth_session_dump",
+                                  "/api/accounts/dynamic-agent-clients/consent/grant"} and self.sentinel_token:
+            kwargs["headers"] = {**(kwargs.get("headers") or {}), "openai-sentinel-token": self.sentinel_token}
+        return super().request(url, **kwargs)
+
     def prepare_oauth_authorize_url(self):
         self.oauth_authorize_source = "siwc"
         self.oauth_state = secrets.token_urlsafe(32)
@@ -122,7 +128,7 @@ class SIWCProtocolLogin(ProjectProtocolLogin):
                 "grant_type": "authorization_code", "client_id": client_id,
                 "code": query["code"][0], "redirect_uri": self.oauth_redirect_uri,
                 "code_verifier": self.oauth_code_verifier, "resource": RESOURCE,
-            }, headers=self.headers(TOKEN, {"Accept": "application/json"}), timeout=60)
+            }, headers=self.headers(TOKEN, {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}), timeout=60)
             if response.status < 500:
                 break
             if attempt < 2:
