@@ -31,6 +31,7 @@ COPY --from=builder /src/internal/protocol_oauth_token.py /app/internal/protocol
 COPY --from=builder /src/internal/codex_runtime /app/internal/codex_runtime
 COPY --from=builder /src/internal/test_protocol_codex_oauth.py /tmp/test_protocol_codex_oauth.py
 COPY --from=builder /src/internal/test_protocol_siwc.py /tmp/test_protocol_siwc.py
+COPY --from=builder /src/internal/test_protocol_pro_auto.py /tmp/test_protocol_pro_auto.py
 RUN npm --prefix /app/internal/codex_runtime/manager_oauth ci --omit=dev --ignore-scripts \
     && PYTHONPATH=/app/internal/codex_runtime python3 -c "import manager_oauth.adapter, manager_oauth.sentinel_vm, manager_oauth.sms_providers; print('manager OAuth runtime ok')" \
     && node -e "require('/app/internal/codex_runtime/manager_oauth/openai_sentinel_token.cjs'); console.log('manager OAuth Node fallback ok')" \
