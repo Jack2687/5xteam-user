@@ -1014,9 +1014,8 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				interval := p.ProAuto.QuotaIntervalSeconds
 				if quotaSettings.Sub2.AuthMode == "siwc" {
-					if cfg, e := s.siwcQuotaPolicy(); e == nil {
-						interval = cfg.PollSeconds
-					}
+					// Resolved before UpdateProAccount acquires the store lock.
+					interval = quotaSettings.Sub2.QuotaCheckIntervalSeconds
 				}
 				next := time.Now().UTC().Add(time.Duration(max(10, interval)) * time.Second)
 				if deadline := p.ProPushDeadline(); deadline != nil {

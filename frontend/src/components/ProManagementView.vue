@@ -143,19 +143,36 @@ const defaults = () => ({
   sub2_password: '', cpa_key: '', vm2api_key: '',
 })
 const settings = reactive(defaults())
+function normalizeSection(base, value) {
+  const result = { ...base, ...value }
+  for (const key of Object.keys(base)) {
+    if (Array.isArray(base[key]) && !Array.isArray(result[key])) result[key] = []
+  }
+  return result
+}
+function applySettings(data) {
+  const base = defaults()
+  Object.assign(settings, normalizeSection(base, data), {
+    sub2: normalizeSection(base.sub2, data.sub2),
+    cpa: normalizeSection(base.cpa, data.cpa),
+    vm2api: normalizeSection(base.vm2api, { ...data.vm2api, group_ids: data.vm2api?.group_ids || (data.vm2api?.pool_id ? [data.vm2api.pool_id] : []) }),
+    sub2_password: '', cpa_key: '', vm2api_key: '',
+  })
+}
 const pushModeDrafts = new Map()
 async function switchPushMode(event) {
+  if (busy.value) return
   const mode=event.target.value
   const old=settings.sub2.auth_mode||''
   pushModeDrafts.set(old,{sub2:JSON.parse(JSON.stringify(settings.sub2)),password:settings.sub2_password,models:sub2Models.value})
   busy.value='switch-push-mode'
   try {
     const draft=pushModeDrafts.get(mode)
-    settings.sub2=draft?.sub2||await api('/api/pro-settings/sub2/variant?auth_mode='+encodeURIComponent(mode))
+    settings.sub2=normalizeSection(defaults().sub2, draft?.sub2||await api('/api/pro-settings/sub2/variant?auth_mode='+encodeURIComponent(mode)))
     settings.sub2.auth_mode=mode
     settings.sub2_password=draft?.password||''
-    sub2Models.value=draft?.models||(settings.sub2.models||[]).join('\n')
-    sub2Groups.value=[]
+    sub2Models.value=draft?.models??settings.sub2.models.join('\n')
+    sub2Groups.value=settings.sub2.group_ids.map((id,index)=>({id:Number(id),name:settings.sub2.group_names[index]||`#${id}`}))
     groupErrors.sub2=''
   } catch(e) {event.target.value=old;setMessage(e.message,'error')}
   finally {busy.value=''}
@@ -262,7 +279,7 @@ async function reload() { await loadPage(); emit('reload') }
 async function loadSettings() {
   try {
     const data = await api('/api/pro-settings')
-    Object.assign(settings, defaults(), data, { sub2: { ...defaults().sub2, ...(data.sub2 || {}) }, cpa: { ...defaults().cpa, ...(data.cpa || {}) }, vm2api: { ...defaults().vm2api, ...(data.vm2api || {}), group_ids: data.vm2api?.group_ids || (data.vm2api?.pool_id ? [data.vm2api.pool_id] : []) }, sub2_password: '', cpa_key: '', vm2api_key: '' })
+    applySettings(data)
     sub2Models.value = (settings.sub2.models || []).join('\n')
     for (const provider of ['sub2', 'cpa']) {
       const target = settings[provider]
@@ -383,13 +400,13 @@ async function returnOne(account) {
 function syncGroupNames(provider) {
   const target = provider === 'sub2' ? settings.sub2 : settings.cpa
   const available = provider === 'sub2' ? sub2Groups.value : cpaGroups.value
-  target.group_names = target.group_ids.map((id, index) => available.find((g) => Number(g.id) === Number(id))?.name || target.group_names[index] || `#${id}`)
+  target.group_names = (target.group_ids || []).map((id, index) => available.find((g) => Number(g.id) === Number(id))?.name || target.group_names?.[index] || `#${id}`)
   if (provider === 'sub2') settings.post_merge_group_names = settings.post_merge_group_ids.map(id => available.find(g => Number(g.id) === Number(id))?.name || `#${id}`)
 }
 function connectionPayload(provider) {
   if (provider === 'vm2api') return { vm2api: { ...settings.vm2api, url: settings.vm2api.url.trim() }, vm2api_key: settings.vm2api_key }
   return provider === 'sub2'
-    ? { sub2: { url: settings.sub2.url.trim(), email: settings.sub2.email.trim() }, sub2_password: settings.sub2_password }
+    ? { sub2: { auth_mode: settings.sub2.auth_mode || '', url: settings.sub2.url.trim(), email: settings.sub2.email.trim() }, sub2_password: settings.sub2_password }
     : { cpa: { url: settings.cpa.url.trim() }, cpa_key: settings.cpa_key }
 }
 function updateGroups(provider, groups) {
@@ -436,9 +453,16 @@ async function testProvider(provider) {
   finally { busy.value = '' }
 }
 async function saveSettings() {
-  busy.value = 'save-settings'; syncGroupNames('sub2'); syncGroupNames('cpa')
-  settings.sub2.models = [...new Set(sub2Models.value.split(/[\n,]+/).map(item => item.trim()).filter(Boolean))]
-  try { const saved = await api('/api/pro-settings', { method: 'PUT', body: settings }); Object.assign(settings, saved, { sub2_password: '', cpa_key: '', vm2api_key: '' }); sub2Models.value = (settings.sub2.models || []).join('\n'); updateCountdown(); setMessage('Pro 配置已保存', 'success') }
+  if (busy.value) return
+  busy.value = 'save-settings'
+  try {
+    syncGroupNames('sub2'); syncGroupNames('cpa')
+    settings.sub2.models = [...new Set(sub2Models.value.split(/[\n,]+/).map(item => item.trim()).filter(Boolean))]
+    const saved = await api('/api/pro-settings', { method: 'PUT', body: settings })
+    applySettings(saved)
+    sub2Models.value = settings.sub2.models.join('\n')
+    updateCountdown(); setMessage('Pro 配置已保存', 'success')
+  }
   catch (error) { setMessage(error.message, 'error') }
   finally { busy.value = '' }
 }
@@ -489,7 +513,7 @@ onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); listRequestID++; win
 
     <form v-else-if="activeTab === 'push'" class="push-grid config-workspace ops-config" @invalid.capture="revealConfigInvalid" @submit.prevent="saveSettings">
       <ConfigNav v-model="configSection" label="Pro 推送平台配置" :items="[['sub2','Sub2','分组 · 模型 · 推送参数'],['cpa','CPA','Management API'],['vm2api','vm2api','槽位 · 规格 · 代理']]" />
-      <section class="panel provider-panel" v-show="configSection === 'sub2'" data-config-section="sub2" :class="{ selected: settings.provider === 'sub2' }"><div class="panel-title"><div><span>SUB2</span><h2>Sub2 / Sub2SIWC 设置</h2></div><label class="provider-choice"><input v-model="settings.provider" type="radio" value="sub2" />{{ settings.provider === 'sub2' ? '当前启用' : '启用' }}</label></div><div class="settings-fields"><label class="field wide"><span>推送方式</span><select :value="settings.sub2.auth_mode" :disabled="!!busy" @change="switchPushMode"><option value="">Sub2（原 OAuth）</option><option value="siwc">Sub2SIWC（SIWC 授权）</option></select><small>两种方式分别保存连接、分组和代理。SIWC 全自动沿用首次登录会话获取 SIWC RT/AT；切换后点击保存生效。</small></label><label class="field wide"><span>地址</span><input v-model="settings.sub2.url" placeholder="https://sub2.example.com" /></label><label class="field"><span>管理员邮箱</span><input v-model="settings.sub2.email" /></label><label class="field"><span>管理员密码</span><input v-model="settings.sub2_password" type="password" :placeholder="settings.sub2.password_present ? '已保存，留空不修改' : '请输入密码'" /></label><label class="field"><span>账号并发</span><input v-model.number="settings.sub2.account_concurrency" type="number" min="1" max="100" /></label><label class="field"><span>优先级</span><input v-model.number="settings.sub2.priority" type="number" min="1" max="100" /></label><label class="toggle-row wide"><div><strong>WS 推荐配置</strong><small>推送时携带 cpa_ws=1</small></div><input v-model="settings.sub2.cpa_ws" type="checkbox" /><i></i></label></div><Sub2ProxyPicker v-model:enabled="settings.sub2.bind_proxy" v-model:ids="settings.sub2.proxy_ids" :url="settings.sub2.url" :email="settings.sub2.email" :password="settings.sub2_password" :active="settings.provider === 'sub2'" :disabled="!!busy" endpoint="/api/pro-settings/sub2/proxies" /><div class="group-box"><div><strong>OpenAI 分组</strong><button class="btn ghost compact" type="button" :disabled="!!busy" @click="loadGroups('sub2')"><RefreshCw v-if="busy === 'groups-sub2'" class="spin" :size="14" />{{ busy === 'groups-sub2' ? '读取中' : '读取分组' }}</button></div><p v-if="groupErrors.sub2" role="status">{{ groupErrors.sub2 }}</p><p v-if="!sub2Groups.length">{{ busy === 'groups-sub2' ? '正在读取分组…' : '暂无分组' }}</p><label v-for="group in sub2Groups" :key="group.id"><input v-model="settings.sub2.group_ids" type="checkbox" :value="group.id" />{{ group.name }}</label></div>
+      <section class="panel provider-panel" v-show="configSection === 'sub2'" data-config-section="sub2" :class="{ selected: settings.provider === 'sub2' }"><div class="panel-title"><div><span>SUB2</span><h2>Sub2 / Sub2SIWC 设置</h2></div><label class="provider-choice"><input v-model="settings.provider" type="radio" value="sub2" />{{ settings.provider === 'sub2' ? '当前启用' : '启用' }}</label></div><div class="settings-fields"><label class="field wide"><span>推送方式</span><select :value="settings.sub2.auth_mode" :disabled="!!busy" @change="switchPushMode"><option value="">Sub2（原 OAuth）</option><option value="siwc">Sub2SIWC（SIWC 授权）</option></select><small>两种方式分别保存连接、分组和代理。SIWC 全自动沿用首次登录会话获取 SIWC RT/AT；切换后点击保存生效。</small></label><label class="field wide"><span>地址</span><input v-model="settings.sub2.url" placeholder="https://sub2.example.com" /></label><label class="field"><span>管理员邮箱</span><input v-model="settings.sub2.email" /></label><label class="field"><span>管理员密码</span><input v-model="settings.sub2_password" type="password" :placeholder="settings.sub2.password_present ? '已保存，留空不修改' : '请输入密码'" /></label><label class="field"><span>账号并发</span><input v-model.number="settings.sub2.account_concurrency" type="number" min="1" max="100" /></label><label class="field"><span>优先级</span><input v-model.number="settings.sub2.priority" type="number" min="1" max="100" /></label><label class="toggle-row wide"><div><strong>WS 推荐配置</strong><small>推送时携带 cpa_ws=1</small></div><input v-model="settings.sub2.cpa_ws" type="checkbox" /><i></i></label></div><Sub2ProxyPicker :key="settings.sub2.auth_mode || 'oauth'" :auth-mode="settings.sub2.auth_mode" v-model:enabled="settings.sub2.bind_proxy" v-model:ids="settings.sub2.proxy_ids" :url="settings.sub2.url" :email="settings.sub2.email" :password="settings.sub2_password" :active="settings.provider === 'sub2'" :disabled="!!busy" endpoint="/api/pro-settings/sub2/proxies" /><div class="group-box"><div><strong>OpenAI 分组</strong><button class="btn ghost compact" type="button" :disabled="!!busy" @click="loadGroups('sub2')"><RefreshCw v-if="busy === 'groups-sub2'" class="spin" :size="14" />{{ busy === 'groups-sub2' ? '读取中' : '读取分组' }}</button></div><p v-if="groupErrors.sub2" role="status">{{ groupErrors.sub2 }}</p><p v-if="!sub2Groups.length">{{ busy === 'groups-sub2' ? '正在读取分组…' : '暂无分组' }}</p><label v-for="group in sub2Groups" :key="group.id"><input v-model="settings.sub2.group_ids" type="checkbox" :value="group.id" />{{ group.name }}</label></div>
       <div class="group-box post-merge-group-box"><div><strong>合并/删除移出后分组</strong><button class="btn ghost compact" type="button" :disabled="!!busy" @click="loadGroups('sub2')">读取分组</button></div><p>可多选；留空保持原分组。空间合并并移出成功后，或删除账户请求提交成功后，立即替换为所选分组；删除无需等待最终确认。</p><p v-if="!sub2Groups.length">暂无分组</p><label v-for="group in sub2Groups" :key="group.id"><input v-model="settings.post_merge_group_ids" type="checkbox" :value="group.id" />{{ group.name }}</label></div>
       <ProSIWCSettings v-if="settings.sub2.auth_mode === 'siwc'" :transfer="false"/><label class="field models-field"><span>可用模型 <small>每行或逗号分隔，留空表示不限制</small></span><textarea v-model="sub2Models" rows="4" spellcheck="false" placeholder="gpt-5.2-codex&#10;gpt-5.1-codex-mini"></textarea></label><div class="panel-actions"><button class="btn ghost" type="button" :disabled="!!busy" @click="testProvider('sub2')"><RefreshCw v-if="busy === 'test-sub2'" class="spin" :size="14" />{{ busy === 'test-sub2' ? '连接中' : '测试连接' }}</button></div></section>
       <section class="panel provider-panel" v-show="configSection === 'cpa'" data-config-section="cpa" :class="{ selected: settings.provider === 'cpa' }"><div class="panel-title"><div><span>CPA</span><h2>CPA 设置</h2></div><label class="provider-choice"><input v-model="settings.provider" type="radio" value="cpa" />{{ settings.provider === 'cpa' ? '当前启用' : '启用' }}</label></div><div class="settings-fields"><label class="field wide"><span>Management API 地址</span><input v-model="settings.cpa.url" placeholder="http://cpa:8317" /></label><label class="field wide"><span>Management Key</span><input v-model="settings.cpa_key" type="password" :placeholder="settings.cpa.key_present ? '已保存，留空不修改' : '请输入 Key'" /></label><label class="toggle-row wide"><div><strong>WS 推荐配置</strong><small>上传 auth 文件时启用 WebSocket</small></div><input v-model="settings.cpa.websockets" type="checkbox" /><i></i></label></div><div class="group-box"><div><strong>账号分组</strong><button class="btn ghost compact" type="button" :disabled="!!busy" @click="loadGroups('cpa')"><RefreshCw v-if="busy === 'groups-cpa'" class="spin" :size="14" />{{ busy === 'groups-cpa' ? '读取中' : '读取分组' }}</button></div><p v-if="groupErrors.cpa" role="status">{{ groupErrors.cpa }}</p><p v-if="!cpaGroups.length">{{ busy === 'groups-cpa' ? '正在读取分组…' : '暂无分组' }}</p><label v-for="group in cpaGroups" :key="group.id"><input v-model="settings.cpa.group_ids" type="checkbox" :value="group.id" />{{ group.name }}</label></div><div class="panel-actions"><button class="btn ghost" type="button" :disabled="!!busy" @click="testProvider('cpa')"><RefreshCw v-if="busy === 'test-cpa'" class="spin" :size="14" />{{ busy === 'test-cpa' ? '连接中' : '测试连接' }}</button></div></section>

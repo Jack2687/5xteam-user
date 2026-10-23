@@ -191,3 +191,35 @@ func TestProConnectionRejectsMalformedBody(t *testing.T) {
 		}
 	}
 }
+
+func TestProConnectionUsesInactiveSIWCSecret(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	v := model.DefaultProSettings()
+	v.Sub2.AuthMode = "siwc"
+	v.Sub2.URL = "https://siwc.example.test"
+	v.Sub2.Email = "admin@example.test"
+	if _, err = st.SaveProSettings(v, "siwc-secret", ""); err != nil {
+		t.Fatal(err)
+	}
+	v.Sub2.AuthMode = ""
+	v.Sub2.URL = "https://ordinary.example.test"
+	if _, err = st.SaveProSettings(v, "ordinary-secret", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st}
+	for _, action := range []string{"test", "groups", "proxies"} {
+		w := httptest.NewRecorder()
+		got, secret, _, ok := s.proConnectionSettings(w, httptest.NewRequest("POST", "/api/pro-settings/sub2/"+action, strings.NewReader(`{"sub2":{"auth_mode":"siwc","url":"https://siwc.example.test","email":"admin@example.test"}}`)))
+		if !ok || got.Sub2.AuthMode != "siwc" || secret != "siwc-secret" {
+			t.Fatalf("wrong inactive mode credentials: %s", action)
+		}
+	}
+	after, secret, _, err := st.ProSettings()
+	if err != nil || after.Sub2.AuthMode != "" || secret != "ordinary-secret" {
+		t.Fatal("connection check changed active settings")
+	}
+}

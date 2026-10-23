@@ -6,7 +6,7 @@ import { api } from '../api'
 const props = defineProps({
   enabled: Boolean, ids: { type: Array, default: () => [] }, active: Boolean, disabled: Boolean,
   url: { type: String, default: '' }, email: { type: String, default: '' }, password: { type: String, default: '' },
-  endpoint: { type: String, required: true },
+  endpoint: { type: String, required: true }, authMode: { type: String, default: '' },
 })
 const emit = defineEmits(['update:enabled', 'update:ids'])
 const rows = ref([])
@@ -20,11 +20,12 @@ function available(p) { return p.status === 'active' && p.account_count != null 
 function state(p) { return p.status !== 'active' ? '未启用' : p.expires_at && new Date(p.expires_at).getTime() <= Date.now() ? '已过期' : p.account_count == null ? '缺少绑定数' : '可用' }
 function expiry(p) { return p.expires_at ? new Date(p.expires_at).toLocaleString() : '不过期' }
 function urlKey(value) { try { return new URL(value.trim()).href.replace(/\/+$/, '') } catch { return value.trim().replace(/\/+$/, '') } }
-const selected = computed(() => new Set(props.ids.map(Number)))
+const selectedIDs = computed(() => props.ids || [])
+const selected = computed(() => new Set(selectedIDs.value.map(Number)))
 const visible = computed(() => rows.value.filter(p => `${p.name} ${p.host} ${p.port} ${p.id}`.toLowerCase().includes(query.value.trim().toLowerCase())))
-const missing = computed(() => loaded.value ? props.ids.filter(id => !rows.value.some(p => Number(p.id) === Number(id))) : [])
+const missing = computed(() => loaded.value ? selectedIDs.value.filter(id => !rows.value.some(p => Number(p.id) === Number(id))) : [])
 function toggle(id, checked) { const ids = new Set(selected.value); checked ? ids.add(Number(id)) : ids.delete(Number(id)); emit('update:ids', [...ids]) }
-function selectVisible() { emit('update:ids', [...new Set([...props.ids.map(Number), ...visible.value.filter(available).map(p => Number(p.id))])]) }
+function selectVisible() { emit('update:ids', [...new Set([...selectedIDs.value.map(Number), ...visible.value.filter(available).map(p => Number(p.id))])]) }
 async function refresh() {
   if (!props.active || !props.enabled || props.disabled) return
   cancel()
@@ -32,7 +33,7 @@ async function refresh() {
   controller = request
   loading.value = true; error.value = ''
   try {
-    const result = await api(props.endpoint, { method: 'POST', body: { sub2: { url: props.url.trim(), email: props.email.trim() }, sub2_password: props.password }, signal: request.signal })
+    const result = await api(props.endpoint, { method: 'POST', body: { sub2: { auth_mode: props.authMode, url: props.url.trim(), email: props.email.trim() }, sub2_password: props.password }, signal: request.signal })
     if (request.signal.aborted) return
     rows.value = result || []; loaded.value = true
   } catch (e) { if (!request.signal.aborted) error.value = e.message }
@@ -54,11 +55,11 @@ onBeforeUnmount(cancel)
 
 <template>
   <div class="proxy-picker">
-    <label class="proxy-toggle"><input type="checkbox" :checked="enabled" :disabled="disabled" @change="emit('update:enabled', $event.target.checked)" /><strong>绑定代理</strong><span>已选 {{ ids.length }} 个</span></label>
+    <label class="proxy-toggle"><input type="checkbox" :checked="enabled" :disabled="disabled" @change="emit('update:enabled', $event.target.checked)" /><strong>绑定代理</strong><span>已选 {{ selectedIDs.length }} 个</span></label>
     <template v-if="enabled">
       <p v-if="!active">启用 Sub2 后可读取代理列表。</p>
       <div class="proxy-actions"><input v-model="query" aria-label="搜索 Sub2 代理" placeholder="搜索代理名称 / 地址 / ID" /><button class="btn ghost compact" type="button" :disabled="disabled || !active || loading" @click="refresh"><RefreshCw :size="14" :class="{ spin: loading }" />{{ loading ? '读取中…' : '刷新代理' }}</button></div>
-      <div class="proxy-actions"><button class="btn ghost compact" type="button" :disabled="disabled || loading || !active || !visible.some(available)" @click="selectVisible">选择筛选结果</button><button class="btn ghost compact" type="button" :disabled="disabled || !ids.length" @click="emit('update:ids', [])">清空选择</button></div>
+      <div class="proxy-actions"><button class="btn ghost compact" type="button" :disabled="disabled || loading || !active || !visible.some(available)" @click="selectVisible">选择筛选结果</button><button class="btn ghost compact" type="button" :disabled="disabled || !selectedIDs.length" @click="emit('update:ids', [])">清空选择</button></div>
       <p v-if="error" class="proxy-error" role="alert">{{ error }}</p>
       <div v-if="rows.length" class="proxy-list">
         <label v-for="p in visible" :key="p.id" class="proxy-row">
@@ -71,7 +72,7 @@ onBeforeUnmount(cancel)
       <p v-else-if="loaded">没有可选的 Sub2 代理</p>
       <p v-else-if="!loading && !error">点击“刷新代理”读取列表和绑定账号数。</p>
       <div v-for="id in missing" :key="id" class="proxy-missing">已选代理 #{{ id }} 已禁用、删除或不可见 <button class="btn ghost compact" type="button" :disabled="disabled" @click="toggle(id, false)">取消选择</button></div>
-      <p v-if="!ids.length" class="proxy-error">请至少选择一个代理；开启后无可用代理会停止推送。</p>
+      <p v-if="!selectedIDs.length" class="proxy-error">请至少选择一个代理；开启后无可用代理会停止推送。</p>
       <p>计数范围：Sub2 所有未删除账号（含已禁用账号）</p>
     </template>
   </div>

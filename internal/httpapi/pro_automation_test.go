@@ -373,3 +373,52 @@ func TestProAutoDueSchedulerAndStop(t *testing.T) {
 		t.Fatal("stopped job still ran")
 	}
 }
+
+func TestProAutoSIWCQuotaWaitDoesNotLockSettings(t *testing.T) {
+	s, st, email := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected upstream call") })
+	configureProAutoFixture(t, s)
+	v, _, _, err := st.ProSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Sub2.AuthMode = "siwc"
+	if _, err = st.SaveProSettings(v, "siwc-secret", ""); err != nil {
+		t.Fatal(err)
+	}
+	cfg := model.DefaultProSIWCSettings()
+	cfg.PollSeconds = 37
+	if _, err = st.SaveProSIWCSettings(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+		p.ProAuto = model.ProAutoState{ID: "siwc-wait", Status: "waiting_quota", QuotaUsedThreshold: 100, QuotaIntervalSeconds: 120, Steps: map[string]string{"oauth": "completed", "push": "completed"}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.proAutoHooks = &proAutomationHooks{Quota: func(ctx context.Context, email string, auto bool) (model.MailAccountProfile, error) {
+		p, _, err := st.MailAccountCredential(email)
+		return p, err
+	}}
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- s.runProAutomationTail(context.Background(), email) }()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("SIWC quota wait blocked the settings store")
+	}
+	p, _, err := st.MailAccountCredential(email)
+	if err != nil || p.ProAuto.Status != "waiting_quota" || p.ProAuto.NextCheckAt == nil {
+		t.Fatalf("quota wait not saved: %+v, %v", p.ProAuto, err)
+	}
+	if delta := p.ProAuto.NextCheckAt.Sub(start); delta < 37*time.Second || delta > 40*time.Second {
+		t.Fatalf("wrong SIWC poll interval: %s", delta)
+	}
+	if _, _, _, err = st.ProSettings(); err != nil {
+		t.Fatal(err)
+	}
+}
