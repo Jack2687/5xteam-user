@@ -18,9 +18,11 @@ func TestEJHAutoOpeningAfterClosedHistoricalCard(t *testing.T) {
 	for _, tc := range []struct {
 		name, payment, status                              string
 		released, locked, missing, countLimit, budgetLimit bool
+		legacyRejected                                     bool
 		wantOpen                                           bool
 	}{
 		{name: "unused_closed", status: "2", wantOpen: true},
+		{name: "closed_legacy_rejected_increase", status: "2", legacyRejected: true, wantOpen: true},
 		{name: "unused_closing", status: "8", wantOpen: true},
 		{name: "closing_locked", status: "8", locked: true, wantOpen: true},
 		{name: "closing_unknown_payment", payment: "submission_unknown", status: "8"},
@@ -71,6 +73,12 @@ func TestEJHAutoOpeningAfterClosedHistoricalCard(t *testing.T) {
 			}
 			if old.Available {
 				t.Fatal("historical fixture unexpectedly usable")
+			}
+			if tc.legacyRejected {
+				legacy := ejh.Operation{ID: "old-increase", Method: "increase", CardID: old.ID, OrderNo: remote.OrderNo, Status: "unknown", Error: "EJH 800006: legacy rejection", CreatedAt: time.Now()}
+				if err = s.store.EJHBeginOperation(legacy); err != nil {
+					t.Fatal(err)
+				}
 			}
 			now := time.Now()
 			op := ejh.Operation{ID: "historical-auto-open", Method: "open", CardID: old.ID, OrderNo: remote.OrderNo, Status: "completed", Automatic: true, Amount: "20", Currency: "USD", CreatedAt: now, UpdatedAt: now}

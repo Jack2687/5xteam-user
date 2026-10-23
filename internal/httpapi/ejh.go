@@ -430,6 +430,10 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 	}
 	// Read closed cards from saved data without querying the issuer.
 	if card.Remote.Status == "2" {
+		if e := s.store.ReconcileEJHRejectedIncrease(card.ID); e != nil {
+			writeAPI(w, 500, nil, "旧提额操作状态更新失败")
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		switch in.Action {
 		case "details":
@@ -810,6 +814,9 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 			return gptpay.Card{}, fmt.Errorf("自动开卡失败后冷却 5 分钟，请先核对失败原因")
 		}
 		if o.Automatic && o.Status == "completed" && o.CardID != "" {
+			if err := s.store.ReconcileEJHRejectedIncrease(o.CardID); err != nil {
+				return gptpay.Card{}, err
+			}
 			prior, _, err := s.store.GPTPayCard(o.CardID)
 			if err != nil {
 				return gptpay.Card{}, fmt.Errorf("自动开卡记录对应的银行卡 %s 无法读取，请先核实该卡，暂停自动补卡", o.CardID)

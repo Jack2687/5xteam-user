@@ -275,7 +275,7 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 	if e := s.EJHPut("card", id, record); e != nil {
 		return empty, e
 	}
-	if e := s.reconcileEJHRejectedIncrease(id); e != nil {
+	if e := s.ReconcileEJHRejectedIncrease(id); e != nil {
 		return empty, e
 	}
 	if e := s.reconcileEJHCancellation(remote); e != nil {

@@ -99,3 +99,28 @@ func TestEJHExternalCancellationQueriesOnlyAndStops(t *testing.T) {
 		t.Fatal(op, err)
 	}
 }
+
+func TestEJHClosedCachedRefreshReconcilesLegacyRejectedIncrease(t *testing.T) {
+	s, _ := ejhTestServer(t, 200)
+	remote := ejh.Card{OrderNo: "closed-legacy", Number: "4242424242424242", CVV: "123", Validity: "1299", Status: "2"}
+	card, err := s.store.ImportEJHCard(remote, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := ejh.Operation{ID: "legacy-rejected", Method: "increase", CardID: card.ID, OrderNo: remote.OrderNo, Status: "unknown", Error: "EJH 800006: legacy rejection", CreatedAt: time.Now()}
+	if err = s.store.EJHBeginOperation(op); err != nil {
+		t.Fatal(err)
+	}
+	s.ejh.client.HTTP = ejhFixtureTransport(t, func(method string, _ map[string]any) any { t.Fatal("closed card queried issuer", method); return nil })
+	w := cancelFixtureRequest(s, card.ID, "closed-refresh", "refresh")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if err = s.store.EJHGet("operation", op.ID, &op); err != nil || op.Status != "failed" {
+		t.Fatal(op, err)
+	}
+	local, _, err := s.store.GPTPayCard(card.ID)
+	if err != nil || local.IssuerLocked || local.Available {
+		t.Fatal(local, err)
+	}
+}

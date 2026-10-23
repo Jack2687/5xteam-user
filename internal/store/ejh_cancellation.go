@@ -77,7 +77,7 @@ func (s *Store) reconcileEJHCancellation(remote ejh.Card) error {
 
 // The documented 800006 response explicitly rejects card modification. Older
 // versions retained it as unknown; release only this specific failed increase.
-func (s *Store) reconcileEJHRejectedIncrease(cardID string) error {
+func (s *Store) ReconcileEJHRejectedIncrease(cardID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
