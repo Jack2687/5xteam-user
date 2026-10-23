@@ -8,8 +8,8 @@ const source=readFileSync(new URL('../src/components/ProFallbackPanel.vue',impor
 const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 function fixture(settings=false){
  const requests=[],timers=new Set(),watches=[],props=reactive({settings,compact:!settings});let mount,unmount
- const context=vm.createContext({ref,reactive,computed,watch(...args){const stop=watch(...args);watches.push(stop);return stop},createLatestRequest,defineProps(){return props},onMounted(fn){mount=fn},onUnmounted(fn){unmount=fn},setInterval(fn){timers.add(fn);return fn},clearInterval(fn){timers.delete(fn)},api(url,options={}){let resolve,reject;const promise=new Promise((ok,fail)=>{resolve=ok;reject=fail});requests.push({url,options,resolve,reject});return promise}})
- vm.runInContext(code+'\nglobalThis.exposed={state,form,password,groups,monitorGroups,dirty,notice,error,refresh,save,retry,reload,resetConnection,resetGroup,loadAccounts,loadGroups,loadMonitorGroups,selectVisible,input,groupOptions,monitorOptions,monitorLoading,monitorError,groupsLoading,groupsError,addRule,removeRule,allIDs};',context)
+ const context=vm.createContext({ref,reactive,computed,AbortController,setTimeout,clearTimeout,watch(...args){const stop=watch(...args);watches.push(stop);return stop},createLatestRequest,defineProps(){return props},onMounted(fn){mount=fn},onUnmounted(fn){unmount=fn},setInterval(fn){timers.add(fn);return fn},clearInterval(fn){timers.delete(fn)},api(url,options={}){let resolve,reject;const promise=new Promise((ok,fail)=>{resolve=ok;reject=fail});requests.push({url,options,resolve,reject});return promise}})
+ vm.runInContext(code+'\nglobalThis.exposed={state,form,password,groups,monitorGroups,dirty,notice,error,refresh,save,retry,reload,resetConnection,resetGroup,loadAccounts,loadGroups,loadMonitorGroups,selectVisible,input,groupOptions,monitorOptions,monitorLoading,monitorError,groupsLoading,groupsError,addRule,removeRule,allIDs,busy,remove,cancelAccounts,accountName,removeUnavailable};',context)
  return {...context.exposed,props,requests,timers,mount:()=>mount(),unmount:()=>{unmount();watches.forEach(stop=>stop())}}
 }
 const config=()=>({version:1,enabled:true,url:'https://example.test',email:'test@example.test',password_present:true,group_id:7,account_ids:[1,2],check_seconds:3})
@@ -45,8 +45,8 @@ async function initial(f,c=config()){const p=f.refresh(true);await tick();f.requ
  assert.equal(req.options.body.enabled,false);assert.equal(req.options.body.rules,null)
  assert.deepEqual([...req.options.body.group_ids],[8,11],'wrong rule groups queried')
  req.reject(new Error('offline'));await loading
- assert.equal(f.error.value,'offline');assert.deepEqual([...b.account_ids],[2,3])
- f.resetGroup(b);assert.equal(b.account_ids.length,0);assert.equal(a.account_ids.length,3)
+ assert.equal(b._error,'offline');assert.deepEqual([...b.account_ids],[2,3])
+ f.resetGroup(b);assert.equal(b.account_ids.length,2,'removing a deleted group must preserve other selections');assert.equal(a.account_ids.length,3)
  f.password.value='old';f.resetConnection();assert.equal(f.password.value,'')
  assert.equal(a.monitor_group_id,9);assert.equal(b.monitor_group_id,10)
  assert.equal(a.account_ids.length,0);assert.equal(b.group_ids.length,0)
@@ -93,4 +93,23 @@ async function initial(f,c=config()){const p=f.refresh(true);await tick();f.requ
  assert.equal(f.groups.value.length,0,'stale connection choices were applied')
  f.unmount()
 }
-console.log('Passed: automatic group loading on mount/tab entry/reload, complete selector choices, loading/error/retry states, unchanged drafts, independent fallback rules, deduplication and credential handling')
+{
+ const f=fixture();await initial(f,{...config(),account_names:{1:'Deleted account',2:'Existing account'}})
+ const row=f.form.rules[0]
+ assert.equal(f.accountName(row,1),'Deleted account')
+ const loading=f.loadAccounts(row);await tick();const first=f.requests.at(-1)
+ assert.equal(f.busy.value,false,'account read disabled all selection controls')
+ f.remove(row,'1');assert.deepEqual([...row.account_ids],[2],'deselect failed during account read')
+ first.resolve({accounts:[{id:2,name:'Renamed account',type:'apikey'}],complete:true,warnings:['group #97 removed']});await loading
+ assert.deepEqual([...row.account_ids],[2],'late read restored deleted selection');assert.equal(f.accountName(row,2),'Renamed account')
+ assert.equal(row._warnings.length,1)
+ row.account_ids=[1,2];f.removeUnavailable(row);assert.deepEqual([...row.account_ids],[2])
+ row.account_ids=[1,2];const partial=f.loadAccounts(row);await tick();f.requests.at(-1).resolve({accounts:[],complete:false,warnings:['group failed']});await partial
+ f.removeUnavailable(row);assert.deepEqual([...row.account_ids],[1,2],'partial failure classified accounts as deleted')
+ const stale=f.loadAccounts(row);await tick();const old=f.requests.at(-1);f.resetGroup(row);old.resolve({accounts:[{id:3,name:'stale'}],complete:true});await stale
+ assert.equal(row._accounts.length,0,'old group read applied after group change');assert.equal(old.options.signal.aborted,true)
+ const cancelled=f.loadAccounts(row);await tick();const cancelledRequest=f.requests.at(-1);f.cancelAccounts(row);cancelledRequest.reject(new Error('aborted'));await cancelled;assert.equal(row._error,'')
+ f.form.url='https://other.test';f.resetConnection();assert.equal(f.accountName(row,1),'未保存账号名称','old connection account name leaked')
+ f.unmount()
+}
+console.log('Passed: fallback reads, deleted group recovery, editable selections during reads, cancellation, saved names, partial failure, drafts and connection isolation')

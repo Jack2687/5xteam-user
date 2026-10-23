@@ -6,6 +6,7 @@ import (
 	"chatgpt-space-merge/internal/sub2"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -54,7 +55,13 @@ func (s *Server) getProFallback(w http.ResponseWriter, r *http.Request) {
 	p, password, _, _ := s.store.ProSettings()
 	rows := fallbackRowsForDisplay(f, c, p, password, saved, now)
 	accounts := []map[string]any{}
+	if f.AccountNames == nil {
+		f.AccountNames = map[int64]string{}
+	}
 	for _, b := range bindings {
+		if b.ConnectionID == target && b.Name != "" {
+			f.AccountNames[b.AccountID] = b.Name
+		}
 		desired, hold, _, _ := fallbackAccountPlan(f, rows, b.AccountID, nil, now)
 		accounts = append(accounts, map[string]any{"id": b.AccountID, "name": b.Name, "group_id": b.GroupID, "desired": b.Desired, "planned": desired && b.ConnectionID == target, "hold": hold, "observed": b.Observed, "error": b.Error, "checked_at": b.CheckedAt, "old_connection": b.ConnectionID != target})
 	}
@@ -130,7 +137,7 @@ func fallbackList(ctx context.Context, client *sub2.Client, v fallbackInput, t m
 	}
 	for _, id := range selected {
 		if !found[id] {
-			return nil, errors.New("所选兜底分组不存在或不是 OpenAI 分组，请重新读取分组")
+			return nil, fmt.Errorf("兜底分组 #%d 已不存在或不是 OpenAI 分组，请取消选择该分组后保存", id)
 		}
 	}
 	accounts := []sub2.FallbackAccount{}
@@ -170,17 +177,68 @@ func (s *Server) fallbackAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	accounts, err := fallbackList(ctx, sub2.New(), v, t)
+	client := sub2.New()
+	groups, err := client.Groups(ctx, t.Sub2, t.Secret)
 	if err != nil {
-		writeAPI(w, 400, nil, err.Error())
+		writeAPI(w, 400, nil, fallbackError("读取兜底分组", err))
 		return
 	}
-	writeAPI(w, 200, accounts, "")
+	found := map[int64]bool{}
+	for _, g := range groups {
+		found[g.ID] = true
+	}
+	accounts := []sub2.FallbackAccount{}
+	missing, failed := []int64{}, []int64{}
+	warnings := []string{}
+	seen := map[int64]bool{}
+	for _, id := range v.SelectedGroupIDs() {
+		if !found[id] {
+			missing = append(missing, id)
+			warnings = append(warnings, fmt.Sprintf("兜底分组 #%d 已不存在或不是 OpenAI 分组，请取消选择该分组", id))
+			continue
+		}
+		items, e := client.FallbackAccounts(ctx, t.Sub2, t.Secret, id)
+		if e != nil {
+			failed = append(failed, id)
+			warnings = append(warnings, fmt.Sprintf("分组 #%d：%s", id, fallbackError("读取兜底账号", e)))
+			continue
+		}
+		for _, a := range items {
+			if !seen[a.ID] {
+				accounts = append(accounts, a)
+				seen[a.ID] = true
+			}
+		}
+	}
+	writeAPI(w, 200, map[string]any{"accounts": accounts, "missing_group_ids": missing, "failed_group_ids": failed, "warnings": warnings, "complete": len(failed) == 0}, "")
 }
 func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 	v, t, ok := s.readFallbackInput(w, r)
 	if !ok {
 		return
+	}
+	// Keep only names verified by this server for the same connection. Names are
+	// display snapshots; they never grant membership or scheduling permission.
+	names := map[int64]string{}
+	old, oldTarget, err := s.store.ProFallbackConfig()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	if old.URL == v.URL && old.Email == v.Email {
+		for id, name := range old.AccountNames {
+			names[id] = name
+		}
+		bindings, e := s.store.ProFallbackBindings()
+		if e != nil {
+			writeAPI(w, 500, nil, e.Error())
+			return
+		}
+		for _, b := range bindings {
+			if b.ConnectionID == oldTarget && b.Name != "" {
+				names[b.AccountID] = b.Name
+			}
+		}
 	}
 	if v.Enabled && len(v.AccountIDs) > 0 {
 		c, e := s.store.ProRestockConfig()
@@ -208,6 +266,7 @@ func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 		found := map[int64]sub2.FallbackAccount{}
 		for _, a := range accounts {
 			found[a.ID] = a
+			names[a.ID] = a.Name
 		}
 		for _, rule := range v.EffectiveRules(c.GroupID) {
 			if !rule.Enabled {
@@ -226,7 +285,7 @@ func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if !ok || !member {
-					writeAPI(w, 400, nil, "所选账号已不在该条规则的兜底分组或不是 OpenAI API Key / OAuth 类型，请刷新账号列表")
+					writeAPI(w, 400, nil, fmt.Sprintf("账号 %s #%d 已删除、已移出本规则的兜底分组或类型不支持，请刷新账号列表并取消选择后保存", names[id], id))
 					return
 				}
 				if demandServerKey(p.Sub2.URL) == demandServerKey(t.Sub2.URL) && a.InGroup(rule.MonitorGroupID) {
@@ -236,13 +295,20 @@ func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	v.AccountNames = map[int64]string{}
+	for _, rule := range v.EffectiveRules(0) {
+		for _, id := range rule.AccountIDs {
+			if name := names[id]; name != "" {
+				v.AccountNames[id] = name
+			}
+		}
+	}
 	if !s.proFallback.tick.TryLock() {
 		writeAPI(w, 409, nil, "兜底正在核验，请稍后保存")
 		return
 	}
 	defer s.proFallback.tick.Unlock()
 	id := ""
-	var err error
 	if t.Sub2.URL != "" {
 		id, err = s.store.SaveDownstreamTarget(t)
 		if err != nil {

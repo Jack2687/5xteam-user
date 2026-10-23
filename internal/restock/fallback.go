@@ -11,16 +11,17 @@ import (
 
 // FallbackConfig contains no credentials. It is separate from replenishment decisions.
 type FallbackConfig struct {
-	Rules           []FallbackRule `json:"rules"`
-	Version         int            `json:"version"`
-	Enabled         bool           `json:"enabled"`
-	URL             string         `json:"url"`
-	Email           string         `json:"email"`
-	PasswordPresent bool           `json:"password_present"`
-	GroupID         int64          `json:"group_id"`
-	GroupIDs        []int64        `json:"group_ids"`
-	AccountIDs      []int64        `json:"account_ids"`
-	CheckSeconds    int            `json:"check_seconds"`
+	Rules           []FallbackRule   `json:"rules"`
+	Version         int              `json:"version"`
+	Enabled         bool             `json:"enabled"`
+	URL             string           `json:"url"`
+	Email           string           `json:"email"`
+	PasswordPresent bool             `json:"password_present"`
+	GroupID         int64            `json:"group_id"`
+	GroupIDs        []int64          `json:"group_ids"`
+	AccountIDs      []int64          `json:"account_ids"`
+	AccountNames    map[int64]string `json:"account_names,omitempty"`
+	CheckSeconds    int              `json:"check_seconds"`
 }
 
 // Nil rules retain the legacy binding to the replenishment monitor. An explicit

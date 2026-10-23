@@ -10,11 +10,12 @@ const groupRequest=createLatestRequest(v=>groupsLoading.value=v),monitorRequest=
 const busy=ref(false),error=ref(''),notice=ref(''),dirty=ref(false)
 const request=createLatestRequest(),clock=ref(Date.now()),clockOffset=ref(0)
 let timer,disposed=false,revision=0,ruleKey=0,groupRevision=0
+const accountRequests=new Map()
 const selectedGroups=c=>[...(c.group_ids??(c.group_id?[c.group_id]:[]))]
-const draftRule=r=>({...r,enabled:r.enabled!==false,group_ids:selectedGroups(r),account_ids:[...(r.account_ids||[])],_key:++ruleKey,_accounts:[],_loaded:false,_search:''})
-function setDraft(c,monitor){Object.assign(form,c);form.rules=(c.rules??[{enabled:true,monitor_group_id:monitor?.group_id||0,group_ids:selectedGroups(c),account_ids:c.account_ids||[]}]).map(draftRule)}
+const draftRule=r=>({...r,enabled:r.enabled!==false,group_ids:selectedGroups(r),account_ids:[...(r.account_ids||[])],_key:++ruleKey,_accounts:[],_names:{},_loaded:false,_complete:false,_loading:false,_error:'',_warnings:[],_search:''})
+function setDraft(c,monitor){for(const r of form.rules)cancelAccounts(r);Object.assign(form,c);form.account_names={...(c.account_names||{})};form.rules=(c.rules??[{enabled:true,monitor_group_id:monitor?.group_id||0,group_ids:selectedGroups(c),account_ids:c.account_ids||[]}]).map(draftRule)}
 const allIDs=computed(()=>[...new Set(form.rules.filter(r=>r.enabled).flatMap(r=>r.account_ids))])
-const groupOptions=computed(()=>[...groups.value,...[...new Set(form.rules.flatMap(r=>r.group_ids))].filter(id=>!groups.value.some(g=>g.id===id)).map(id=>({id,name:'已保存兜底分组'}))])
+const groupOptions=computed(()=>[...groups.value,...[...new Set(form.rules.flatMap(r=>r.group_ids))].filter(id=>!groups.value.some(g=>g.id===id)).map(id=>({id,name:groupsLoaded.value?'已失效／已删除的兜底分组':'已保存兜底分组'}))])
 const monitorOptions=computed(()=>[...monitorGroups.value,...[...new Set(form.rules.map(r=>r.monitor_group_id).filter(Boolean))].filter(id=>!monitorGroups.value.some(g=>g.id===id)).map(id=>({id,name:state.value?.rules?.find(r=>r.rule.monitor_group_id===id)?.monitor.group_name||'已保存监控分组'}))])
 const phases={active:'目标：开启兜底',off:'目标：关闭兜底',mixed:'各规则独立调度',disabled:'兜底未启用',unknown:'保持当前调度'}
 const fmt=t=>t&&!String(t).startsWith('0001')?new Date(t).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'尚未核验'
@@ -36,10 +37,10 @@ async function refresh(initial=false,background=false){
 }
 async function action(fn){if(busy.value||disposed)return;busy.value=true;revision++;error.value='';notice.value='';try{await fn()}catch(e){if(!disposed)error.value=e.message}finally{busy.value=false}}
 function input(preview=false,row=null){return {version:form.version,enabled:preview?false:form.enabled,url:form.url,email:form.email,check_seconds:form.check_seconds,password:password.value,group_id:row?.group_ids[0]||0,group_ids:row?[...row.group_ids]:[],account_ids:row?[...row.account_ids]:[],rules:preview?null:form.rules.map(r=>({enabled:r.enabled,monitor_group_id:Number(r.monitor_group_id)||0,group_ids:[...r.group_ids],account_ids:[...r.account_ids]}))}}
-function resetGroup(row){row._accounts=[];row.account_ids=[];row._loaded=false;dirty.value=true}
-function resetConnection(){groupRevision++;groups.value=[];groupsLoaded.value=false;groupsError.value='';for(const r of form.rules){resetGroup(r);r.group_ids=[]}password.value='';dirty.value=true}
+function resetGroup(row){cancelAccounts(row);row._accounts=[];row._loaded=false;row._complete=false;row._error='';row._warnings=[];dirty.value=true}
+function resetConnection(){groupRevision++;groups.value=[];groupsLoaded.value=false;groupsError.value='';form.account_names={};for(const r of form.rules){resetGroup(r);r.group_ids=[];r.account_ids=[];r._names={}}password.value='';dirty.value=true}
 function addRule(){form.rules.push(draftRule({enabled:true,monitor_group_id:0,group_ids:[],account_ids:[]}));dirty.value=true}
-function removeRule(row){form.rules=form.rules.filter(r=>r!==row);dirty.value=true}
+function removeRule(row){cancelAccounts(row);form.rules=form.rules.filter(r=>r!==row);dirty.value=true}
 async function loadGroups(force=true){
  if(disposed||(!force&&(groupsLoaded.value||groupsLoading.value||!form.url||!form.email||(!password.value&&!form.password_present))))return
  const version=groupRevision,body=input(true);groupsError.value=''
@@ -51,10 +52,27 @@ async function loadMonitorGroups(force=true){
  try{await monitorRequest.run(signal=>api('/api/pro-restock/fallback/monitor-groups',{signal}),data=>{if(!disposed){monitorGroups.value=data;monitorLoaded.value=true}})}catch(e){if(!disposed)monitorError.value=e.message}
 }
 function loadOptions(force=false){return Promise.all([loadMonitorGroups(force),loadGroups(force)])}
-async function loadAccounts(row){await action(async()=>{const data=await api('/api/pro-restock/fallback/accounts',{method:'POST',body:input(true,row)});if(disposed)return;row._accounts=data;row._loaded=true;notice.value='已读取本规则的 '+data.length+' 个兜底账号，读取不会切换调度。'})}
+function cancelAccounts(row){const request=accountRequests.get(row._key);if(request){request.controller.abort();clearTimeout(request.timeout);accountRequests.delete(row._key)}row._loading=false}
+async function loadAccounts(row){
+ if(disposed||busy.value)return
+ cancelAccounts(row)
+ const request={controller:new AbortController(),timeout:null};accountRequests.set(row._key,request)
+ row._loading=true;row._complete=false;row._error='';row._warnings=[]
+ request.timeout=setTimeout(()=>{if(accountRequests.get(row._key)!==request)return;cancelAccounts(row);row._error='读取超时，请重试；已选账号仍可取消选择。'},25000)
+ try{
+  const data=await api('/api/pro-restock/fallback/accounts',{method:'POST',body:input(true,row),signal:request.controller.signal})
+  if(disposed||accountRequests.get(row._key)!==request)return
+  row._accounts=Array.isArray(data)?data:data.accounts;row._loaded=true;row._complete=Array.isArray(data)||data.complete===true;row._warnings=data.warnings||[]
+  for(const a of row._accounts)if(a.name)row._names[a.id]=a.name
+ }catch(e){if(!disposed&&accountRequests.get(row._key)===request)row._error=e.message}
+ finally{if(accountRequests.get(row._key)===request)cancelAccounts(row)}
+}
+function accountName(row,id){return row._names[id]||form.account_names?.[id]||(form.url===state.value?.config?.url&&form.email===state.value?.config?.email?state.value?.accounts?.find(a=>Number(a.id)===Number(id)&&!a.old_connection)?.name:'')||'未保存账号名称'}
+const unavailable=row=>row.account_ids.filter(id=>!row._accounts.some(a=>Number(a.id)===Number(id)))
+function removeUnavailable(row){if(!row._complete)return;const ids=new Set(unavailable(row));row.account_ids=row.account_ids.filter(id=>!ids.has(id));dirty.value=true}
 const filtered=row=>row._accounts.filter(a=>(a.name+' '+a.id+' '+a.type).toLowerCase().includes(row._search.toLowerCase()))
 function selectVisible(row){row.account_ids=[...new Set([...row.account_ids,...filtered(row).map(a=>a.id)])];dirty.value=true}
-function remove(row,id){row.account_ids=row.account_ids.filter(v=>v!==id);dirty.value=true}
+function remove(row,id){row.account_ids=row.account_ids.filter(v=>Number(v)!==Number(id));dirty.value=true}
 async function save(){await action(async()=>{
  const c=await api('/api/pro-restock/fallback',{method:'PUT',body:input()});if(disposed)return
  setDraft(c,state.value?.monitor);password.value='';dirty.value=false;await refresh();notice.value='兜底规则已保存：每条按自己的监控组空组开启、有号关闭；共享账号只要一条规则需要就保持开启。'
@@ -63,7 +81,7 @@ async function retry(){await action(async()=>{try{const data=await api('/api/pro
 async function reload(){await action(async()=>{await refresh(true)});if(!disposed&&props.settings)await loadOptions(true)}
 watch(()=>props.settings,visible=>{if(visible&&state.value)loadOptions(true)})
 onMounted(async()=>{await refresh(true);if(disposed)return;if(props.settings)loadOptions();timer=setInterval(()=>{clock.value=Date.now();refresh(false,true)},5000)})
-onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose();groupRequest.dispose();monitorRequest.dispose()})
+onUnmounted(()=>{disposed=true;revision++;for(const r of form.rules)cancelAccounts(r);clearInterval(timer);request.dispose();groupRequest.dispose();monitorRequest.dispose()})
 </script>
 <template>
 <article v-if="compact" class="fallback-card" aria-label="兜底调度"><span>兜底调度</span><strong>{{cardStatus}}</strong><p>{{state?.config?.rules?.length||0}} 条规则 · 已选 {{state?.config?.account_ids?.length||0}} 个账号（去重）</p><p>{{fetchError||state?.error||state?.plan?.reason||'正在读取状态'}}</p><button type="button" aria-haspopup="dialog" @click="detailDialog?.showModal()">查看兜底详情</button></article>
@@ -98,16 +116,21 @@ onUnmounted(()=>{disposed=true;revision++;clearInterval(timer);request.dispose()
     <header><b>规则 {{index+1}}</b><div class="toolbar"><label class="check"><input v-model="row.enabled" type="checkbox">启用本规则</label><button type="button" @click="removeRule(row)">删除规则</button></div></header>
     <label>监控分组<select v-model.number="row.monitor_group_id" :required="form.enabled&&row.enabled" @focus="loadMonitorGroups(false)"><option :value="0" disabled>{{monitorLoading?'正在读取监控分组…':'请选择一个监控分组'}}</option><option v-for="g in monitorOptions" :key="g.id" :value="g.id">{{g.name}} · #{{g.id}}</option></select></label>
     <div class="group-selection"><span>兜底分组 · 已选 {{row.group_ids.length}} 个</span><div class="group-list"><label v-for="g in groupOptions" :key="g.id" class="check"><input v-model="row.group_ids" type="checkbox" :value="g.id" @change="resetGroup(row)">{{g.name}} · #{{g.id}}</label><p v-if="!groupOptions.length">{{groupsLoading?'正在读取兜底分组…':'请连接读取兜底分组，再勾选一个或多个。'}}</p></div></div>
-    <div class="toolbar"><button type="button" :disabled="!row.group_ids.length" @click="loadAccounts(row)">读取／刷新本规则账号</button><b>已选 {{row.account_ids.length}} 个账号</b><button type="button" :disabled="!row._loaded" @click="selectVisible(row)">选中搜索结果</button><button type="button" @click="row.account_ids=[];dirty=true">清空账号</button></div>
+    <div class="toolbar"><button type="button" :disabled="!row.group_ids.length||row._loading" @click="loadAccounts(row)">{{row._loading?'正在读取账号…':'读取／刷新本规则账号'}}</button><button v-if="row._loading" type="button" @click="cancelAccounts(row)">停止读取</button><b>已选 {{row.account_ids.length}} 个账号</b><button type="button" :disabled="!row._loaded" @click="selectVisible(row)">选中搜索结果</button><button type="button" @click="row.account_ids=[];dirty=true">清空账号</button></div>
+    <p v-if="row._error" class="alert error" role="alert">{{row._error}} 已保留选择，可继续取消账号或重试。</p>
+    <p v-for="warning in row._warnings" :key="warning" class="alert warn">{{warning}}</p>
+    <p v-if="row._loaded">已读取 {{row._accounts.length}} 个账号{{row._complete?'':'（部分分组读取失败，未出现的账号暂不能判定失效）'}}，读取不会切换调度。</p>
     <label>搜索兜底账号<input v-model="row._search" type="search" placeholder="账号名称、ID 或类型"></label>
     <div class="account-list"><label v-for="a in filtered(row)" :key="a.id" class="account check"><input v-model="row.account_ids" type="checkbox" :value="a.id"><span><b>{{a.name||'未命名'}} #{{a.id}}</b><small>{{a.type==='apikey'?'API Key':'OAuth'}} · {{a.status}} · 调度{{a.schedulable?'开启':'关闭'}}</small></span></label></div>
     <p v-if="!filtered(row).length">{{row._loaded?'没有匹配账号':'读取账号列表后勾选；已保存的选择仍保留。'}}</p>
-    <p v-for="id in row.account_ids.filter(id=>!row._accounts.some(a=>a.id===id))" :key="id">已选 #{{id}} · {{row._loaded?'列表中未找到，请检查':'尚未读取详情'}} <button type="button" @click="remove(row,id)">取消选择</button></p>
+    <p v-for="id in unavailable(row)" :key="id"><b>{{accountName(row,id)}}</b> · #{{id}} · {{row._complete?'已删除或已移出所选分组':row._loaded?'本次未读取到，保留原选择':'已保存的选择'}} <button type="button" @click="remove(row,id)">取消选择</button></p>
+    <button v-if="row._complete&&unavailable(row).length" type="button" @click="removeUnavailable(row)">取消选择全部失效账号</button>
    </section>
    <div class="toolbar"><button type="button" :disabled="form.rules.length>=50" @click="addRule">＋ 添加兜底规则</button><span>{{form.rules.length}} 条规则 · 启用规则共选 {{allIDs.length}} 个账号（去重）</span></div>
    <p>共享账号只要有一条规则需要就保持开启；某条监控读取失败时保留相关账号的调度，其他规则继续运行。禁补高并发统计会合并各启用规则所选的兜底账号并去重。</p>
    <p>默认每 3 秒核验，与补货并发检查周期分开。组内存在禁用或无额度账号仍算有账号。停用、删除规则或取消账号后，不再被其他启用规则需要的账号会关闭调度。</p>
-   <footer><span>{{dirty?'有未保存的兜底配置':'兜底配置单独保存'}} · v{{form.version}}</span><div class="toolbar"><button type="button" @click="reload">重新载入</button><button class="primary" type="submit">{{busy?'处理中…':'保存兜底配置'}}</button></div></footer>
+   <p v-if="error" class="alert error" role="alert">{{error}}</p>
+   <footer><span>{{dirty?'有未保存的兜底配置，请保存后生效':'兜底配置单独保存'}} · v{{form.version}}</span><div class="toolbar"><button type="button" @click="reload">重新载入</button><button class="primary" type="submit">{{busy?'处理中…':'保存兜底配置'}}</button></div></footer>
    </fieldset>
   </form>
  </template>
