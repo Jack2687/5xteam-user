@@ -90,6 +90,8 @@ type Server struct {
 	proAutoCancel             context.CancelFunc
 	proAutoHooks              *proAutomationHooks
 	proDeleteHooks            *proDeactivationHooks
+	proDeleteMu               sync.Mutex
+	proDeleteJobs             map[*proAutomaticDeleteJob]struct{}
 	proMergeMu                sync.Mutex
 	proMergeWG                sync.WaitGroup
 	proMergeJobs              map[string]context.CancelFunc
@@ -361,6 +363,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events", s.listProAccountEvents)
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events/export", s.exportProAccountEvents)
 	mux.HandleFunc("GET /api/pro-settings", s.getProSettings)
+	mux.HandleFunc("PUT /api/pro-settings/auto-delete-control", s.setProAutoDeleteControl)
 	mux.HandleFunc("GET /api/pro-quality/settings", s.getProQualitySettings)
 	mux.HandleFunc("PUT /api/pro-quality/settings", s.saveProQualitySettings)
 	mux.HandleFunc("POST /api/pro-quality/run", s.triggerProQuality)

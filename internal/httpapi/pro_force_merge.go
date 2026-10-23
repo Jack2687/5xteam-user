@@ -4,6 +4,7 @@ import (
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/store"
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -12,6 +13,9 @@ import (
 func ejhCardID(order string) string { return store.EJHID("card", order) }
 
 func (s *Server) forcedMergeReason(p model.MailAccountProfile, c model.ProSettings, now time.Time) string {
+	if c.AutoDeleteEnabled && c.AutoDeletePaused {
+		return ""
+	}
 	if p.DeletionSubmitted() {
 		return ""
 	}
@@ -49,6 +53,9 @@ func (s *Server) forcedMergeRetry(p model.MailAccountProfile, c model.ProSetting
 }
 
 func forceMergeDue(p model.MailAccountProfile, c model.ProSettings, now time.Time) bool {
+	if c.AutoDeleteEnabled && c.AutoDeletePaused {
+		return false
+	}
 	if p.ProAuto.StopRequested || p.DeletionSubmitted() {
 		return false
 	}
@@ -118,6 +125,9 @@ func (s *Server) tickProForceMerge(ctx context.Context) {
 			continue
 		}
 		if _, e = s.startProDispositionJob(p.Email, lock.Unlock, nil); e != nil {
+			if errors.Is(e, errProAutoDeletePaused) {
+				_ = s.waitProAutoDeleteResume(p.Email)
+			}
 			lock.Unlock()
 		} else {
 			message := "推送等待超时，跳过额度等待并执行" + cfg.DispositionLabel()

@@ -118,6 +118,8 @@ func (s *Store) SaveProSettings(v model.ProSettings, subPassword, cpaKey string,
 	_ = s.db.QueryRow("SELECT encrypted_sub2_password, encrypted_cpa_key, profile FROM pro_settings WHERE id=1").Scan(&oldSub, &oldCPA, &previousRaw)
 	var previous model.ProSettings
 	_ = json.Unmarshal([]byte(previousRaw), &previous)
+	// The independent runtime control cannot be overwritten by a stale form.
+	v.AutoDeletePaused = previous.AutoDeletePaused
 	previousSecret := oldSub
 	if previous.Sub2.AuthMode != v.Sub2.AuthMode {
 		oldSub = ""

@@ -82,6 +82,7 @@ type ProSettings struct {
 	QuotaCheckIntervalSeconds    int                 `json:"quota_check_interval_seconds"`
 	AutoMergeEnabled             bool                `json:"auto_merge_enabled"`
 	AutoDeleteEnabled            bool                `json:"auto_delete_enabled"`
+	AutoDeletePaused             bool                `json:"auto_delete_paused"`
 	DeletionCheckIntervalSeconds int                 `json:"deletion_check_interval_seconds"`
 	TargetAdminID                string              `json:"target_admin_id,omitempty"`
 	TargetSeatType               string              `json:"target_seat_type"`

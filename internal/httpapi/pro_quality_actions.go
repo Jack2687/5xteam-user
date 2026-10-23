@@ -175,6 +175,9 @@ func (s *Server) applyProQuality(ctx context.Context, initial model.MailAccountP
 		return
 	}
 	if state.Action == "merge" {
+		if c.AutoDeleteEnabled && s.checkProAutoDeleteAllowed() != nil {
+			return
+		}
 		// Persist attempts before dispatch; a restart cannot create an unbounded retry loop.
 		_, err = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {
 			p.ProQuality.MergeAttempts++
@@ -316,6 +319,14 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 		if p.ProQuality.Identity != request.Identity {
 			return
 		}
+		if errors.Is(runErr, errProAutoDeletePaused) {
+			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "pending", ""
+			if !p.DeletionSubmitted() {
+				p.ProQuality.MergeAttempts = max(0, p.ProQuality.MergeAttempts-1)
+				p.ProQuality.ActionStarted = false
+			}
+			return
+		}
 		if runErr != nil {
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "failed", runErr.Error()
 		} else if p.DeletionSubmitted() && !p.DeletionAccepted() {
@@ -324,6 +335,9 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "completed", ""
 		}
 	})
+	if errors.Is(runErr, errProAutoDeletePaused) {
+		return
+	}
 	status, message := "completed", "降智触发的空间合并已完成"
 	if runErr != nil {
 		status, message = "failed", "降智合并失败："+runErr.Error()

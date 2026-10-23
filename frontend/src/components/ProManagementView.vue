@@ -5,7 +5,7 @@ const { configSection, revealConfigInvalid } = useConfigSections('sub2')
 import { proCardEntry, issuerLabel } from '../pro-card-entry'
 import { activationPlan } from '../proActivationPlan'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { BadgeCheck, CirclePlus, Clock3, FileKey2, Gauge, History, KeyRound, LoaderCircle, LogIn, RefreshCw, Rocket, RotateCcw, Search, Settings2, ShieldCheck, Trash2, UsersRound, X } from 'lucide-vue-next'
+import { BadgeCheck, CirclePlus, Clock3, FileKey2, Gauge, History, KeyRound, LoaderCircle, LogIn, Pause, Play, RefreshCw, Rocket, RotateCcw, Search, Settings2, ShieldCheck, Trash2, UsersRound, X } from 'lucide-vue-next'
 import { api } from '../api'
 import { createLatestRequest } from '../latestRequest'
 import { copyText } from '../clipboard'
@@ -50,6 +50,19 @@ const total = ref(0)
 const listSummary = reactive({ all: 0, oauth_ready: 0, pushed: 0, merged: 0, deleted: 0, unmerged: 0, in_progress: 0 })
 const selectedEmails = ref(new Set())
 const busy = ref('')
+const deleteControlBusy = ref(false)
+let deleteControlRevision = 0
+async function toggleAutoDelete() {
+  if (deleteControlBusy.value || !settingsLoaded.value) return
+  deleteControlBusy.value = true
+  deleteControlRevision++
+  try {
+    const saved = await api('/api/pro-settings/auto-delete-control', { method: 'PUT', body: { paused: !settings.auto_delete_paused } })
+    settings.auto_delete_paused = saved.auto_delete_paused
+    setMessage(saved.auto_delete_paused ? '自动删除已停止，查额度和其他流程继续；已提交上游的删除无法撤回。' : '自动删除已启动，后续按原有条件和周期判断，本次点击不直接执行删除。', 'success')
+  } catch (error) { setMessage(error.message, 'error') }
+  finally { deleteControlRevision++; deleteControlBusy.value = false; schedulePoll(0) }
+}
 const credentialViewer = ref(null)
 const temporaryAT = ref(null)
 const accountLogs = ref(null)
@@ -137,7 +150,7 @@ const accountsRequest = createLatestRequest(value => { accountsLoading.value = v
 const defaults = () => ({
   post_merge_group_ids: [], post_merge_group_names: [],
   provider: 'sub2', quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120,
-  auto_merge_enabled: false, auto_delete_enabled: false, target_admin_id: '', target_seat_type: 'default', retry_count: 2, retry_interval_seconds: 3, concurrency: 2,
+  auto_merge_enabled: false, auto_delete_enabled: false, auto_delete_paused: false, target_admin_id: '', target_seat_type: 'default', retry_count: 2, retry_interval_seconds: 3, concurrency: 2,
   next_quota_sweep_at: null,
   sub2: { auth_mode: '', bind_proxy: false, proxy_ids: [], url: '', email: '', password_present: false, group_ids: [], group_names: [], models: [], account_concurrency: 10, priority: 1, cpa_ws: false },
   cpa: { url: '', key_present: false, websockets: false, group_ids: [], group_names: [] },
@@ -190,6 +203,7 @@ const pushed = computed(() => Number(listSummary.pushed || 0))
 const merged = computed(() => Number(listSummary.merged || 0))
 
 async function loadPage({ background = false } = {}) {
+  const controlRevision = deleteControlRevision
   const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize.value), query: query.value.trim(), merge_state: spaceFilter.value === 'all' ? '' : spaceFilter.value })
   // A filter change must not leave actionable rows from the previous tab.
   if (renderedAccountPage.value !== params.toString()) rows.value = []
@@ -199,6 +213,7 @@ async function loadPage({ background = false } = {}) {
       const previous = new Map(rows.value.map(account => [account.email, account]))
       renderedAccountPage.value = params.toString()
       rows.value = data.items || []; total.value = Number(data.total || 0); Object.assign(listSummary, data.summary || {})
+      if (typeof data.auto_delete_paused === 'boolean' && controlRevision === deleteControlRevision && !deleteControlBusy.value) settings.auto_delete_paused = data.auto_delete_paused
       for (const account of rows.value) {
         if (previous.get(account.email)?.pro_workflow_running && !account.pro_workflow_running) {
           if (account.pro_last_error) setMessage(account.email + '：' + account.pro_last_error, 'error')
@@ -508,7 +523,8 @@ onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); accountsRequest.disp
         <article class="metric-card slate"><BadgeCheck :size="17" /><div><span>已空间合并</span><strong>{{ merged }}</strong><small>永久成功标记</small></div></article>
       </div>
       <section class="panel list-panel">
-        <div class="account-toolbar"><div class="space-filter-tabs"><button :class="{ active: spaceFilter === 'all' }" @click="setSpaceFilter('all')">全部 <span>{{ listSummary.all }}</span></button><button :class="{ active: spaceFilter === 'unmerged' }" title="未开始后续流程的账号，包含仅登录完成的账号" @click="setSpaceFilter('unmerged')">未空间合并 <span>{{ listSummary.unmerged }}</span></button><button :class="{ active: spaceFilter === 'in_progress' }" title="已开始阶段但尚未成功合并，包含等待额度、失败及中断的账号" @click="setSpaceFilter('in_progress')">流程中 <span>{{ listSummary.in_progress }}</span></button><button :class="{ active: spaceFilter === 'merged' }" @click="setSpaceFilter('merged')">已空间合并 <span>{{ merged }}</span></button><button :class="{ active: spaceFilter === 'deleted' }" @click="setSpaceFilter('deleted')">删除账户 <span>{{ listSummary.deleted }}</span></button></div><div class="heading-actions"><label class="compact-search"><Search :size="14" /><input v-model="query" placeholder="搜索账号" /></label><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length || selectedAccounts.some(account => account.pro_workflow_running || account.pro_auto?.status === 'running')" @click="requestTemporaryAT(selectedAccounts, true)"><KeyRound :size="14" />批量获取临时 AT</button><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length" @click="runBatch('push')"><Rocket :size="14" />批量推送</button><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length" @click="runBatch('quota')"><Gauge :size="14" />批量查额度</button><button class="btn ghost danger-text" :disabled="!!busy || !selectedAccounts.length" @click="deleteSelectedAccounts"><LoaderCircle v-if="busy === 'delete-batch'" :size="14" class="spin" /><Trash2 v-else :size="14" />{{ busy === 'delete-batch' ? '删除中…' : '批量删除' }}<span v-if="selectedAccounts.length">（{{ selectedAccounts.length }}）</span></button></div></div>
+        <div class="account-toolbar"><div class="space-filter-tabs"><button :class="{ active: spaceFilter === 'all' }" @click="setSpaceFilter('all')">全部 <span>{{ listSummary.all }}</span></button><button :class="{ active: spaceFilter === 'unmerged' }" title="未开始后续流程的账号，包含仅登录完成的账号" @click="setSpaceFilter('unmerged')">未空间合并 <span>{{ listSummary.unmerged }}</span></button><button :class="{ active: spaceFilter === 'in_progress' }" title="已开始阶段但尚未成功合并，包含等待额度、失败及中断的账号" @click="setSpaceFilter('in_progress')">流程中 <span>{{ listSummary.in_progress }}</span></button><button :class="{ active: spaceFilter === 'merged' }" @click="setSpaceFilter('merged')">已空间合并 <span>{{ merged }}</span></button><button :class="{ active: spaceFilter === 'deleted' }" @click="setSpaceFilter('deleted')">删除账户 <span>{{ listSummary.deleted }}</span></button></div><div class="heading-actions"><button v-if="spaceFilter === 'in_progress' || settings.auto_delete_paused" class="btn ghost" :class="{ 'danger-text': !settings.auto_delete_paused }" type="button" :disabled="deleteControlBusy || !settingsLoaded" :title="settings.auto_delete_paused ? '恢复按原条件和周期判断，不会立即执行删除' : '暂停所有流程账号的自动删除，查额度和其他流程继续'" @click="toggleAutoDelete"><LoaderCircle v-if="deleteControlBusy" :size="14" class="spin"/><Play v-else-if="settings.auto_delete_paused" :size="14"/><Pause v-else :size="14"/>{{ deleteControlBusy ? '处理中…' : settings.auto_delete_paused ? '启动自动删除' : '停止自动删除' }}</button><label class="compact-search"><Search :size="14" /><input v-model="query" placeholder="搜索账号" /></label><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length || selectedAccounts.some(account => account.pro_workflow_running || account.pro_auto?.status === 'running')" @click="requestTemporaryAT(selectedAccounts, true)"><KeyRound :size="14" />批量获取临时 AT</button><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length" @click="runBatch('push')"><Rocket :size="14" />批量推送</button><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length" @click="runBatch('quota')"><Gauge :size="14" />批量查额度</button><button class="btn ghost danger-text" :disabled="!!busy || !selectedAccounts.length" @click="deleteSelectedAccounts"><LoaderCircle v-if="busy === 'delete-batch'" :size="14" class="spin" /><Trash2 v-else :size="14" />{{ busy === 'delete-batch' ? '删除中…' : '批量删除' }}<span v-if="selectedAccounts.length">（{{ selectedAccounts.length }}）</span></button></div></div>
+        <p v-if="settings.auto_delete_paused" class="table-note" role="status">自动删除已暂停 · 查额度及其他流程继续 · 点击「启动自动删除」恢复原规则</p>
         <div class="table-shell"><table class="pro-table"><thead><tr><th><input type="checkbox" :checked="allVisibleSelected" @change="toggleVisible" /></th><th>账号</th><th>智商情况</th><th>OAuth</th><th title="显示成功开通订单保存的套餐，不再远程识别">开通套餐</th><th>开通银行卡</th><th>回款状态</th><th>推送时限</th><th>推送时长</th><th>推送</th><th title="与 Team 轮转一致：查询 Sub2 近 90 天统计，随额度检测更新">消耗额度</th><th>5小时</th><th>7天</th><th>空间合并</th><th>全自动阶段</th><th v-if="!settings.auto_delete_enabled">四步状态</th><th v-else>删除账户状态</th><th class="actions-column">操作</th></tr></thead><tbody>
           <tr v-if="accountsLoading && !displayedAccounts.length"><td colspan="17" class="empty-cell" role="status"><LoaderCircle :size="16" class="spin" /> 正在加载账号…</td></tr>
           <tr v-else-if="!displayedAccounts.length"><td colspan="17" class="empty-cell">暂无符合条件的 Pro 账号</td></tr>

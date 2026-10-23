@@ -904,7 +904,12 @@ func (s *Server) runProContinuousSession(ctx context.Context, email string, rpc 
 	return nil
 }
 
-func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
+func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr error) {
+	defer func() {
+		if errors.Is(runErr, errProAutoDeletePaused) {
+			runErr = s.waitProAutoDeleteResume(email)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -918,7 +923,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 		return nil
 	}
 	if p.DeletionSubmitted() {
-		_, err = s.performProDeactivation(ctx, email)
+		_, err = s.performProAutomaticDeactivation(ctx, email)
 		return err
 	}
 	settings, _, _, err := s.proAccountPushSettings(p)
@@ -962,6 +967,10 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	forceProfile := p
 	forceProfile.ProWorkflowRunning = false
 	forceReason := s.forcedMergeReason(forceProfile, forceSettings, time.Now())
+	deletionPaused := forceSettings.AutoDeleteEnabled && forceSettings.AutoDeletePaused
+	if deletionPaused {
+		p.ProAuto.Steps["quota"] = "waiting"
+	}
 	if (p.ProMergeTrigger == "push_timeout" || p.ProMergeTrigger == "daily_ejh") && p.ProAuto.Steps["quota"] == "skipped" && forceReason == "" {
 		if err = s.autoProUpdate(email, "quota", "waiting", "超时条件已关闭或不可执行，恢复额度检测"); err != nil {
 			return err
@@ -1005,7 +1014,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 		if err == nil && quotaSettingsErr != nil {
 			err = quotaSettingsErr
 		}
-		if err != nil || !s.proQuotaExitReached(p, quotaSettings, p.ProAuto.QuotaUsedThreshold) {
+		if err != nil || deletionPaused || !s.proQuotaExitReached(p, quotaSettings, p.ProAuto.QuotaUsedThreshold) {
 			message := ""
 			if err != nil {
 				message = "额度检测暂未成功，等待下次重试：" + err.Error()
@@ -1040,7 +1049,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 	action := forceSettings.Disposition()
 	merge = s.performProMerge
 	if action == "deactivate" {
-		merge = s.performProDeactivation
+		merge = s.performProAutomaticDeactivation
 	} else if s.proAutoHooks != nil && s.proAutoHooks.Merge != nil {
 		merge = s.proAutoHooks.Merge
 	}
@@ -1048,6 +1057,9 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 		return err
 	}
 	if _, err = merge(ctx, email); err != nil {
+		if errors.Is(err, errProAutoDeletePaused) {
+			return err
+		}
 		// Preserve original merge semantics, only reschedule a safe failed tail.
 		latest, _, readErr := s.store.MailAccountCredential(email)
 		if readErr == nil && ctx.Err() == nil && s.forcedMergeRetry(latest, forceSettings) && !proTransferNeedsConfirmation(latest) && !latest.DeletionSubmitted() && !latest.ProAuto.StopRequested && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {

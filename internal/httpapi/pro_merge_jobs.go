@@ -72,6 +72,24 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	if action == "deactivate" && p.DeletionConfirmed() && !resumeDeletion {
 		return p, errors.New("删除已确认完成，后续分组调整请手动续跑")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	var finishDeletion func()
+	if action == "deactivate" && !manual {
+		ctx, finishDeletion, err = s.beginProAutomaticDeletion(ctx)
+		if err != nil {
+			cancel()
+			return p, err
+		}
+	}
+	started := false
+	defer func() {
+		if !started {
+			if finishDeletion != nil {
+				finishDeletion()
+			}
+			cancel()
+		}
+	}()
 	if action == "merge" && proTransferNeedsConfirmation(p) {
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			p.TransferStatus = "unknown"
@@ -93,7 +111,6 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 		return p, err
 	}
 	finishStage := s.beginProManualStage(email, action)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	if quality != nil {
 		ctx = context.WithValue(ctx, proQualityMergeKey{}, quality)
 	}
@@ -107,9 +124,13 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 		label = "删除账户"
 	}
 	s.auditProEvent(p, action, "pending", "", label+"已提交后台，关闭或刷新页面不影响执行", nil)
+	started = true
 	go func() {
 		defer s.proMergeWG.Done()
 		defer cancel()
+		if finishDeletion != nil {
+			defer finishDeletion()
+		}
 		defer func() {
 			s.proMergeMu.Lock()
 			delete(s.proMergeJobs, email)
@@ -131,6 +152,10 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 				_, runErr = s.performProMerge(ctx, email)
 			}
 		}
+		if errors.Is(context.Cause(ctx), errProAutoDeletePaused) {
+			runErr = errProAutoDeletePaused
+			_ = s.waitProAutoDeleteResume(email)
+		}
 		s.finishProQualityMerge(email, quality, runErr)
 		// Also clear the queued flag if preparation or lock acquisition failed.
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
@@ -138,7 +163,7 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 			if runErr == nil && p.DailyMergeMatches() && (action != "deactivate" || p.DeletionAccepted()) {
 				p.ProDailyMerge.Completed = true
 			}
-			if runErr != nil {
+			if runErr != nil && !errors.Is(runErr, errProAutoDeletePaused) {
 				p.ProLastError = runErr.Error()
 			} else if p.ProMigration != nil && action == "merge" {
 				p.ProMigration.Paused = false

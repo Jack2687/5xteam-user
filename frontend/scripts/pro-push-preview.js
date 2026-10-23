@@ -5,6 +5,7 @@ import '../src/styles.css'
 // Isolated UI test; all requests are mocked and saves survive page reloads.
 const initial = {
   provider: 'sub2',
+  auto_delete_enabled: true, auto_delete_paused: false,
   sub2: { url: 'https://sub2.example.com', email: 'admin@example.com', password_present: true, group_ids: [7, 8], group_names: ['不降智', '备用组'], models: ['gpt-6-astra'], account_concurrency: 10, priority: 1 },
   cpa: { url: 'https://cpa.example.com', key_present: true, group_ids: [9], group_names: ['CPA 已保存'] },
 }
@@ -34,7 +35,12 @@ window.fetch = async (path, options = {}) => {
     }
     return reply(fixture.saved)
   }
-  if (url.pathname === '/api/pro-accounts') return reply({ items: fixture.accounts, total: fixture.accounts.length })
+  if (url.pathname === '/api/pro-settings/auto-delete-control' && method === 'PUT') {
+    fixture.saved.auto_delete_paused = body.paused
+    sessionStorage.setItem(key, JSON.stringify(fixture.saved))
+    return reply({ auto_delete_paused: body.paused })
+  }
+  if (url.pathname === '/api/pro-accounts') return reply({ items: fixture.accounts, total: fixture.accounts.length, auto_delete_paused: !!fixture.saved.auto_delete_paused })
   if (url.pathname.endsWith('/merge') && method === 'POST') {
     const account = fixture.accounts.find(a => url.pathname.includes(encodeURIComponent(a.email)))
     if (!account) throw new Error('Unknown fixture account')

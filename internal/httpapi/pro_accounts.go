@@ -146,7 +146,12 @@ func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 		for i := range rows {
 			rows[i].StateEnteredAt = items[i].StateEnteredAt
 		}
-		writeProAccountList(w, r, paginatedData(rows, total, page, map[string]any{"summary": summary}))
+		cfg, _, _, err := s.store.ProSettings()
+		if err != nil {
+			writeAPI(w, 500, nil, "读取自动删除状态失败")
+			return
+		}
+		writeProAccountList(w, r, paginatedData(rows, total, page, map[string]any{"summary": summary, "auto_delete_paused": cfg.AutoDeletePaused}))
 		return
 	}
 	items := s.store.MailAccountsByManagementScope("pro")
@@ -1199,8 +1204,11 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	if err == nil && !applied {
 		return profile, errors.New("额度查询期间下游账号已变化，已丢弃旧响应，请重新查询")
 	}
-	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoDeleteEnabled) && !profile.SpaceMergedOnce && !profile.DeletionSubmitted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
+	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoDeleteEnabled && !currentSettings.AutoDeletePaused) && !profile.SpaceMergedOnce && !profile.DeletionSubmitted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
 		profile, err = s.startProDispositionJob(email, nil, nil)
+		if errors.Is(err, errProAutoDeletePaused) {
+			err = nil
+		}
 	}
 	return profile, err
 }

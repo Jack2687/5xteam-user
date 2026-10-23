@@ -36,7 +36,7 @@ func (s *Server) performProDisposition(ctx context.Context, email string) (model
 	}
 	// An accepted/uncertain request must be reconciled even after a mode change.
 	if p.DeletionSubmitted() || c.AutoDeleteEnabled {
-		return s.performProDeactivation(ctx, email)
+		return s.performProAutomaticDeactivation(ctx, email)
 	}
 	return s.performProMerge(ctx, email)
 }
@@ -138,6 +138,10 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 		}
 	}
 	defer func() {
+		paused := errors.Is(context.Cause(ctx), errProAutoDeletePaused)
+		if paused {
+			runErr = errProAutoDeletePaused
+		}
 		latest, _, readErr := s.store.MailAccountCredential(email)
 		if readErr != nil {
 			runErr = errors.Join(runErr, readErr)
@@ -180,6 +184,10 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 					d.Steps["submit"] = "unknown"
 				}
 			}
+			if paused && !p.DeletionSubmitted() {
+				d.Status, d.Steps[d.Stage] = "interrupted", "interrupted"
+				d.Error, p.ProLastError, d.Message = "", "", errProAutoDeletePaused.Error()
+			}
 			d.NextCheckAt = nil
 			if p.DeletionNeedsContinuation() && !p.ProAuto.StopRequested {
 				next := time.Now().Add(interval)
@@ -190,7 +198,7 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 		if out.ProDeactivation != nil {
 			s.auditProEvent(out, "account_deactivation", out.ProDeactivation.Status, settings.Provider, out.ProDeactivation.Message, map[string]any{"error": out.ProDeactivation.Error})
 		}
-		if runErr != nil && !out.ProAuto.StopRequested {
+		if runErr != nil && !out.ProAuto.StopRequested && !paused {
 			s.queueNotification("merge_result", "Pro 删除账户未完成", "账号："+email+"\n"+redactSensitiveText(runErr.Error()))
 		}
 	}()
@@ -425,6 +433,9 @@ func (s *Server) loginForProDeletion(ctx context.Context, p model.MailAccountPro
 }
 
 func (s *Server) tickProDeactivations(ctx context.Context) {
+	if s.checkProAutoDeleteAllowed() != nil {
+		return
+	}
 	items, err := s.store.DueProDeactivations(time.Now())
 	if err != nil {
 		return
