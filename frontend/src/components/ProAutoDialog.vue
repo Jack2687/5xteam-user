@@ -14,7 +14,7 @@ const preparingCard=ref(false)
 const visibleError=computed(()=>busy.value?'':error.value||(state.value.error?(state.value.restock_retry_available?'上次开卡结果：':'')+state.value.error:''))
 const autoCardEnabled=computed(()=>settings.value.card_provider==='nexovcc'?settings.value.nexovcc_auto_open:settings.value.ejh_auto_open)
 const autoCardLabel=computed(()=>settings.value.card_provider==='nexovcc'?'环球':'EJH')
-const active=computed(()=>['running','waiting_quota','awaiting_deletion'].includes(state.value.status))
+const active=computed(()=>state.value.pro_workflow_running===true||['running','waiting_quota','awaiting_deletion'].includes(state.value.status))
 const manualRunning=computed(()=>Object.values(state.value.stage_progress?.steps||{}).includes('running'))
 const quotaResumeAvailable=computed(()=>state.value.quota_resume_available===true)
 const deletionSubmitted=computed(()=>!!state.value.pro_deactivation?.submitted_at)
@@ -53,7 +53,7 @@ async function start(){if(busy.value)return;busy.value=true;preparingCard.value=
 async function retryStep(){if(busy.value)return;busy.value=true;preparingCard.value=restartable.value;error.value='';try{const p=await api(path(),{method:'POST',body:{retry_current:true,provider:settings.value.provider,card_provider:settings.value.card_provider,card_id:cardID.value,plan_code:settings.value.plan_code,country:settings.value.country,credit_quantity:settings.value.credit_quantity||0}});state.value=p.pro_auto;emit('updated')}catch(e){error.value=e.message;await refresh()}finally{preparingCard.value=false;busy.value=false;schedule()}}
 async function resumeDeletion(){if(busy.value)return;busy.value=true;error.value='';try{await api(`/api/pro-accounts/${encodeURIComponent(email.value)}/deactivate`,{method:'POST',body:{}});await refresh()}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
 async function resumeQuota(){if(busy.value)return;busy.value=true;error.value='';try{const p=await api(path(),{method:'POST',body:{resume_quota:true,expected_flow_id:state.value.id,expected_stop_version:state.value.stop_version||0}});state.value=p.pro_auto;emit('updated')}catch(e){error.value=e.message;await refresh()}finally{busy.value=false;schedule()}}
-async function stop(){if(busy.value||!window.confirm('停止后续自动步骤？已提交的 GPTPay 订单仍会继续处理，请查询订单结果。'))return;busy.value=true;try{await api(path()+'/stop',{method:'POST',body:{}});await refresh()}catch(e){error.value=e.message}finally{preparingCard.value=false;busy.value=false;schedule()}}
+async function stop(){if(busy.value)return;busy.value=true;try{await api(path()+'/stop',{method:'POST',body:{}});await refresh()}catch(e){error.value=e.message}finally{preparingCard.value=false;busy.value=false;schedule()}}
 async function changeProvider(){page.value=1;cardID.value='';cards.value=[];total.value=0;busy.value=true;error.value='';try{await loadCards()}catch(e){error.value=e.message}finally{busy.value=false}}
 async function changePage(v){if(busy.value)return;page.value=v;busy.value=true;try{await loadCards()}catch(e){error.value=e.message}finally{busy.value=false}}
 function changeSize(v){pageSize.value=v;changePage(1)}
@@ -67,6 +67,7 @@ defineExpose({open})
 <p v-if="state.retry_attempts" role="status">原账号重试：第 {{ state.retry_attempts }} 次<span v-if="state.status==='running'&&state.retry_at"> · 下次执行：{{ formatTime(state.retry_at) }}</span></p>
 <p v-if="state.status==='completed'" class="done">{{ state.stage === 'deactivate' ? '删除账户及后续处理已完成。' : '全自动流程已完成，已移出空间。' }}</p>
 <p v-if="state.status==='awaiting_deletion'">删除已提交，等待上游明确确认；可在账号菜单续跑核验，不会重复提交删除。</p>
+<p v-if="state.stop_requested" role="status">{{state.pro_workflow_running?'正在停止当前任务…':'已停止，定时任务不会继续执行。'}}<span v-if="deletionSubmitted">已提交上游的删除请求无法撤回。</span></p>
 <p v-if="state.status==='waiting_quota'">等待额度达到 {{ state.quota_used_threshold }}%，下次检测：{{ formatTime(state.next_check_at) }}</p>
 <p v-if="quotaResumeAvailable">已开通并完成授权、推送，可恢复定时额度检测及后续合并/删除。首次推送计时继续沿用。</p>
 <p v-if="state.status==='awaiting_push'">RT/AT 已保存，请推送当前下游，成功后自动恢复定时额度检测；也可点击“继续后续流程”。</p>

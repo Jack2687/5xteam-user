@@ -384,11 +384,15 @@ func (c *Client) QueryQuota(ctx context.Context, settings model.Sub2Settings, pa
 			Error     string    `json:"error"`
 			CheckedAt time.Time `json:"checked_at"`
 		}
-		if json.Unmarshal(data, &check) != nil || check.CheckedAt.IsZero() || time.Since(check.CheckedAt) > 5*time.Minute || check.CheckedAt.After(time.Now().Add(5*time.Second)) {
-			return QuotaUsage{}, errors.New("SIWC 额度数据未更新或已过期")
+		if err := json.Unmarshal(data, &check); err != nil {
+			return QuotaUsage{}, fmt.Errorf("解析 SIWC 额度响应失败: %w", err)
 		}
+		// A first failed lookup has no CheckedAt. Keep its actual failure reason.
 		if check.Error != "" {
 			return QuotaUsage{}, errors.New(check.Error)
+		}
+		if check.CheckedAt.IsZero() || time.Since(check.CheckedAt) > 5*time.Minute || check.CheckedAt.After(time.Now().Add(5*time.Second)) {
+			return QuotaUsage{}, errors.New("SIWC 额度数据未更新或已过期")
 		}
 	}
 	var quota QuotaUsage

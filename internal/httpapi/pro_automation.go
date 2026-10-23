@@ -93,7 +93,8 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 		RestockRetryAvailable bool                   `json:"restock_retry_available"`
 		QuotaResumeAvailable  bool                   `json:"quota_resume_available"`
 		Deactivation          *model.ProDeactivation `json:"pro_deactivation,omitempty"`
-	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success", p.ProDeactivation}, "")
+		WorkflowRunning       bool                   `json:"pro_workflow_running"`
+	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success", p.ProDeactivation, p.ProWorkflowRunning}, "")
 }
 
 func (s *Server) autoProUpdate(email, stage, status, message string) error {
@@ -1168,22 +1169,33 @@ func (s *Server) stopProAutomations() {
 	s.proAutoWG.Wait()
 }
 func (s *Server) stopProAutomation(w http.ResponseWriter, r *http.Request) {
-	email := strings.ToLower(r.PathValue("email"))
+	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	s.proAutoMu.Lock()
 	defer s.proAutoMu.Unlock()
+	// Serialize with both job registries. A queued disposition either registers
+	// before this stop and is cancelled, or observes the persisted stop below.
+	s.proMergeMu.Lock()
+	defer s.proMergeMu.Unlock()
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.ProAuto.StopVersion++
 		p.ProAuto.StopRequested = true
 		p.ProAuto.Status = "stopped"
 		p.ProAuto.NextCheckAt = nil
-		p.ProAuto.Error = "用户已停止全自动流程"
+		p.ProAuto.Error = "用户已停止账号流程"
 	})
 	if err != nil {
 		writeAPI(w, 404, nil, err.Error())
 		return
 	}
-	if cancel := s.proAutoJobs[email]; cancel != nil {
-		cancel()
+	cancelled := false
+	for _, cancel := range []context.CancelFunc{s.proAutoJobs[email], s.proMergeJobs[email]} {
+		if cancel != nil {
+			cancel()
+			cancelled = true
+		}
+	}
+	s.auditProEvent(p, "stop", "stopped", "pro_auto", "用户停止全自动及独立合并/删除任务；已提交的上游请求无法撤回", nil)
+	if cancelled {
 		writeAPI(w, 202, p, "")
 		return
 	}

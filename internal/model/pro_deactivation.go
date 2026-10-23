@@ -70,6 +70,27 @@ func (p MailAccountProfile) DeletionConfirmed() bool {
 func (p MailAccountProfile) DeletionAccepted() bool {
 	return p.ProDeactivation != nil && p.ProDeactivation.AcceptedAt != nil
 }
+
+// Late worker results may still record upstream facts, but cannot revive a
+// stopped account or its timers. Only an explicit resume clears StopRequested.
+func (p *MailAccountProfile) ReconcileProStop() bool {
+	if !p.ProAuto.StopRequested {
+		return false
+	}
+	changed := p.ProAuto.Status != "stopped" || p.ProAuto.NextCheckAt != nil || p.ProAuto.RetryAt != nil || p.ProForceMergeNextAt != nil
+	p.ProAuto.Status = "stopped"
+	p.ProAuto.NextCheckAt, p.ProAuto.RetryAt, p.ProForceMergeNextAt = nil, nil, nil
+	if d := p.ProDeactivation; d != nil && d.NextCheckAt != nil {
+		d.NextCheckAt = nil
+		changed = true
+	}
+	if d := p.ProDailyMerge; d != nil && d.NextAt != nil {
+		d.NextAt = nil
+		changed = true
+	}
+	return changed
+}
+
 func (p *MailAccountProfile) ReconcileProAutoDeletion(now time.Time) bool {
 	d := p.ProDeactivation
 	if d == nil || d.SubmittedAt == nil {

@@ -24,7 +24,7 @@ func proTransferNeedsConfirmation(p model.MailAccountProfile) bool {
 // the worker; nil queues a worker that acquires the same lock after the caller
 // finishes its quota check. No request context is retained.
 func (s *Server) startProMergeJob(email string, unlock func()) (model.MailAccountProfile, error) {
-	return s.startProMergeJobWithQuality(email, unlock, nil)
+	return s.startProEndJob(email, unlock, nil, "manual_merge")
 }
 
 func (s *Server) startProMergeJobWithQuality(email string, unlock func(), quality *proQualityMergeRequest) (model.MailAccountProfile, error) {
@@ -32,6 +32,7 @@ func (s *Server) startProMergeJobWithQuality(email string, unlock func(), qualit
 }
 
 func (s *Server) startProEndJob(email string, unlock func(), quality *proQualityMergeRequest, action string) (model.MailAccountProfile, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
 	s.proMergeMu.Lock()
 	defer s.proMergeMu.Unlock()
 	if s.proMergeClosed {
@@ -47,9 +48,16 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	if p.ManagementScope != "pro" {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
+	manual := action == "manual_deactivate" || action == "manual_merge"
+	if !manual && (p.ProAuto.StopRequested || p.ProAuto.Status == "stopped") {
+		return p, errors.New("用户已停止该账号流程，请手动续跑")
+	}
 	resumeDeletion := action == "manual_deactivate"
 	if resumeDeletion {
 		action = "deactivate"
+	}
+	if action == "manual_merge" {
+		action = "merge"
 	}
 	if action == "automatic" {
 		cfg, _, _, e := s.store.ProSettings()
@@ -73,11 +81,11 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	}
 	p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.ProWorkflowRunning, p.ProLastError = true, ""
-		if resumeDeletion {
+		if manual {
 			p.ProAuto.StopRequested = false
 			if p.ProMigration != nil {
 				p.ProMigration.Paused = false
-				p.ProMigration.Notice = "已从保存的进度续跑删除账户"
+				p.ProMigration.Notice = "已从保存的进度续跑合并/删除流程"
 			}
 		}
 	})

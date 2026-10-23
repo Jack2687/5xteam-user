@@ -98,9 +98,9 @@ func TestProDeletionIntervalRescheduleAndRecovery(t *testing.T) {
 		next := p.ProDeactivation.NextCheckAt
 		clocks[state] = next
 		switch state {
-		case "confirmed", "cleanup":
+		case "confirmed", "cleanup", "stopped":
 			if next != nil {
-				t.Fatal("confirmed account scheduled again")
+				t.Fatal("confirmed or stopped account scheduled again")
 			}
 		case "running":
 			if next == nil || !next.Equal(past) {

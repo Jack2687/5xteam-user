@@ -280,6 +280,7 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 		p.ReconcileProAutoMerge(p.UpdatedAt)
 	}
 	p.ReconcileProQualityMerge()
+	p.ReconcileProStop()
 	if p.ProPushEndTime() != nil || !wasEnding {
 		p.FreezeProPushDuration(p.UpdatedAt)
 	}
@@ -363,7 +364,8 @@ func (s *Store) RecoverProWorkflows() error {
 			deletionReconciled = p.ReconcileProAutoDeletion(time.Now())
 		}
 		deletionNeedsRecovery := p.ProDeactivation != nil && (deletionReconciled || p.ProDeactivation.Status == "running" || p.DeletionNeedsContinuation() && p.ProDeactivation.NextCheckAt == nil)
-		if !p.ProWorkflowRunning && !legacyCancelled && !groupsRunning && !deletionNeedsRecovery {
+		stopReconciled := p.ReconcileProStop()
+		if !p.ProWorkflowRunning && !legacyCancelled && !groupsRunning && !deletionNeedsRecovery && !stopReconciled {
 			continue
 		}
 		if legacyCancelled {
@@ -381,7 +383,7 @@ func (s *Store) RecoverProWorkflows() error {
 			d.Error = "服务重启，可续跑核验；已提交的删除不会重复发送"
 			d.UpdatedAt = time.Now()
 		}
-		if d := p.ProDeactivation; d != nil && p.DeletionNeedsContinuation() {
+		if d := p.ProDeactivation; d != nil && p.DeletionNeedsContinuation() && !p.ProAuto.StopRequested {
 			next := time.Now().Add(settings.DeletionCheckInterval())
 			d.NextCheckAt = &next
 		}
@@ -406,6 +408,7 @@ func (s *Store) RecoverProWorkflows() error {
 			p.ProDeactivation.Status, p.ProDeactivation.Stage = "completed", "confirm"
 			p.ProLastError = p.ProDeactivation.Error
 		}
+		p.ReconcileProStop()
 		p.UpdatedAt = time.Now()
 		updates = append(updates, item{email: email, profile: p})
 	}

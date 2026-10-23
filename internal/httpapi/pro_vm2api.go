@@ -52,6 +52,11 @@ func (s *Server) proAccountPushSettings(p model.MailAccountProfile) (model.ProSe
 		if e != nil {
 			return v, password, key, e
 		}
+		// Group IDs belong to one downstream connection, not the global default.
+		// Existing accounts stay pinned when an operator switches push settings.
+		if v.Provider != t.Provider || strings.TrimRight(strings.TrimSpace(v.Sub2.URL), "/") != strings.TrimRight(strings.TrimSpace(t.Sub2.URL), "/") || !strings.EqualFold(strings.TrimSpace(v.Sub2.Email), strings.TrimSpace(t.Sub2.Email)) || v.Sub2.AuthMode != t.Sub2.AuthMode {
+			v.PostMergeGroupIDs, v.PostMergeGroupNames = nil, nil
+		}
 		v.Provider, v.Sub2, password = t.Provider, t.Sub2, t.Secret
 		// Match the normalized live settings: omitempty restores an empty
 		// model list as nil, which otherwise changes the restock binding hash.

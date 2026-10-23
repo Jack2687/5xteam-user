@@ -1531,7 +1531,7 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 			emails := []string{}
 			for _, p := range s.store.MailAccountsByManagementScope("pro") {
 				// The new full workflow owns its own quota threshold and due time.
-				if p.ProAuto.ID != "" || (p.ProMigration != nil && p.ProMigration.Paused) {
+				if p.ProAuto.ID != "" || p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) {
 					continue
 				}
 				needsQuota := !p.SpaceMergedOnce && !p.DeletionSubmitted()
@@ -1560,11 +1560,11 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 					if readErr != nil {
 						return readErr
 					}
-					if profile.ProAuto.ID != "" || (profile.ProMigration != nil && profile.ProMigration.Paused) {
+					if profile.ProAuto.ID != "" || profile.ProAuto.StopRequested || profile.ProAuto.Status == "stopped" || (profile.ProMigration != nil && profile.ProMigration.Paused) {
 						return nil
 					}
 					if profile.SpaceMergedOnce && profile.RemoveStatus != "completed" {
-						_, e := s.performProDisposition(jobCtx, email)
+						_, e := s.startProDispositionJob(email, nil, nil)
 						return e
 					}
 					_, e := s.performProQuota(jobCtx, email, true)

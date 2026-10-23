@@ -92,6 +92,9 @@ func (s *Server) runDeletionProtocol(ctx context.Context, payload map[string]any
 }
 
 func (s *Server) performProDeactivation(ctx context.Context, email string) (out model.MailAccountProfile, runErr error) {
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
 	p, _, err := s.store.MailAccountCredential(email)
 	if err != nil {
 		return p, err
@@ -142,7 +145,7 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 		}
 		// Accepted requests immediately run the configured downstream cleanup; a
 		// later retry never repeats the deletion POST.
-		if latest.DeletionAccepted() {
+		if latest.DeletionAccepted() && ctx.Err() == nil && !latest.ProAuto.StopRequested {
 			_, cleanupErr := s.finishProDownstream(ctx, latest)
 			runErr = errors.Join(runErr, cleanupErr)
 		}
@@ -178,7 +181,7 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 				}
 			}
 			d.NextCheckAt = nil
-			if p.DeletionNeedsContinuation() {
+			if p.DeletionNeedsContinuation() && !p.ProAuto.StopRequested {
 				next := time.Now().Add(interval)
 				d.NextCheckAt = &next
 			}
@@ -187,7 +190,7 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 		if out.ProDeactivation != nil {
 			s.auditProEvent(out, "account_deactivation", out.ProDeactivation.Status, settings.Provider, out.ProDeactivation.Message, map[string]any{"error": out.ProDeactivation.Error})
 		}
-		if runErr != nil {
+		if runErr != nil && !out.ProAuto.StopRequested {
 			s.queueNotification("merge_result", "Pro 删除账户未完成", "账号："+email+"\n"+redactSensitiveText(runErr.Error()))
 		}
 	}()

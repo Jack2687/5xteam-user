@@ -95,7 +95,7 @@ func rescheduleProDeactivationsTx(tx *sql.Tx, interval time.Duration) error {
 			break
 		}
 		p.ProDeactivation.NextCheckAt = nil
-		if p.DeletionNeedsContinuation() {
+		if p.DeletionNeedsContinuation() && !p.ProAuto.StopRequested {
 			p.ProDeactivation.NextCheckAt = &next
 		}
 		updates = append(updates, update{email, mustJSON(p)})
