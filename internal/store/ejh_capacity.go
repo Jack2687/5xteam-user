@@ -59,6 +59,7 @@ func (s *Store) issuerSnapshotForPhysicalCard(q proCapacityQuery, key string) (*
 		return nil, e
 	}
 	card := &gptpay.Card{Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "" || pending, IssuerEnd: record.Remote.End}
+	card.IssuerFrozen = record.Remote.Locked == "1" || record.Remote.Status == "5"
 	if pending {
 		var operationSealed string
 		if e = q.QueryRow(`SELECT r.sealed FROM ejh_card_links l JOIN ejh_operation_claims c ON c.scope='card:'||l.card_id JOIN ejh_records r ON r.kind='operation' AND r.id=c.operation_id WHERE l.card_key=?`, key).Scan(&operationSealed); e != nil {

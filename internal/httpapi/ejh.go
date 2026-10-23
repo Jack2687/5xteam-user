@@ -421,6 +421,13 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{"orderNo": card.Remote.OrderNo}
+	// The issuer can reject balance queries after cancellation was submitted.
+	// Keep the last snapshot; only card.query.info tracks cancellation progress.
+	if card.Remote.Status == "8" && in.Action == "balance" {
+		w.Header().Set("Cache-Control", "no-store")
+		writeAPI(w, 200, map[string]any{"balance": card.Balance, "cached": true, "processing": true, "at": card.BalanceAt}, "")
+		return
+	}
 	// Read closed cards from saved data without querying the issuer.
 	if card.Remote.Status == "2" {
 		w.Header().Set("Cache-Control", "no-store")
@@ -493,7 +500,7 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 		return
 	case "increase", "cancel":
 	default:
-		writeAPI(w, 400, nil, "操作不可用；供应商冻结、解冻尚未开放")
+		writeAPI(w, 400, nil, "操作不可用")
 		return
 	}
 	if !in.Confirm || !gptPayRequestID.MatchString(in.ID) {
@@ -549,6 +556,10 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 	op.Status = "completed"
 	if e != nil {
 		op.Status, op.Error = "unknown", e.Error()
+		var apiErr *ejh.APIError
+		if in.Action == "increase" && errors.As(e, &apiErr) && apiErr.Code == "800006" {
+			op.Status = "failed"
+		}
 	} else if out.OrderNo != card.Remote.OrderNo || (in.Action == "cancel" && out.Status != "SUCCESS") {
 		op.Status, op.Error = "unknown", "返回状态或订单号不匹配，请核对"
 	} else if in.Action == "increase" {
@@ -804,12 +815,13 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 				return gptpay.Card{}, fmt.Errorf("自动开卡记录对应的银行卡 %s 无法读取，请先核实该卡，暂停自动补卡", o.CardID)
 			}
 			closed := prior.Source == "ejh" && prior.IssuerStatus == "2"
-			if closed && (prior.IssuerLocked || prior.PendingAccounts > 0 || prior.ActiveAccounts > 0 || len(prior.Occupants) > 0) {
-				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 已销卡，但仍有未决付款、账号占用或卡片资料待核实，暂停自动补卡", prior.Last4)
+			closing := prior.Source == "ejh" && prior.IssuerCancelStatus == "processing"
+			if (closed || closing) && ((!closing && prior.IssuerLocked) || prior.PendingAccounts > 0 || prior.ActiveAccounts > 0 || len(prior.Occupants) > 0) {
+				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 已进入销卡流程，但仍有未决付款、账号占用或卡片资料待核实，暂停自动补卡", prior.Last4)
 			}
-			// A confirmed closed card with no outstanding work is settled history.
+			// Confirmed cancellation with no outstanding work permits replacement.
 			// It must still reach the daily count and amount accounting below.
-			if !closed && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
+			if !closed && !closing && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
 				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 尚无成功开通记录且当前不可用，请先核实该卡，暂停自动补卡", prior.Last4)
 			}
 		}

@@ -21,6 +21,9 @@ func TestEJHAutoOpeningAfterClosedHistoricalCard(t *testing.T) {
 		wantOpen                                           bool
 	}{
 		{name: "unused_closed", status: "2", wantOpen: true},
+		{name: "unused_closing", status: "8", wantOpen: true},
+		{name: "closing_locked", status: "8", locked: true, wantOpen: true},
+		{name: "closing_unknown_payment", payment: "submission_unknown", status: "8"},
 		{name: "failed_payment_closed", payment: "failed", status: "2", wantOpen: true},
 		{name: "used_released_closed", payment: "success", released: true, status: "2", wantOpen: true},
 		{name: "closed_unknown_payment", payment: "submission_unknown", status: "2"},

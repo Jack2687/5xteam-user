@@ -275,6 +275,9 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 	if e := s.EJHPut("card", id, record); e != nil {
 		return empty, e
 	}
+	if e := s.reconcileEJHRejectedIncrease(id); e != nil {
+		return empty, e
+	}
 	if e := s.reconcileEJHCancellation(remote); e != nil {
 		return empty, e
 	}
@@ -316,6 +319,7 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 	card.Source, card.IssuerOrderNo = "ejh", remote.OrderNo
 	card.IssuerStatus = remote.Status
 	card.IssuerLocked = remote.Locked == "1"
+	card.IssuerFrozen = remote.Locked == "1" || remote.Status == "5"
 	card.IssuerEnd = remote.EndTime
 	s.mu.Lock()
 	_, e = s.db.Exec(`INSERT INTO ejh_card_links VALUES(?,?,?) ON CONFLICT(card_key) DO NOTHING`, proCardKey(secret.Number), id, remote.OrderNo)

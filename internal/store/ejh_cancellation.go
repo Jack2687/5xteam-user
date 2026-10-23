@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"chatgpt-space-merge/internal/ejh"
@@ -26,7 +27,20 @@ func (s *Store) reconcileEJHCancellation(remote ejh.Card) error {
 	id := EJHID("card", remote.OrderNo)
 	err = tx.QueryRow(`SELECT r.sealed FROM ejh_operation_claims c JOIN ejh_records r ON r.kind='operation' AND r.id=c.operation_id WHERE c.scope=?`, "card:"+id).Scan(&sealed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		if remote.Status != "8" {
+			return nil
+		}
+		// A cancellation made on the issuer's website also needs query-only
+		// tracking. Never submit a second cancellation to adopt it locally.
+		now := time.Now()
+		op := ejh.Operation{ID: EJHID("external-cancel", remote.OrderNo), Method: "cancel", CardID: id, OrderNo: remote.OrderNo, Currency: remote.CardCurrency, Status: "processing", Note: "EJH 页面已提交销卡，后台仅查询处理结果", CreatedAt: now, UpdatedAt: now}
+		if err = s.ejhPutTx(tx, "operation", op.ID, op); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`INSERT INTO ejh_operation_claims VALUES(?,?)`, "card:"+id, op.ID); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	if err != nil {
 		return err
@@ -57,6 +71,45 @@ func (s *Store) reconcileEJHCancellation(remote ejh.Card) error {
 		if _, err = tx.Exec(`DELETE FROM ejh_operation_claims WHERE operation_id=?`, op.ID); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+// The documented 800006 response explicitly rejects card modification. Older
+// versions retained it as unknown; release only this specific failed increase.
+func (s *Store) reconcileEJHRejectedIncrease(cardID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var sealed string
+	err = tx.QueryRow(`SELECT r.sealed FROM ejh_operation_claims c JOIN ejh_records r ON r.kind='operation' AND r.id=c.operation_id WHERE c.scope=?`, "card:"+cardID).Scan(&sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	raw, err := s.decrypt(sealed)
+	if err != nil {
+		return err
+	}
+	var op ejh.Operation
+	if err = json.Unmarshal([]byte(raw), &op); err != nil {
+		return err
+	}
+	if op.CardID != cardID || op.Method != "increase" || op.Status != "unknown" || !strings.HasPrefix(op.Error, "EJH 800006:") {
+		return nil
+	}
+	op.Status, op.Error, op.Note, op.UpdatedAt = "failed", "EJH 800006: 卡信息修改失败", "已按 EJH 明确失败响应解除提额操作占用", time.Now()
+	if err = s.ejhPutTx(tx, "operation", op.ID, op); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM ejh_operation_claims WHERE operation_id=?`, op.ID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

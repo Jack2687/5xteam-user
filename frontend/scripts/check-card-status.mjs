@@ -20,7 +20,7 @@ for(const status of ['processing','unknown','submitting']){
  assert.equal(cardUsage({local:pending,remote:{status:'3'}},now).tone,'pending')
  assert.equal(cardUsage({...pending,issuer_status:'2'},now).label,'已销卡')
 }
-assert.equal(cardUsage({ ...active, issuer_status: '5' }, now).label, '已冻结 / 受限')
+assert.equal(cardUsage({ ...active, issuer_status: '5' }, now).label, '卡台状态受限')
 assert.equal(cardUsage({ ...active, issuer_status: '4' }, now).label, '未激活')
 assert.equal(cardUsage({ ...active, issuer_status: '' }, now).label, '卡台状态待核实')
 assert.equal(cardUsage({ ...active, issuer_end: '2026-10-15 14:59:59' }, now).label, '已过期')
@@ -53,3 +53,6 @@ for (const source of ['ejh', 'nexovcc']) {
  assert.equal(cardUsage({...disabled, issuer_disabled: false}, now).label, '可用于开通')
 }
 console.log('Passed: disabled issuer blocks Pro use while preserving physical closure status')
+
+assert.equal(cardUsage({...active,issuer_locked:true},now).label,'操作待核实')
+assert.equal(cardUsage({local:{...active,issuer_locked:true},remote:{status:'3',isLocked:'0'}},now).label,'操作待核实')

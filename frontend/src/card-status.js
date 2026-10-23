@@ -35,7 +35,8 @@ export function cardUsage(card, now = new Date()) {
     if (status === '8' || local.issuer_cancel_status === 'processing') return blocked('销卡处理中', '卡台正在处理，完成后自动更新，无需重复提交', 'pending')
     if (['submitting','unknown'].includes(local.issuer_cancel_status)) return blocked('销卡结果确认中', '后台正在查询卡台结果，请勿重复提交', 'pending')
     if (card?.error) return blocked('资料待核实', '核实卡台资料后才能开通', 'pending')
-    if (locked || status === '5') return blocked('已冻结 / 受限')
+    if (local.issuer_frozen || status === '5' || String(card?.remote?.isLocked) === '1') return blocked('卡台状态受限', 'EJH 返回的卡片状态暂不可用于开通')
+    if (locked) return blocked('操作待核实', '有尚未确认的卡片操作，请查看 EJH 操作记录', 'pending')
     if (!['1', '3'].includes(status)) {
       return blocked(({ '4': '未激活', '6': '销卡失败，待核实', '7': '非活跃' })[status] || '卡台状态待核实')
     }
