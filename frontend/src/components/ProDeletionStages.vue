@@ -11,6 +11,7 @@ const names = { not_started: '未开始', pending: '待处理', running: '执行
 const groups = computed(() => props.account.pro_post_merge_groups)
 const errors = computed(() => [state.value.error, groups.value?.error])
 const summary = computed(() => {
+  if (state.value.confirmed_at && state.value.confirmation_source === 'sub2_http_401') return '删除已确认（Sub2 测试 401）'
   if (state.value.confirmed_at) return state.value.confirmation_source === 'http_401' ? '删除已确认（核验 HTTP 401）' : '删除已确认'
   if (state.value.steps?.credentials === 'running') return '正在重新登录'
   if (state.value.submitted_at) return '已提交，等待确认'

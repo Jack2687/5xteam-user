@@ -34,6 +34,11 @@ func newProGroupFixture(t *testing.T) *proGroupFixture {
 			fmt.Fprint(w, `{"code":0,"data":{"access_token":"fixture-token"}}`)
 			return
 		}
+		if r.URL.Path == "/api/v1/admin/accounts/42/test" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"type\":\"error\",\"error\":\"API returned 401: invalidated oauth token\"}\n\n")
+			return
+		}
 		if r.URL.Path != "/api/v1/admin/accounts/42" {
 			t.Errorf("unexpected downstream request %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected", 500)

@@ -430,6 +430,10 @@ type ProAccountPageItem struct {
 }
 
 func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]ProAccountPageItem, int, ProAccountsPageSummary, error) {
+	return s.ProAccountsPageContext(context.Background(), query, mergeState, limit, offset)
+}
+
+func (s *Store) ProAccountsPageContext(ctx context.Context, query, mergeState string, limit, offset int) ([]ProAccountPageItem, int, ProAccountsPageSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -437,7 +441,10 @@ func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]
 	limit, offset = normalizeLimitOffset(limit, offset)
 	const cte = proAccountsCTE
 	var summary ProAccountsPageSummary
-	if err := s.db.QueryRow(cte+` SELECT COUNT(*),
+	if err := ctx.Err(); err != nil {
+		return nil, 0, summary, err
+	}
+	if err := s.db.QueryRowContext(ctx, cte+` SELECT COUNT(*),
 		COALESCE(SUM(json_extract(profile,'$.access_token_present')=1 AND json_extract(profile,'$.refresh_token_present')=1),0),
 		COALESCE(SUM(json_extract(profile,'$.push_status')='completed'),0), COALESCE(SUM(merge_state='merged'),0),
   COALESCE(SUM(merge_state='unmerged'),0), COALESCE(SUM(merge_state='in_progress'),0), COALESCE(SUM(merge_state='deleted'),0) FROM accounts`).Scan(
@@ -447,10 +454,10 @@ func (s *Store) ProAccountsPage(query, mergeState string, limit, offset int) ([]
 	like := "%" + query + "%"
 	where := ` WHERE (?='' OR search_text LIKE ?) AND (?='' OR merge_state=?)`
 	var total int
-	if err := s.db.QueryRow(cte+` SELECT COUNT(*) FROM accounts`+where, query, like, mergeState, mergeState).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, cte+` SELECT COUNT(*) FROM accounts`+where, query, like, mergeState, mergeState).Scan(&total); err != nil {
 		return nil, 0, summary, err
 	}
-	rows, err := s.db.Query(cte+` SELECT profile, encrypted_credentials, strftime('%Y-%m-%dT%H:%M:%fZ',`+proAccountsEventTimeSQL(mergeState)+`) FROM accounts`+where+` ORDER BY `+proAccountsOrderSQL(mergeState)+` LIMIT ? OFFSET ?`, query, like, mergeState, mergeState, limit, offset)
+	rows, err := s.db.QueryContext(ctx, cte+` SELECT profile, encrypted_credentials, strftime('%Y-%m-%dT%H:%M:%fZ',`+proAccountsEventTimeSQL(mergeState)+`) FROM accounts`+where+` ORDER BY `+proAccountsOrderSQL(mergeState)+` LIMIT ? OFFSET ?`, query, like, mergeState, mergeState, limit, offset)
 	if err != nil {
 		return nil, 0, summary, err
 	}

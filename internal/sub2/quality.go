@@ -93,6 +93,19 @@ func (c *Client) ModelAudit(ctx context.Context, s model.Sub2Settings, password,
 }
 
 func (c *Client) ProbeQuality(ctx context.Context, s model.Sub2Settings, password string, id int64, q model.QualitySettings) (QualityProbeResult, error) {
+	return c.probeAccount(ctx, s, password, id, q, nil)
+}
+
+// Deletion verification uses the same ordinary/original test as the Sub2 UI.
+// Only HTTPStatus from a parsed upstream SSE error is evidence; an admin API
+// authentication failure is returned as an error by probeAccount.
+func (c *Client) ProbeDeletion(ctx context.Context, s model.Sub2Settings, password string, id int64) (QualityProbeResult, error) {
+	return c.probeAccount(ctx, s, password, id, model.QualitySettings{
+		Model: "gpt-6.1-sol", Prompt: "hi", Mode: "time", TimeoutSeconds: 45,
+	}, map[string]any{"mode": "default", "endpoint": "original"})
+}
+
+func (c *Client) probeAccount(ctx context.Context, s model.Sub2Settings, password string, id int64, q model.QualitySettings, options map[string]any) (QualityProbeResult, error) {
 	out := QualityProbeResult{AccountID: id}
 	if id < 1 {
 		return out, errors.New("Sub2 账号 ID 无效")
@@ -104,6 +117,9 @@ func (c *Client) ProbeQuality(ctx context.Context, s model.Sub2Settings, passwor
 		prompt += "\n最后一行严格输出 FINAL_ANSWER=你的最终答案，不要在这一行附加其他内容。"
 	}
 	body := map[string]any{"model_id": q.Model, "prompt": prompt, "reasoning_effort": q.ReasoningEffort}
+	for key, value := range options {
+		body[key] = value
+	}
 	path := "/api/v1/admin/accounts/" + strconv.FormatInt(id, 10) + "/test"
 	headers := map[string]string{"Accept": "text/event-stream"}
 	response, err := c.request(ctx, s, password, http.MethodPost, path, body, headers)

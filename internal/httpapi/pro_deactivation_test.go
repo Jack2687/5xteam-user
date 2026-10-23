@@ -281,7 +281,7 @@ func TestProDeletionConfirmationContinuesWhileGroupingFails(t *testing.T) {
 		},
 	}
 	p, err = f.s.performProDeactivation(t.Context(), f.email)
-	if err == nil || !p.DeletionConfirmed() || p.ProDeactivation.ConfirmationSource != "http_401" || p.ProDeactivation.Steps["confirm"] != "completed" || !p.ProPostMergeGroupsPending() || p.ProDeactivation.NextCheckAt != nil {
+	if err == nil || !p.DeletionConfirmed() || p.ProDeactivation.ConfirmationSource != "sub2_http_401" || p.ProDeactivation.Steps["confirm"] != "completed" || !p.ProPostMergeGroupsPending() || p.ProDeactivation.NextCheckAt != nil {
 		t.Fatal("grouping failure blocked confirmation", err, p.ProDeactivation)
 	}
 	if _, err = f.s.performProDeactivation(t.Context(), f.email); err == nil || checks != 1 {

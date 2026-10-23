@@ -110,7 +110,7 @@ func TestProDeletionManualConfirmationStopsTimersAndAllowsManualCleanup(t *testi
 		return map[string]any{"status": "confirmed", "message": "fixture confirmed"}, nil
 	}}
 	p, err = f.s.performProDeactivation(t.Context(), f.email)
-	if err != nil || checks != 1 || p.ProDeactivation.NextCheckAt != nil || p.ProDeactivation.ConfirmationSource != "upstream" || p.ProDeactivation.Manual["confirm"].Status != "" {
+	if err != nil || checks != 1 || p.ProDeactivation.NextCheckAt != nil || p.ProDeactivation.ConfirmationSource != "sub2_http_401" || p.ProDeactivation.Manual["confirm"].Status != "" {
 		t.Fatal("upstream result did not supersede manual status", err)
 	}
 }

@@ -34,6 +34,13 @@ type proAccountListItem struct {
 }
 
 func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]proAccountListItem, error) {
+	return s.proAccountListWithCardsContext(context.Background(), items)
+}
+
+func (s *Server) proAccountListWithCardsContext(ctx context.Context, items []model.MailAccountProfile) ([]proAccountListItem, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	emails := make([]string, 0, len(items))
 	for _, item := range items {
 		emails = append(emails, item.Email)
@@ -49,6 +56,9 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 	result := make([]proAccountListItem, 0, len(items))
 	cases, err := s.store.EJHCasesForEmails(emails)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	financialCases, err := s.proFinancialCases(cases)
@@ -68,6 +78,9 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 		return nil, err
 	}
 	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		// Resolve account-specific targets before displaying quality and costs.
 		effective := config
 		if item.ProSIWC != nil || item.ProRestockTargetID != "" {
@@ -116,7 +129,7 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 	if paginationRequested(r) {
 		page := s.parsePagination(r)
-		items, total, summary, err := s.store.ProAccountsPage(r.URL.Query().Get("query"), r.URL.Query().Get("merge_state"), page.Limit, page.Offset)
+		items, total, summary, err := s.store.ProAccountsPageContext(r.Context(), r.URL.Query().Get("query"), r.URL.Query().Get("merge_state"), page.Limit, page.Offset)
 		if err != nil {
 			writeAPI(w, http.StatusInternalServerError, nil, "读取 Pro 账号失败: "+err.Error())
 			return
@@ -125,7 +138,7 @@ func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 		for i, item := range items {
 			profiles[i] = item.MailAccountProfile
 		}
-		rows, err := s.proAccountListWithCards(profiles)
+		rows, err := s.proAccountListWithCardsContext(r.Context(), profiles)
 		if err != nil {
 			writeAPI(w, 500, nil, "读取开通银行卡失败")
 			return
@@ -133,19 +146,19 @@ func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 		for i := range rows {
 			rows[i].StateEnteredAt = items[i].StateEnteredAt
 		}
-		writeAPI(w, http.StatusOK, paginatedData(rows, total, page, map[string]any{"summary": summary}), "")
+		writeProAccountList(w, r, paginatedData(rows, total, page, map[string]any{"summary": summary}))
 		return
 	}
 	items := s.store.MailAccountsByManagementScope("pro")
 	if items == nil {
 		items = []model.MailAccountProfile{}
 	}
-	rows, err := s.proAccountListWithCards(items)
+	rows, err := s.proAccountListWithCardsContext(r.Context(), items)
 	if err != nil {
 		writeAPI(w, 500, nil, "读取开通银行卡失败")
 		return
 	}
-	writeAPI(w, http.StatusOK, rows, "")
+	writeProAccountList(w, r, rows)
 }
 
 func (s *Server) checkProAccountPlan(w http.ResponseWriter, r *http.Request) {

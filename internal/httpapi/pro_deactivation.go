@@ -296,8 +296,32 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 	if state == "need_login" {
 		return p, errors.New("重新登录后凭据仍无效，请重试删除流程")
 	}
+	if state == "confirmed" {
+		// The web-session check precedes a final test of the actual pushed OAuth
+		// account. Do not let a failed admin login masquerade as upstream 401.
+		p, _, err = s.store.MailAccountCredential(email)
+		if err != nil {
+			return p, err
+		}
+		if p.DeletionConfirmed() || !p.DeletionSubmitted() {
+			return p, nil
+		}
+		if p.PushProvider == "sub2" && p.Sub2AccountID > 0 {
+			if err = s.confirmProDeletionSub2(ctx, p); err != nil {
+				return p, err
+			}
+			result["confirmation_source"] = "sub2_http_401"
+			message = "Sub2 gpt-6.1-sol 测试返回上游 HTTP 401，删除已确认"
+		}
+	}
 	if state == "queued" || state == "confirmed" || state == "pending" {
+		if err = ctx.Err(); err != nil {
+			return p, err
+		}
 		return s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+			if p.DeletionConfirmed() {
+				return // A manual confirmation made during the test remains terminal.
+			}
 			d := p.ProDeactivation
 			now := time.Now()
 			d.CheckedAt = &now
@@ -305,8 +329,8 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 			if state == "confirmed" && d.SubmittedAt != nil {
 				d.ConfirmedAt = &now
 				d.ConfirmationSource = "upstream"
-				if result["confirmation_source"] == "http_401" {
-					d.ConfirmationSource = "http_401"
+				if source, _ := result["confirmation_source"].(string); source == "http_401" || source == "sub2_http_401" {
+					d.ConfirmationSource = source
 				}
 				delete(d.Manual, "confirm")
 				d.Status, d.Stage, d.Steps["confirm"] = "completed", "confirm", "completed"
@@ -319,6 +343,53 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 		})
 	}
 	return p, errors.New(firstNonEmpty(message, "删除流程未完成"))
+}
+
+func (s *Server) confirmProDeletionSub2(ctx context.Context, p model.MailAccountProfile) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if p.ProAuto.StopRequested {
+		return context.Canceled
+	}
+	cfg, password, _, err := s.proAccountPushSettings(p)
+	if err != nil {
+		return err
+	}
+	if cfg.Provider != "sub2" || p.ProPushDownstream != nil && !p.ProPushDownstream.Matches(model.ProDownstream(cfg)) {
+		return errors.New("删除待确认：Sub2 连接与该账号原推送位置不一致")
+	}
+	if err = proImportedDownstreamOK(p, cfg); err != nil {
+		return err
+	}
+	if _, err = s.deletionUpdate(p.Email, "confirm", "waiting", "正在用 Sub2 gpt-6.1-sol 测试核验删除结果"); err != nil {
+		return err
+	}
+	probe, err := s.sub2.ProbeDeletion(ctx, cfg.Sub2, password, p.Sub2AccountID)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if _, saveErr := s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {
+		if !p.DeletionConfirmed() && p.ProDeactivation != nil {
+			now := time.Now()
+			p.ProDeactivation.CheckedAt = &now
+		}
+	}); saveErr != nil {
+		return saveErr
+	}
+	if err != nil {
+		return fmt.Errorf("删除待确认：Sub2 测试请求失败：%w", err)
+	}
+	if probe.HTTPStatus == http.StatusUnauthorized {
+		return nil
+	}
+	if probe.HTTPStatus == http.StatusOK {
+		return errors.New("删除待确认：Sub2 gpt-6.1-sol 仍可正常使用")
+	}
+	if probe.HTTPStatus > 0 {
+		return fmt.Errorf("删除待确认：Sub2 测试返回 HTTP %d，需等待上游 HTTP 401", probe.HTTPStatus)
+	}
+	return errors.New("删除待确认：Sub2 测试未返回明确的上游 HTTP 401")
 }
 
 // Every new deletion attempt obtains a fresh web session. Confirmation and

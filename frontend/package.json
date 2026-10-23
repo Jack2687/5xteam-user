@@ -27,7 +27,7 @@
     "test:quality-groups": "node scripts/check-quality-groups.mjs",
     "test:quality-vm": "node scripts/check-quality-vm.mjs",
     "test:pipeline-selection": "node scripts/check-pipeline-selection.mjs",
-    "test:list-requests": "node scripts/check-list-requests.mjs",
+    "test:list-requests": "node scripts/check-list-requests.mjs && node scripts/check-pro-list-requests.mjs",
     "test:ejh-page": "node scripts/check-ejh-page.mjs",
     "test:restock-forecast": "node scripts/check-restock-forecast.mjs"
   },

@@ -7,6 +7,7 @@ import { activationPlan } from '../proActivationPlan'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { BadgeCheck, CirclePlus, Clock3, FileKey2, Gauge, History, KeyRound, LoaderCircle, LogIn, RefreshCw, Rocket, RotateCcw, Search, Settings2, ShieldCheck, Trash2, UsersRound, X } from 'lucide-vue-next'
 import { api } from '../api'
+import { createLatestRequest } from '../latestRequest'
 import { copyText } from '../clipboard'
 import { formatTime } from '../utils'
 import Sub2ProxyPicker from './Sub2ProxyPicker.vue'
@@ -129,8 +130,9 @@ let countdownTimer
 let searchTimer
 let pollTimer
 let disposed = false
-let listRequestID = 0
-let pendingPageLoads = 0
+const accountsLoading = ref(false)
+const renderedAccountPage = ref('')
+const accountsRequest = createLatestRequest(value => { accountsLoading.value = value })
 
 const defaults = () => ({
   post_merge_group_ids: [], post_merge_group_names: [],
@@ -187,33 +189,35 @@ const oauthReady = computed(() => Number(listSummary.oauth_ready || 0))
 const pushed = computed(() => Number(listSummary.pushed || 0))
 const merged = computed(() => Number(listSummary.merged || 0))
 
-async function loadPage() {
-  const requestID = ++listRequestID
-  pendingPageLoads++
-  try {
-    const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize.value), query: query.value.trim(), merge_state: spaceFilter.value === 'all' ? '' : spaceFilter.value })
-    const data = await api(`/api/pro-accounts?${params}`)
-    if (disposed || requestID !== listRequestID) return
-    const previous = new Map(rows.value.map(account => [account.email, account]))
-    rows.value = data.items || []; total.value = Number(data.total || 0); Object.assign(listSummary, data.summary || {})
-    for (const account of rows.value) {
-      if (previous.get(account.email)?.pro_workflow_running && !account.pro_workflow_running) {
-        if (account.pro_last_error) setMessage(account.email + '：' + account.pro_last_error, 'error')
-        else if (account.pro_remove_status === 'completed') setMessage(account.email + ' 空间四步流程完成', 'success')
+async function loadPage({ background = false } = {}) {
+  const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize.value), query: query.value.trim(), merge_state: spaceFilter.value === 'all' ? '' : spaceFilter.value })
+  // A filter change must not leave actionable rows from the previous tab.
+  if (renderedAccountPage.value !== params.toString()) rows.value = []
+  return accountsRequest.run(
+    signal => api(`/api/pro-accounts?${params}`, { signal }),
+    data => {
+      const previous = new Map(rows.value.map(account => [account.email, account]))
+      renderedAccountPage.value = params.toString()
+      rows.value = data.items || []; total.value = Number(data.total || 0); Object.assign(listSummary, data.summary || {})
+      for (const account of rows.value) {
+        if (previous.get(account.email)?.pro_workflow_running && !account.pro_workflow_running) {
+          if (account.pro_last_error) setMessage(account.email + '：' + account.pro_last_error, 'error')
+          else if (account.pro_remove_status === 'completed') setMessage(account.email + ' 空间四步流程完成', 'success')
+        }
       }
-    }
-    const lastPage = Math.max(1, Math.ceil(total.value / pageSize.value))
-    if (page.value > lastPage) { page.value = lastPage; return loadPage() }
-    const visible = new Set(rows.value.map((account) => account.email.toLowerCase()))
-    selectedEmails.value = new Set([...selectedEmails.value].filter((email) => visible.has(email)))
-  } finally { pendingPageLoads-- }
+      const lastPage = Math.max(1, Math.ceil(total.value / pageSize.value))
+      if (page.value > lastPage) { page.value = lastPage; return loadPage() }
+      const visible = new Set(rows.value.map((account) => account.email.toLowerCase()))
+      selectedEmails.value = new Set([...selectedEmails.value].filter((email) => visible.has(email)))
+    }, { background },
+  )
 }
 function schedulePoll(delay = 1500) {
   window.clearTimeout(pollTimer)
   if (disposed) return
   pollTimer = window.setTimeout(async () => {
     try {
-      if (activeTab.value === 'accounts' && !document.hidden && !pendingPageLoads) await loadPage()
+      if (activeTab.value === 'accounts' && !document.hidden) await loadPage({ background: true })
     } catch { /* Keep last known states and retry; do not mask a business error. */ }
     finally {
       schedulePoll(busy.value || rows.value.some(account => account.pro_workflow_running || Object.values(phaseState(account).steps || {}).includes('running')) ? 1500 : 5000)
@@ -260,10 +264,11 @@ async function saveMergeStage(account, step, event) {
   } catch (error) { await loadPage().catch(() => {}); setMessage(error.message, 'error') }
   finally { busy.value = '' }
 }
-function setPage(value) { page.value = value; selectedEmails.value = new Set(); loadPage() }
-function setPageSize(value) { pageSize.value = value; page.value = 1; selectedEmails.value = new Set(); loadPage() }
-function setSpaceFilter(value) { spaceFilter.value = value; page.value = 1; selectedEmails.value = new Set(); loadPage() }
-watch(query, () => { window.clearTimeout(searchTimer); page.value = 1; selectedEmails.value = new Set(); searchTimer = window.setTimeout(loadPage, 250) })
+function loadPageHandled() { return loadPage().catch(error => setMessage(error.message, 'error')) }
+function setPage(value) { page.value = value; selectedEmails.value = new Set(); loadPageHandled() }
+function setPageSize(value) { pageSize.value = value; page.value = 1; selectedEmails.value = new Set(); loadPageHandled() }
+function setSpaceFilter(value) { if (spaceFilter.value === value) return; window.clearTimeout(searchTimer); spaceFilter.value = value; page.value = 1; selectedEmails.value = new Set(); loadPageHandled() }
+watch(query, () => { window.clearTimeout(searchTimer); page.value = 1; selectedEmails.value = new Set(); searchTimer = window.setTimeout(loadPageHandled, 250) })
 
 function setMessage(text = '', type = '') { message.text = text; message.type = type }
 function toggle(account) { const next = new Set(selectedEmails.value); const email = account.email.toLowerCase(); next.has(email) ? next.delete(email) : next.add(email); selectedEmails.value = next }
@@ -474,7 +479,7 @@ onMounted(async () => {
   catch (error) { setMessage(error.message, 'error') }
   finally { schedulePoll() }
 })
-onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); listRequestID++; window.clearInterval(countdownTimer); window.clearTimeout(searchTimer); window.clearTimeout(pollTimer) })
+onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); accountsRequest.dispose(); window.clearInterval(countdownTimer); window.clearTimeout(searchTimer); window.clearTimeout(pollTimer) })
 </script>
 
 <template>
@@ -505,7 +510,8 @@ onBeforeUnmount(() => { disposed = true; cancelGroupLoad(); listRequestID++; win
       <section class="panel list-panel">
         <div class="account-toolbar"><div class="space-filter-tabs"><button :class="{ active: spaceFilter === 'all' }" @click="setSpaceFilter('all')">全部 <span>{{ listSummary.all }}</span></button><button :class="{ active: spaceFilter === 'unmerged' }" title="未开始后续流程的账号，包含仅登录完成的账号" @click="setSpaceFilter('unmerged')">未空间合并 <span>{{ listSummary.unmerged }}</span></button><button :class="{ active: spaceFilter === 'in_progress' }" title="已开始阶段但尚未成功合并，包含等待额度、失败及中断的账号" @click="setSpaceFilter('in_progress')">流程中 <span>{{ listSummary.in_progress }}</span></button><button :class="{ active: spaceFilter === 'merged' }" @click="setSpaceFilter('merged')">已空间合并 <span>{{ merged }}</span></button><button :class="{ active: spaceFilter === 'deleted' }" @click="setSpaceFilter('deleted')">删除账户 <span>{{ listSummary.deleted }}</span></button></div><div class="heading-actions"><label class="compact-search"><Search :size="14" /><input v-model="query" placeholder="搜索账号" /></label><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length || selectedAccounts.some(account => account.pro_workflow_running || account.pro_auto?.status === 'running')" @click="requestTemporaryAT(selectedAccounts, true)"><KeyRound :size="14" />批量获取临时 AT</button><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length" @click="runBatch('push')"><Rocket :size="14" />批量推送</button><button class="btn ghost" :disabled="!!busy || !selectedAccounts.length" @click="runBatch('quota')"><Gauge :size="14" />批量查额度</button><button class="btn ghost danger-text" :disabled="!!busy || !selectedAccounts.length" @click="deleteSelectedAccounts"><LoaderCircle v-if="busy === 'delete-batch'" :size="14" class="spin" /><Trash2 v-else :size="14" />{{ busy === 'delete-batch' ? '删除中…' : '批量删除' }}<span v-if="selectedAccounts.length">（{{ selectedAccounts.length }}）</span></button></div></div>
         <div class="table-shell"><table class="pro-table"><thead><tr><th><input type="checkbox" :checked="allVisibleSelected" @change="toggleVisible" /></th><th>账号</th><th>智商情况</th><th>OAuth</th><th title="显示成功开通订单保存的套餐，不再远程识别">开通套餐</th><th>开通银行卡</th><th>回款状态</th><th>推送时限</th><th>推送时长</th><th>推送</th><th title="与 Team 轮转一致：查询 Sub2 近 90 天统计，随额度检测更新">消耗额度</th><th>5小时</th><th>7天</th><th>空间合并</th><th>全自动阶段</th><th v-if="!settings.auto_delete_enabled">四步状态</th><th v-else>删除账户状态</th><th class="actions-column">操作</th></tr></thead><tbody>
-          <tr v-if="!displayedAccounts.length"><td colspan="17" class="empty-cell">暂无符合条件的 Pro 账号</td></tr>
+          <tr v-if="accountsLoading && !displayedAccounts.length"><td colspan="17" class="empty-cell" role="status"><LoaderCircle :size="16" class="spin" /> 正在加载账号…</td></tr>
+          <tr v-else-if="!displayedAccounts.length"><td colspan="17" class="empty-cell">暂无符合条件的 Pro 账号</td></tr>
 <tr v-for="account in displayedAccounts" :key="account.email"><td><input type="checkbox" :checked="selectedEmails.has(account.email.toLowerCase())" @change="toggle(account)" /></td><td class="account-cell"><strong>{{ account.email }}</strong><small :title="accountSortHint">{{ accountTimeLabel }} {{ account.state_entered_at ? formatTime(account.state_entered_at) : '时间未记录' }}</small><small v-if="account.pro_migration?.paused" class="table-note" :title="account.pro_migration.notice">迁移待续跑</small><CompactErrorDetails v-if="account.pro_last_error && !(settings.auto_delete_enabled && account.pro_deactivation)" :messages="[account.pro_last_error]" /></td><td><ProQualityCell :account="account" /><ProSIWCState :account="account" @updated="loadPage"/></td><td><StatusPill :tone="statusTone(account.oauth_status)">{{ account.siwc_present && (account.pro_siwc || settings.sub2.auth_mode === 'siwc') ? 'SIWC RT / AT 完整' : account.access_token_present && account.refresh_token_present ? 'AT / RT 完整' : '待授权' }}</StatusPill><small v-if="account.oauth_expires_at" class="table-note">{{ formatTime(account.oauth_expires_at) }}</small></td><td><StatusPill :tone="activationPlan(account).tone" :title="activationPlan(account).title">{{ activationPlan(account).label }}</StatusPill></td><td class="activation-card-cell"><template v-if="account.activation_card"><button v-if="proCardEntry(account)" type="button" class="activation-card-link" :title="`在 ${issuerLabel(proCardEntry(account))} 卡片管理中查看此账号的开通卡`" @click="openActivationCard(account)"><strong>{{ account.activation_card.card_name || '银行卡' }}</strong><small class="table-note">{{ account.activation_card.card_last4 ? '尾号 ' + account.activation_card.card_last4 : '尾号未记录' }} · {{issuerLabel(proCardEntry(account))}} ↗</small></button><template v-else><strong>{{ account.activation_card.card_name || '银行卡' }}</strong><small class="table-note">{{ account.activation_card.card_last4 ? '尾号 ' + account.activation_card.card_last4 : '尾号未记录' }}</small></template></template><span v-else class="table-note">未记录</span></td><td><ProFinancialCell :account="account" :default-page-size="defaultPageSize" @open-card="openCard" @updated="emit('reload')"/></td><td><strong>{{ account.pro_push_timeout_enabled === true ? '已开启' : account.pro_push_timeout_enabled === false ? '未开启' : '未知' }}</strong><small class="table-note">{{ account.pro_push_timeout_enabled === true ? account.pro_push_timeout_minutes + ' 分钟' : account.pro_push_timeout_enabled === false ? '无强制合并时限' : '历史设置未记录' }}</small></td><td><ProPushTimer :account="account"/></td><td><StatusPill :tone="statusTone(account.push_status)">{{ account.push_status === 'completed' ? (account.push_provider || '-').toUpperCase() : account.push_status || '未推送' }}</StatusPill><template v-if="account.vm2api"><small class="table-note">{{ account.vm2api.runtime_type === 'kvm' ? 'KVM' : 'Docker' }} · {{ vmStages[account.vm2api.stage] || account.vm2api.stage }}</small><small class="table-note" :title="account.vm2api.slot_id">{{ account.vm2api.container_name || account.vm2api.slot_id }}</small><small v-if="account.vm2api.stage === 'ready'" class="table-note">{{ account.vm2api.running ? '已开机' : '已停止' }} · {{ account.vm2api.schedulable ? '调度开启' : '调度暂停' }}</small><small v-if="account.vm2api.error" class="table-note danger-text" :title="account.vm2api.error">{{ account.vm2api.error }}</small><button v-if="account.vm2api.stage === 'delete_failed' && ['completed', 'team_removed'].includes(account.pro_remove_status)" class="btn ghost compact" type="button" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="runOne(account, 'merge')">重试清理</button></template></td><td><ProCostCell :account="account" /></td><td>{{ quotaLabel(account.quota_5h) }}</td><td>{{ quotaLabel(account.quota_7d) }}<small v-if="account.quota_checked_at" class="table-note">{{ formatTime(account.quota_checked_at) }}</small></td><td><StatusPill :tone="account.space_merged_once ? 'success' : 'pending'">{{ account.space_merged_once ? '已成功' : '未合并' }}</StatusPill></td><td class="auto-flow-cell"><small v-if="account.pro_auto?.status === 'failed'" class="danger-text">流程失败</small><button v-if="account.quota_resume_available || ['failed','interrupted','stopped'].includes(account.pro_auto?.status)" type="button" class="btn ghost compact" :disabled="!!busy || account.pro_workflow_running" @click="autoPro?.open(account)">{{account.quota_resume_available ? '恢复额度监控' : '重试 / 继续'}}</button><ProAutoStages :state="phaseState(account)" :delete-mode="settings.auto_delete_enabled" editable :disabled="autoStageBusy(account)" @change="saveAutoStage(account,$event)"/><button type="button" class="btn ghost compact auto-flow-open" @click="account.pro_auto?.id ? autoPro?.open(account) : accountLogs?.open(account)">{{account.pro_auto?.id ? '查看全自动进度' : '查看账号流程日志'}}</button><CompactErrorDetails :messages="phaseErrors(account)" /></td><td v-if="!settings.auto_delete_enabled" class="flow-state"><div class="merge-stage-strip"><label v-for="step in mergeStages(account)" :key="step.key" class="merge-stage" :class="step.status" :data-stage="step.key" :title="`${step.label}：${step.text}`"><LoaderCircle v-if="step.status === 'running'" class="spin" :size="11" /><b>{{ { invite: '邀', accept: '进', transfer: '合', remove: '移' }[step.key] }}</b><select :value="step.status" :aria-label="`${step.label}阶段状态`" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @change="saveMergeStage(account, step, $event)"><option value="not_started">未开始</option><option value="pending">待处理</option><option v-if="step.status === 'running'" value="running" disabled>执行中</option><option v-if="step.status === 'team_removed'" value="team_removed" disabled>已移出</option><option v-if="step.status === 'unknown'" value="unknown" disabled>待确认</option><option value="completed">成功</option><option value="failed">失败</option></select></label></div><small v-if="mergeActivity(account)" class="merge-activity"><LoaderCircle class="spin" :size="11" />{{ mergeActivity(account) }}</small><div v-if="account.pro_post_merge_groups" class="post-merge-group-status"><StatusPill :tone="statusTone(account.pro_post_merge_groups.status)"><LoaderCircle v-if="account.pro_post_merge_groups.status === 'running'" class="spin" :size="11" />{{ postMergeGroupsLabel(account) }}</StatusPill><CompactErrorDetails :messages="[account.pro_post_merge_groups.error]" /><button v-if="postMergeGroupsPending(account) && account.pro_remove_status === 'completed'" class="btn ghost compact" type="button" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="runOne(account, 'merge')">重试调整分组</button></div></td><td v-else class="flow-state"><ProDeletionStages :account="account" :disabled="deletionStageBusy(account)" @change="saveDeletionStage(account,$event)" @retry="runOne(account, 'deactivate')"/></td><td class="actions-cell"><ProActionMenu :email="account.email"><button v-if="account.pro_migration" type="button" title="继续迁移流程" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="resumeImported(account)"><Rocket :size="15" />继续迁移流程</button><button type="button" title="全自动开通 Pro / 查看进度与停止" :disabled="!!busy" @click="autoPro?.open(account)"><Rocket :size="15" />全自动开通 Pro</button><button type="button" title="查看账号全流程日志" @click="accountLogs?.open(account)"><History :size="15" />查看账号全流程日志</button><button type="button" title="查看、复制和导出 AT / RT" @click="credentialViewer?.open(account)"><FileKey2 :size="15" />查看、复制和导出 AT / RT</button><button type="button" title="手动授权" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="beginOAuth(account)"><LogIn :size="15" />手动授权</button><button type="button" title="刷新 AT" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running' || !account.refresh_token_present" @click="runOne(account, 'refresh')"><RefreshCw :size="15" />刷新 AT</button><button type="button" title="获取临时 AT" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="requestTemporaryAT([account])"><KeyRound :size="15" />获取临时 AT</button><button type="button" title="开通 Pro" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running' || !account.access_token_present" @click="recharge?.open(account)"><CirclePlus :size="15" />开通 Pro</button><button type="button" title="登录获取 RT / AT" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="requestOAuthLogin(account)"><BadgeCheck :size="15" />登录获取 RT / AT</button><button type="button" title="推送 / 重新授权" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running' || (!account.refresh_token_present && settings.sub2.auth_mode !== 'siwc' && !account.pro_siwc)" @click="runOne(account, 'push')"><Rocket :size="15" />推送 / 重新授权</button><button type="button" title="查询额度" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running' || account.push_status !== 'completed'" @click="runOne(account, 'quota')"><Gauge :size="15" />查询额度</button><button type="button" title="执行或续跑空间合并" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="runOne(account, 'merge')"><LoaderCircle v-if="busy === `merge:${account.email}` || account.pro_workflow_running" class="spin" :size="15" /><ShieldCheck v-else :size="15" />执行或续跑空间合并</button><button type="button" title="执行或续跑删除账户" :disabled="autoStageBusy(account)" @click="runOne(account, 'deactivate')"><Trash2 :size="15"/>执行或续跑删除账户</button><button type="button" title="移回邮件管理" :disabled="!!busy || account.pro_workflow_running || account.pro_auto?.status === 'running'" @click="returnOne(account)"><RotateCcw :size="15" />移回邮件管理</button></ProActionMenu></td></tr>
         </tbody></table></div>
         <Pagination :page="page" :page-size="pageSize" :total="total" @update:page="setPage" @update:page-size="setPageSize" />

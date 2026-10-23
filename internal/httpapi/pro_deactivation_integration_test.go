@@ -106,6 +106,12 @@ func TestProDeletionCompleteAutomation(t *testing.T) {
 					fmt.Fprint(w, `{"code":0,"data":{"id":42,"name":"fixture"}}`)
 				case "/api/v1/admin/accounts/42/stats":
 					fmt.Fprint(w, `{"code":0,"data":{"summary":{"total_standard_cost":12,"total_actual_cost":6}}}`)
+				case "/api/v1/admin/accounts/42/test":
+					if !p.DeletionSubmitted() {
+						t.Error("tested deletion before submission")
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: {\"type\":\"error\",\"error\":\"API returned 401: invalidated oauth token\"}\n\n")
 				case "/api/v1/admin/openai/accounts/42/quota":
 					if p.PushStatus != "completed" {
 						t.Error("quota queried before push")
@@ -299,7 +305,7 @@ func TestProDeletionCompleteAutomation(t *testing.T) {
 			}
 			p = advance()
 			if scenario == "confirmation_401" {
-				if !p.DeletionConfirmed() || p.ProDeactivation.ConfirmationSource != "http_401" {
+				if !p.DeletionConfirmed() || p.ProDeactivation.ConfirmationSource != "sub2_http_401" {
 					t.Fatal("401 did not confirm submitted deletion")
 				}
 			} else {
