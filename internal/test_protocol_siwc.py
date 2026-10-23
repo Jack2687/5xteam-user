@@ -8,7 +8,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
-from test_protocol_codex_oauth import Scenario, Response
+from test_protocol_codex_oauth import Scenario, Response, encoded
+from unittest.mock import patch
+from http.cookies import SimpleCookie
+from test_protocol_pro_auto import CookieStore
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 JWK = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(KEY.public_key()))
@@ -17,10 +20,23 @@ JWK.update(kid="fixture-key", use="sig", alg="RS256")
 
 class SIWCScenario(Scenario):
     def consent(self, url):
+        if not getattr(self,"web_login_done",False):
+            return Response(url,body={"continue_url":"https://chatgpt.com/api/auth/callback/openai?code=web-code&state=web-state"})
         return Response(url, body={"continue_url": "/choose-an-account" if self.o.get("choose") else "/sign-in-with-chatgpt/consent"})
 
     def request(self, method, url, **kw):
         path = urlsplit(url).path
+        if path == "/": return Response(url)
+        if path == "/api/auth/csrf": return Response(url,body={"csrfToken":"fixture-csrf"})
+        if path == "/api/auth/signin/openai": return Response(url,body={"url":"https://auth.openai.com/authorize?state=web-state"})
+        if path == "/authorize": return Response(url,cookies=["login_session=private-cookie; Path=/; Secure"])
+        if path == "/api/auth/callback/openai":
+            self.web_login_done=True
+            return Response(url,cookies=["__Secure-next-auth.session-token=private-web-cookie; Path=/; Secure"])
+        if path == "/api/auth/session":
+            assert getattr(self,"web_login_done",False), "web session requested before login callback"
+            return Response(url,body={"accessToken":"x."+encoded({"email":"fixture@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"personal"}})+".x","user":{"email":"fixture@example.com"},"account":{"id":"personal"}})
+
         if path in ("/api/accounts/session/select", "/api/accounts/client_auth_session_dump", "/api/accounts/dynamic-agent-clients/consent/grant"):
             assert kw.get("headers", {}).get("openai-sentinel-token"), "HAR requires the login Sentinel token"
         if path in ("/oauth/token", "/oauth/authorize", "/api/accounts/workspace/select", "/api/accounts/organization/select"):
@@ -33,7 +49,7 @@ class SIWCScenario(Scenario):
             assert q["redirect_uri"] == ["http://127.0.0.1:1456/auth/callback"]
             assert q["ext_agent_host_id"] == ["urn:uuid:fixture-host"]
             self.calls.append({"path": path, **kw})
-            return Response(url, 302, location="/log-in", cookies=["auth-session-minimized=private-minimized; Path=/; Secure"])
+            return Response(url, 302, location="/choose-an-account" if self.o.get("choose") else "/sign-in-with-chatgpt/consent", cookies=["auth-session-minimized=private-minimized; Path=/; Secure"])
         if path in ("/choose-an-account", "/sign-in-with-chatgpt/consent"):
             self.calls.append({"path": path, **kw})
             return Response(url, body="<html>us_fixture1234567890</html>")
@@ -81,7 +97,24 @@ class SIWCScenario(Scenario):
         return super().request(method, url, **kw)
 
     def run(self, **payload):
-        return super().run(credential_mode="siwc", siwc_host_id="urn:uuid:fixture-host", **payload)
+        scenario=self
+        self.clients=[]
+        class Session:
+            def __init__(self,**kwargs):
+                self.options=kwargs;self.cookies=CookieStore();self.closed=False;scenario.clients.append(self)
+            def request(self,method,url,**kwargs):
+                assert not self.closed
+                kwargs.update(impersonate=self.options.get("impersonate"),proxies=self.options.get("proxies"))
+                r=scenario.request(method,url,**kwargs)
+                for raw in r.headers.get_list("set-cookie"):
+                    jar=SimpleCookie();jar.load(raw)
+                    for name,value in jar.items(): self.cookies.set(name,value.value,urlsplit(url).hostname,"/")
+                return r
+            def close(self): self.closed=True
+        with patch("curl_cffi.requests.Session",Session):
+            result=super().run(credential_mode="siwc", siwc_host_id="urn:uuid:fixture-host", **payload)
+        assert len(self.clients)==1 and self.clients[0].closed
+        return result
 
 
 class SIWCFlowTests(unittest.TestCase):

@@ -99,6 +99,9 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 	if p.ManagementScope != "pro" {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
+	if err = s.endSIWCService(ctx, p); err != nil {
+		return p, err
+	}
 	slot, err := s.proMergeSlot(ctx)
 	if err != nil {
 		return p, err

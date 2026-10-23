@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -113,8 +114,15 @@ func (s *Store) SaveProSettings(v model.ProSettings, subPassword, cpaKey string,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	normalizeProSettings(&v)
-	var oldSub, oldCPA string
-	_ = s.db.QueryRow("SELECT encrypted_sub2_password, encrypted_cpa_key FROM pro_settings WHERE id=1").Scan(&oldSub, &oldCPA)
+	var oldSub, oldCPA, previousRaw string
+	_ = s.db.QueryRow("SELECT encrypted_sub2_password, encrypted_cpa_key, profile FROM pro_settings WHERE id=1").Scan(&oldSub, &oldCPA, &previousRaw)
+	var previous model.ProSettings
+	_ = json.Unmarshal([]byte(previousRaw), &previous)
+	previousSecret := oldSub
+	if previous.Sub2.AuthMode != v.Sub2.AuthMode {
+		oldSub = ""
+		_ = s.db.QueryRow("SELECT encrypted_password FROM pro_sub2_variants WHERE auth_mode=?", v.Sub2.AuthMode).Scan(&oldSub)
+	}
 	var err error
 	if strings.TrimSpace(subPassword) != "" {
 		oldSub, err = s.encrypt(strings.TrimSpace(subPassword))
@@ -149,6 +157,14 @@ func (s *Store) SaveProSettings(v model.ProSettings, subPassword, cpaKey string,
 		return v, err
 	}
 	defer tx.Rollback()
+	if previousRaw != "" {
+		if _, err = tx.Exec("INSERT INTO pro_sub2_variants(auth_mode,payload,encrypted_password) VALUES(?,?,?) ON CONFLICT(auth_mode) DO UPDATE SET payload=excluded.payload,encrypted_password=excluded.encrypted_password", previous.Sub2.AuthMode, mustJSON(previous.Sub2), previousSecret); err != nil {
+			return v, err
+		}
+	}
+	if _, err = tx.Exec("INSERT INTO pro_sub2_variants(auth_mode,payload,encrypted_password) VALUES(?,?,?) ON CONFLICT(auth_mode) DO UPDATE SET payload=excluded.payload,encrypted_password=excluded.encrypted_password", v.Sub2.AuthMode, mustJSON(v.Sub2), oldSub); err != nil {
+		return v, err
+	}
 	if err = syncProPushTimeoutTx(tx, v); err != nil {
 		return v, err
 	}
@@ -251,7 +267,11 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 		p.ProPushStartedAt = &now
 	}
 	if p.PushProvider != previousProvider || p.Sub2AccountID != previousSub2ID || p.VM2 != nil {
-		p.ClearProCostSnapshot()
+		// A committed SIWC transfer explicitly binds the carried total to its
+		// newly created destination. Other reassignment still clears old costs.
+		if p.ProSIWC == nil || p.ProSIWC.AccountID != p.Sub2AccountID || p.ProSIWC.Stage != "warm" || p.CostDownstreamIdentity != fmt.Sprint(p.Sub2AccountID) {
+			p.ClearProCostSnapshot()
+		}
 	}
 	p.UpdatedAt = time.Now()
 	if p.DeletionSubmitted() {

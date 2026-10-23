@@ -174,10 +174,17 @@ def run(payload, rpc):
             raise RuntimeError("供应商尚未确认开通成功，停止后续授权")
         flow.record_exit("第三步获取凭证开始")
         flow.record_oauth_context("第三步开始")
-        tokens = flow.continue_codex()
+        if payload.get("credential_mode") == "siwc":
+            from .siwc import SIWCProtocolLogin
+            tokens = SIWCProtocolLogin.continue_authenticated(flow)
+        else:
+            tokens = flow.continue_codex()
         bridge.protect_code(tokens.get("access_token"))
         bridge.protect_code(tokens.get("refresh_token"))
         web_session = flow._chatgpt_web_session()
+        if tokens.get("auth_mode") == "siwc":
+            tokens["web_access_token"] = web_session.get("access_token") or web_session.get("accessToken") or ""
+            tokens["web_account_id"] = flow.paid_account_id
         flow.record_exit("第三步 RT/AT/Session 保存前")
         flow.record_oauth_context("第三步凭证获取完成")
         bridge.call("pro_tokens", tokens=tokens, web_session=web_session, **flow.exit_details())

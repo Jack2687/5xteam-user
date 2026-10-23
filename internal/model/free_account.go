@@ -5,6 +5,7 @@ import "time"
 // Sub2Settings contains the non-secret part of the Sub2API connection.
 // The password is encrypted separately by the store.
 type Sub2Settings struct {
+	AuthMode                       string   `json:"auth_mode,omitempty"`
 	// Provider selects the active downstream: sub2 (default) or cpa.
 	Provider                       string   `json:"provider"`
 	PushPlanType                   string   `json:"push_plan_type"`

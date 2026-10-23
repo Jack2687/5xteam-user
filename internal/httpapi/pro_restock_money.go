@@ -101,7 +101,11 @@ func (s *Server) refreshRestockMoney(c restock.Config, p model.ProSettings, pass
 				defer wg.Done()
 				for a := range jobs {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-					u, err := s.sub2.MonitorMoney(ctx, p.Sub2, password, a.ID)
+					target, secret, id, err := s.restockAccountTarget(a, p, password)
+					var u sub2.MoneyUsage
+					if err == nil {
+						u, err = s.sub2.MonitorMoney(ctx, target, secret, id)
+					}
 					cancel()
 					m := restock.AccountMoney{At: time.Now(), Error: "费用读取失败"}
 					if err == nil {

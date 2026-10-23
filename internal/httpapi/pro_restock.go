@@ -3,6 +3,7 @@ package httpapi
 import (
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/sub2"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -287,6 +288,11 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 		snap.Valid = false
 		snap.Error = "Sub2 快照时间过期或服务器时钟不一致"
 	}
+	if e := s.appendSIWCRestock(ctx, c, p, profiles, &snap); e != nil {
+		snap.Valid = false
+		snap.LoadValid = false
+		snap.Error = e.Error()
+	}
 	s.refreshRestockQuota(c, p, password, snap)
 	if snap.Valid && snap.LoadValid {
 		s.refreshRestockMoney(c, p, password, snap)
@@ -323,7 +329,11 @@ func (s *Server) refreshRestockQuota(c restock.Config, p model.ProSettings, pass
 				defer wg.Done()
 				for a := range jobs {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					q, e := s.sub2.QueryQuota(ctx, p.Sub2, password, a.ID)
+					target, secret, id, e := s.restockAccountTarget(a, p, password)
+					var q sub2.QuotaUsage
+					if e == nil {
+						q, e = s.sub2.QueryQuota(ctx, target, secret, id)
+					}
 					cancel()
 					if e != nil {
 						continue

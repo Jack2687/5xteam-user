@@ -36,6 +36,17 @@ func (s *Server) proVMTarget(p model.MailAccountProfile) (model.DownstreamTarget
 
 func (s *Server) proAccountPushSettings(p model.MailAccountProfile) (model.ProSettings, string, string, error) {
 	v, password, key, err := s.store.ProSettings()
+	if err == nil && p.ProSIWC != nil && p.ProSIWC.AccountID > 0 && p.ProSIWC.TargetID != "" {
+		t, e := s.store.DownstreamTarget(p.ProSIWC.TargetID)
+		if e != nil {
+			return v, password, key, e
+		}
+		v.Provider, v.Sub2, password = "sub2", t.Sub2, t.Secret
+		v.Sub2.AuthMode = "siwc"
+		v.PostMergeGroupIDs = nil // Original site group IDs must never address the SIWC site.
+		s.applySIWCQuotaInterval(&v)
+		return v, password, key, nil
+	}
 	if err == nil && p.ProRestockTargetID != "" {
 		t, e := s.store.DownstreamTarget(p.ProRestockTargetID)
 		if e != nil {
@@ -47,9 +58,11 @@ func (s *Server) proAccountPushSettings(p model.MailAccountProfile) (model.ProSe
 		if v.Sub2.Models == nil {
 			v.Sub2.Models = []string{}
 		}
+		s.applySIWCQuotaInterval(&v)
 		return v, password, key, nil
 	}
 	if err != nil || p.VM2 == nil {
+		s.applySIWCQuotaInterval(&v)
 		return v, password, key, err
 	}
 	t, err := s.proVMTarget(p)

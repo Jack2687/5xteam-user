@@ -26,6 +26,7 @@ type Settings struct {
 // MailAccountProfile is the local mailbox projection used by registration.
 // Secrets are encrypted in Store and never returned by list APIs.
 type MailAccountProfile struct {
+	ProSIWC                    *ProSIWCState               `json:"pro_siwc,omitempty"`
 	SIWCPresent                bool                        `json:"siwc_present"`
 	ProQuality                 ProQualityState             `json:"pro_quality"`
 	ProQualitySince            *time.Time                  `json:"pro_quality_since,omitempty"`
@@ -166,6 +167,8 @@ type MailAccountCredentials struct {
 
 // SIWC credentials are separate from the Codex and Web login credentials.
 type SIWCCredentials struct {
+	WebAccessToken string    `json:"web_access_token,omitempty"`
+	WebAccountID   string    `json:"web_account_id,omitempty"`
 	AccessToken    string    `json:"access_token"`
 	RefreshToken   string    `json:"refresh_token"`
 	IDToken        string    `json:"id_token"`

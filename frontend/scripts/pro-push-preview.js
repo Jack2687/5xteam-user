@@ -19,6 +19,13 @@ window.fetch = async (path, options = {}) => {
   const url = new URL(path, location.origin), method = options.method || 'GET'
   const body = options.body ? JSON.parse(options.body) : null
   fixture.requests.push({ path: url.pathname, method, body })
+  if (url.pathname === '/api/pro-settings/sub2/variant') return reply({ ...initial.sub2, auth_mode:url.searchParams.get('auth_mode'), url:'https://siwc.example.com', group_ids:[10], group_names:['SIWC 服务'] })
+  if (url.pathname === '/api/pro-siwc/settings') {
+    fixture.siwc ??= {sub2:{...initial.sub2,auth_mode:'siwc',url:'https://siwc.example.com',proxy_ids:[]},monitor_group_ids:[10],five_hour_enabled:true,five_hour_remaining:5,seven_day_enabled:true,seven_day_remaining:10,poll_seconds:120}
+    if(method==='PUT') fixture.siwc=structuredClone(body)
+    return reply(fixture.siwc)
+  }
+  if (url.pathname === '/api/pro-siwc/groups') return reply({groups:fixture.groups.sub2})
   if (url.pathname === '/api/pro-settings') {
     if (method === 'PUT') {
       fixture.saved = { ...body, sub2_password: '', cpa_key: '' }

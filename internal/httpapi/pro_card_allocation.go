@@ -82,6 +82,11 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 		}
 	}
 	taskID, _ := ctx.Value(proRestockContextKey{}).(string)
+	if taskID != "" || ctx.Value(proScheduledContextKey{}) == true {
+		if reason := s.proSIWCBlock(); reason != "" {
+			return card, secret, errors.New(reason)
+		}
+	}
 	var taskProvider string
 	var strictProvider bool
 	if taskID != "" {

@@ -156,6 +156,9 @@ func (s *Server) tickProSchedule(force bool) {
 	if active != nil && !s.reconcileProSchedule(active) {
 		return
 	}
+	if s.proSIWCBlock() != "" {
+		return
+	}
 	if !cfg.ScheduledEnabled && !force {
 		return
 	}

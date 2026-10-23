@@ -131,6 +131,9 @@ func (s *Server) importedProTarget(p model.MailAccountProfile) (model.MailAccoun
 }
 
 func proImportedDownstreamOK(p model.MailAccountProfile, settings model.ProSettings) error {
+	if p.ProSIWC != nil && p.ProSIWC.AccountID == p.Sub2AccountID && p.ProPushDownstream != nil && p.ProPushDownstream.Matches(model.ProDownstream(settings)) {
+		return nil
+	}
 	if p.ProMigration != nil && p.PushStatus == "completed" && !p.ProMigration.Downstream.Matches(model.ProDownstream(settings)) {
 		return errors.New("当前下游与迁移来源不同，请先推送到当前下游；旧下游账号 ID 不会用于当前服务")
 	}

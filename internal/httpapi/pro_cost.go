@@ -33,10 +33,24 @@ func (s *Server) saveProCostSnapshot(profile model.MailAccountProfile, settings 
 		if p.PushProvider != "sub2" || p.Sub2AccountID != profile.Sub2AccountID || p.VM2 != nil {
 			return
 		}
+		if p.ProSIWC != nil && p.ProSIWC.AccountID > 0 && (settings.Sub2.AuthMode != "siwc" || p.ProPushDownstream == nil || !p.ProPushDownstream.Matches(model.ProDownstream(settings))) {
+			return
+		}
 		if !proCostBindingMatches(*p, settings) {
 			p.ClearProCostSnapshot()
 		}
 		p.CostProvider, p.CostConnectionIdentity, p.CostDownstreamIdentity = "sub2", connection, identity
+		if p.ProSIWC != nil && p.ProSIWC.AccountID == profile.Sub2AccountID && settings.Sub2.AuthMode == "siwc" {
+			v := p.ProSIWC
+			v.NewCost = max(v.NewCost, costs.StandardCostUSD-v.BaselineCost, 0)
+			p.CostDownstreamSnapshot = v.CarriedCost + v.NewCost
+			if costs.UserCostUSD != nil {
+				v.NewUserCost = max(v.NewUserCost, *costs.UserCostUSD-v.BaselineUserCost, 0)
+				p.UserCostDownstreamIdentity, p.UserCostDownstreamSnapshot = identity, v.CarriedUserCost+v.NewUserCost
+			}
+			p.CostCheckedAt = &now
+			return
+		}
 		// Match Team's monotonic snapshot within the same downstream binding.
 		p.CostDownstreamSnapshot = max(p.CostDownstreamSnapshot, costs.StandardCostUSD, 0)
 		if costs.UserCostUSD != nil {

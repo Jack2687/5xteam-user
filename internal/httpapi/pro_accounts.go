@@ -68,8 +68,15 @@ func (s *Server) proAccountListWithCards(items []model.MailAccountProfile) ([]pr
 		return nil, err
 	}
 	for _, item := range items {
-		item.ProQuality = proQualityDisplay(item, quality, config)
-		if !proCostBindingMatches(item, config) {
+		// Resolve account-specific targets before displaying quality and costs.
+		effective := config
+		if item.ProSIWC != nil || item.ProRestockTargetID != "" {
+			if v, _, _, e := s.proAccountPushSettings(item); e == nil {
+				effective = v
+			}
+		}
+		item.ProQuality = proQualityDisplay(item, quality, effective)
+		if !proCostBindingMatches(item, effective) {
 			item.ClearProCostSnapshot()
 		}
 		row := proAccountListItem{MailAccountProfile: item, StageProgress: item.ProStages()}
@@ -525,6 +532,19 @@ func (s *Server) currentProCredential(ctx context.Context, email string) (model.
 	if !strings.EqualFold(profile.ManagementScope, "pro") {
 		return profile, credentials, errors.New("账号不在 Pro 管理中")
 	}
+	if settings, _, _, e := s.proAccountPushSettings(profile); e == nil && settings.Sub2.AuthMode == "siwc" {
+		tokens, e := s.ensureProSIWC(ctx, profile, credentials)
+		if e != nil {
+			return profile, credentials, e
+		}
+		info, e := workflow.DecodeUserInfo(tokens.WebAccessToken)
+		if e != nil || !strings.EqualFold(info.Email, email) {
+			return profile, credentials, errors.New("SIWC 网页凭证账号不匹配")
+		}
+		credentials.AccessToken = tokens.WebAccessToken
+		profile.OAuthAccountID, profile.OAuthUserID = info.AccountID, info.UserID
+		return profile, credentials, nil
+	}
 	if credentials.AccessToken == "" || credentials.RefreshToken == "" {
 		return profile, credentials, errors.New("账号缺少完整 OAuth AT/RT")
 	}
@@ -645,6 +665,13 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(input.Sub2Password) == "" {
+		if input.Sub2.AuthMode != current.Sub2.AuthMode {
+			_, subPassword, err = s.store.ProSub2Variant(input.Sub2.AuthMode)
+			if err != nil {
+				writeAPI(w, 400, nil, err.Error())
+				return
+			}
+		}
 		input.Sub2Password = subPassword
 	}
 	if strings.TrimSpace(input.CPAKey) == "" {
@@ -803,11 +830,18 @@ func buildProCredentials(profile model.MailAccountProfile, credentials model.Mai
 func (s *Server) performProPush(ctx context.Context, email string) (out model.MailAccountProfile, retErr error) {
 	finishStage := s.beginProManualStage(email, "push")
 	defer func() { finishStage(retErr) }()
-	profile, credentials, err := s.currentProCredential(ctx, email)
+	profile, credentials, err := s.store.MailAccountCredential(email)
 	if err != nil {
 		return profile, err
 	}
 	v, subPassword, cpaKey, err := s.proAccountPushSettings(profile)
+	if err != nil {
+		return profile, err
+	}
+	if v.Provider == "sub2" && v.Sub2.AuthMode == "siwc" {
+		return s.performDirectSIWCPush(ctx, profile, credentials, v, subPassword)
+	}
+	profile, credentials, err = s.currentProCredential(ctx, email)
 	if err != nil {
 		return profile, err
 	}
@@ -993,6 +1027,9 @@ func (s *Server) pushProAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (out model.MailAccountProfile, retErr error) {
+	if p, _, e := s.store.MailAccountCredential(email); e == nil && p.SIWCTransferring() {
+		return p, errors.New("SIWC 转入中，保留原超时，暂停额度退出判断")
+	}
 	finishStage := s.beginProManualStage(email, "quota")
 	defer func() { finishStage(retErr) }()
 	profile, _, err := s.store.MailAccountCredential(email)
@@ -1035,6 +1072,26 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	})
 	var five, seven *model.FreeQuotaWindow
 	queriedProfile := profile
+	if v.Provider == "sub2" && v.Sub2.AuthMode == "siwc" {
+		_, credentials, readErr := s.store.MailAccountCredential(email)
+		if readErr != nil {
+			return profile, readErr
+		}
+		needsCredentials := credentials.SIWC == nil
+		if credentials.SIWC != nil {
+			expiry, ok := workflow.AccessTokenExpiry(credentials.SIWC.WebAccessToken)
+			needsCredentials = !ok || !expiry.After(time.Now().Add(time.Minute))
+		}
+		if needsCredentials {
+			tokens, authErr := s.ensureProSIWC(ctx, profile, credentials)
+			if authErr != nil {
+				return profile, authErr
+			}
+			if _, authErr = s.sub2.ApplyOAuthCredentials(ctx, v.Sub2, subPassword, profile.Sub2AccountID, siwcCredentials(tokens)); authErr != nil {
+				return profile, authErr
+			}
+		}
+	}
 	if v.Provider == "vm2api" {
 		five, seven, err = s.proVMQuota(ctx, profile)
 	} else if v.Provider == "cpa" {
@@ -1129,7 +1186,7 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	if err == nil && !applied {
 		return profile, errors.New("额度查询期间下游账号已变化，已丢弃旧响应，请重新查询")
 	}
-	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoDeleteEnabled) && !profile.SpaceMergedOnce && !profile.DeletionSubmitted() && seven.UsedPercent >= currentSettings.QuotaUsedThreshold && !proTransferNeedsConfirmation(profile) {
+	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoDeleteEnabled) && !profile.SpaceMergedOnce && !profile.DeletionSubmitted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
 		profile, err = s.startProDispositionJob(email, nil, nil)
 	}
 	return profile, err
@@ -1206,6 +1263,9 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	executionID := randomRegistrationID()
 	v, _, _, err := s.proAccountPushSettings(profile)
 	if err != nil {
+		return profile, err
+	}
+	if err = s.endSIWCService(ctx, profile); err != nil {
 		return profile, err
 	}
 	s.auditProEvent(profile, "space_merge", "running", v.Provider, "开始执行 Pro 空间四步流程", map[string]any{"execution_id": executionID, "state": proMergeState(profile), "configured_admin_id": v.TargetAdminID})
@@ -1445,6 +1505,7 @@ func (s *Server) lockProTeam(adminID string) func() {
 func (s *Server) monitorProAccounts(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	siwcNext := map[string]time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -1454,9 +1515,7 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 			if err != nil || !v.QuotaEnabled {
 				continue
 			}
-			if v.NextQuotaSweepAt != nil && now.Before(*v.NextQuotaSweepAt) {
-				continue
-			}
+			regularDue := v.NextQuotaSweepAt == nil || !now.Before(*v.NextQuotaSweepAt)
 			s.proMonitorMu.Lock()
 			if s.proMonitorRunning {
 				s.proMonitorMu.Unlock()
@@ -1464,10 +1523,11 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 			}
 			s.proMonitorRunning = true
 			s.proMonitorMu.Unlock()
-			last := now
-			next := now.Add(time.Duration(v.QuotaCheckIntervalSeconds) * time.Second)
-			v.LastQuotaSweepAt, v.NextQuotaSweepAt = &last, &next
-			_ = s.store.UpdateProQuotaSweep(last, next)
+			if regularDue {
+				last := now
+				next := now.Add(time.Duration(v.QuotaCheckIntervalSeconds) * time.Second)
+				_ = s.store.UpdateProQuotaSweep(last, next)
+			}
 			emails := []string{}
 			for _, p := range s.store.MailAccountsByManagementScope("pro") {
 				// The new full workflow owns its own quota threshold and due time.
@@ -1477,6 +1537,19 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 				needsQuota := !p.SpaceMergedOnce && !p.DeletionSubmitted()
 				needsCleanup := p.ProVM2CleanupPending() || p.SpaceMergedOnce && p.RemoveStatus != "completed"
 				if p.PushStatus == "completed" && (p.PushProvider == v.Provider || p.VM2 != nil) && !p.ProWorkflowRunning && (needsQuota || needsCleanup) {
+					target, _, _, targetErr := s.proAccountPushSettings(p)
+					if targetErr != nil || p.SIWCTransferring() {
+						continue
+					}
+					if target.Provider == "sub2" && target.Sub2.AuthMode == "siwc" && needsQuota {
+						if !siwcQuotaSweepDue(p, now, siwcNext[p.Email], target.Sub2.QuotaCheckIntervalSeconds) {
+							continue
+						}
+						// Back off failed queries too; a failure must not retry every tick.
+						siwcNext[p.Email] = now.Add(time.Duration(max(10, target.Sub2.QuotaCheckIntervalSeconds)) * time.Second)
+					} else if !regularDue {
+						continue
+					}
 					emails = append(emails, p.Email)
 				}
 			}

@@ -37,7 +37,7 @@ func (q ProQualitySettings) DecisionSettings() QualitySettings {
 	v.NormalGroupIDs, v.DegradedGroupIDs = q.NormalGroupIDs, q.DegradedGroupIDs
 	v.AutoRestore, v.RecoveryLimit, v.Concurrency = q.AutoRestore, q.RecoveryLimit, q.Concurrency
 	v.Action = q.Action
-	if v.Action == "merge" {
+	if v.Action == "merge" || v.Action == "siwc" {
 		v.Action = "kick" // Only reuse validation/decision rules, never the Team action.
 	}
 	return v
@@ -47,7 +47,7 @@ func (q ProQualitySettings) Validate() error {
 	if q.ErrorFailureLimit < 1 || q.ErrorFailureLimit > 20 {
 		return errors.New("连续检测失败次数应为 1～20 次")
 	}
-	if q.Action != "merge" && q.Action != "groups" {
+	if q.Action != "merge" && q.Action != "groups" && q.Action != "siwc" {
 		return errors.New("降智处理请选择切换分组或直接合并")
 	}
 	if q.PollIntervalSeconds < 10 || q.MaxResultAgeSeconds < 30 {

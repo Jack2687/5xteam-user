@@ -132,6 +132,13 @@ func (s *Server) saveProQualitySettings(w http.ResponseWriter, r *http.Request) 
 			writeAPI(w, 400, nil, "请先在空间合并设置中选择目标母号")
 			return
 		}
+		if q.Action == "siwc" && c.Sub2.AuthMode != "siwc" {
+			cfg, secret, e := s.store.ProSIWCSettings()
+			if e != nil || cfg.Sub2.URL == "" || secret == "" || len(cfg.Sub2.GroupIDs) == 0 || len(cfg.MonitorGroupIDs) == 0 {
+				writeAPI(w, 400, nil, "请先保存 SIWC 转入连接、推送和监控分组")
+				return
+			}
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 		err = s.sub2.QualityCapabilities(ctx, c.Sub2, password)
@@ -266,6 +273,12 @@ func (s *Server) runProQualityBatch(ctx context.Context, force bool) error {
 	jobs := []model.MailAccountProfile{}
 	for _, p := range profiles {
 		state := p.ProQuality
+		if p.ProSIWC != nil {
+			if p.ProSIWC.Status == "active" && !p.DeletionSubmitted() && !p.SpaceMergedOnce && (force || state.NextAt == nil || !time.Now().Before(*state.NextAt)) {
+				s.observeSIWCQuality(ctx, p, q)
+			}
+			continue
+		}
 		if proQualityEligible(p, c) && !p.ProWorkflowRunning && (force || state.Revision != q.Revision || state.Identity != proQualityIdentity(p, c) || state.NextAt == nil || !time.Now().Before(*state.NextAt)) {
 			jobs = append(jobs, p)
 		}

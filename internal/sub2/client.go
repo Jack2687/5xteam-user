@@ -366,12 +366,30 @@ func (c *Client) QueryQuota(ctx context.Context, settings model.Sub2Settings, pa
 		return QuotaUsage{}, errors.New("Sub2 账号 ID 无效")
 	}
 	path := "/api/v1/admin/openai/accounts/" + strconv.FormatInt(accountID, 10) + "/quota"
+	if settings.AuthMode == "siwc" {
+		path = "/api/v1/admin/siwc/accounts/" + strconv.FormatInt(accountID, 10) + "/usage"
+		if settings.QuotaCheckIntervalSeconds >= 10 {
+			path += "?max_age_seconds=" + strconv.Itoa(settings.QuotaCheckIntervalSeconds)
+		}
+	}
 	data, err := c.doJSON(ctx, settings, password, http.MethodGet, path, nil, nil)
 	if err != nil {
 		return QuotaUsage{}, err
 	}
 	if findHTTPStatus(data) == 401 {
 		return QuotaUsage{}, ErrAccountUnauthorized
+	}
+	if settings.AuthMode == "siwc" {
+		var check struct {
+			Error     string    `json:"error"`
+			CheckedAt time.Time `json:"checked_at"`
+		}
+		if json.Unmarshal(data, &check) != nil || check.CheckedAt.IsZero() || time.Since(check.CheckedAt) > 5*time.Minute || check.CheckedAt.After(time.Now().Add(5*time.Second)) {
+			return QuotaUsage{}, errors.New("SIWC 额度数据未更新或已过期")
+		}
+		if check.Error != "" {
+			return QuotaUsage{}, errors.New(check.Error)
+		}
 	}
 	var quota QuotaUsage
 	if err := json.Unmarshal(data, &quota); err != nil {
@@ -633,4 +651,9 @@ func unmarshalList(data json.RawMessage, target any) error {
 		return json.Unmarshal(wrapper.List, target)
 	}
 	return errors.New("响应中没有账号列表")
+}
+
+func (c *Client) SetSchedulable(ctx context.Context, v model.Sub2Settings, password string, id int64, enabled bool) error {
+	_, e := c.doJSON(ctx, v, password, http.MethodPost, fmt.Sprintf("/api/v1/admin/accounts/%d/schedulable", id), map[string]any{"schedulable": enabled}, nil)
+	return e
 }

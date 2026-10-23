@@ -46,7 +46,7 @@ func (s *Server) finishProPostMergeGroups(ctx context.Context, p model.MailAccou
 	}
 	details := map[string]any{"account_id": target.AccountID, "group_ids": target.GroupIDs}
 	s.auditProEvent(p, "post_merge_groups", "running", "sub2", "合并已移出或删除已受理，开始调整 Sub2 分组", details)
-	settings, password, _, err := s.store.ProSettings()
+	settings, password, _, err := s.proAccountPushSettings(p)
 	if err == nil {
 		switch {
 		case !target.Downstream.Matches(model.ProDownstream(settings)):

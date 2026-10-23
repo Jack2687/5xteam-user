@@ -150,6 +150,9 @@ func exitRow(c Config, a Account, now time.Time) ExitRow {
 					at = a.Money.At
 				}
 				threshold := 100.
+				if w.Seconds == 18000 && a.Quota5HThreshold != nil {
+					threshold = *a.Quota5HThreshold
+				}
 				reason := "额度已耗完"
 				if w.Seconds == 604800 && a.QuotaMergeThreshold != nil {
 					threshold = *a.QuotaMergeThreshold
@@ -179,6 +182,9 @@ func exitRow(c Config, a Account, now time.Time) ExitRow {
 				at = a.Money.At
 			}
 			threshold := 100.
+			if w.Seconds == 18000 && a.Quota5HThreshold != nil {
+				threshold = *a.Quota5HThreshold
+			}
 			reason := "额度预计耗完"
 			if w.Seconds == 604800 && a.QuotaMergeThreshold != nil {
 				threshold = *a.QuotaMergeThreshold
@@ -219,6 +225,9 @@ func exitRow(c Config, a Account, now time.Time) ExitRow {
 			continue
 		}
 		threshold := 100.
+		if w.Seconds == 18000 && a.Quota5HThreshold != nil {
+			threshold = *a.Quota5HThreshold
+		}
 		reason := "额度预计耗完"
 		if w.Seconds == 604800 && a.QuotaMergeThreshold != nil {
 			threshold = *a.QuotaMergeThreshold

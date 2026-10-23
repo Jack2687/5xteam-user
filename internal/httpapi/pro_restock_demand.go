@@ -94,11 +94,22 @@ func (s *Server) sampleRestockDemand(ctx context.Context, c restock.Config, p mo
 		g.Reason = fmt.Sprintf("禁补中：兜底账号并发采集不完整（%d/%d），等待重新检测", len(observed), len(selected))
 		return g
 	}
-	sameServer := demandServerKey(p.Sub2.URL) == demandServerKey(target.Sub2.URL)
-	for id, used := range observed {
-		if sameServer {
-			used = max(0, used-primary[id])
+	fallbackPrimary := map[int64]int{}
+	for _, a := range snap.Accounts {
+		url := a.SourceURL
+		if url == "" {
+			url = p.Sub2.URL
 		}
+		id := a.RemoteID
+		if id == 0 {
+			id = a.ID
+		}
+		if demandServerKey(url) == demandServerKey(target.Sub2.URL) {
+			fallbackPrimary[id] = max(fallbackPrimary[id], a.Used)
+		}
+	}
+	for id, used := range observed {
+		used = max(0, used-fallbackPrimary[id])
 		g.FallbackUsed += used
 	}
 	g.TotalUsed += g.FallbackUsed

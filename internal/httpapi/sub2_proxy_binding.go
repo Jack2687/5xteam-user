@@ -45,6 +45,9 @@ func (s *Server) lockSub2Push(ctx context.Context, endpoint string) (func(), err
 // Binding affects new downstream accounts only. OAuth and reauthorization never
 // pass through this helper. Keep the lock through count-read, choice and create.
 func (s *Server) createSub2WithProxy(ctx context.Context, settings model.Sub2Settings, password string, input sub2.CreateAccountInput, scope, legacyKey string, log func(string, map[string]any)) (sub2.Account, error) {
+	if log == nil {
+		log = func(string, map[string]any) {}
+	}
 	endpoint, err := sub2.EndpointKey(settings.URL)
 	if err != nil {
 		return sub2.Account{}, err
@@ -54,7 +57,7 @@ func (s *Server) createSub2WithProxy(ctx context.Context, settings model.Sub2Set
 	if err != nil {
 		return sub2.Account{}, err
 	}
-	if !settings.BindProxy && raw == "" {
+	if !settings.BindProxy && raw == "" && settings.AuthMode != "siwc" {
 		created, err := s.sub2.CreateAccount(ctx, settings, password, input, legacyKey)
 		if err != nil && strings.Contains(strings.ToLower(err.Error()), "idempotency") {
 			return s.sub2.CreateAccount(ctx, settings, password, input, legacyKey+"-"+randomRegistrationID())
@@ -87,15 +90,19 @@ func (s *Server) createSub2WithProxy(ctx context.Context, settings model.Sub2Set
 		if err := sub2.ValidateProxySettings(settings); err != nil {
 			return sub2.Account{}, err
 		}
-		proxies, err := s.sub2.Proxies(ctx, settings, password)
-		if err != nil {
-			return sub2.Account{}, fmt.Errorf("读取 Sub2 代理绑定数失败，已停止推送: %w", err)
+		var proxy sub2.Proxy
+		var ties int
+		if settings.BindProxy {
+			proxies, err := s.sub2.Proxies(ctx, settings, password)
+			if err != nil {
+				return sub2.Account{}, fmt.Errorf("读取 Sub2 代理绑定数失败，已停止推送: %w", err)
+			}
+			proxy, ties, err = sub2.SelectProxy(proxies, settings.ProxyIDs, time.Now())
+			if err != nil {
+				return sub2.Account{}, err
+			}
+			input.ProxyID = &proxy.ID
 		}
-		proxy, ties, err := sub2.SelectProxy(proxies, settings.ProxyIDs, time.Now())
-		if err != nil {
-			return sub2.Account{}, err
-		}
-		input.ProxyID = &proxy.ID
 		attempt = sub2PushAttempt{Input: input, Key: "space-proxy-" + randomRegistrationID(), Proxy: proxy, Ties: ties, StartedAt: time.Now()}
 		encoded, err := json.Marshal(attempt)
 		if err != nil {
@@ -104,7 +111,9 @@ func (s *Server) createSub2WithProxy(ctx context.Context, settings model.Sub2Set
 		if err := s.store.SaveSub2PushAttempt(id, string(encoded)); err != nil {
 			return sub2.Account{}, err
 		}
-		log("已选择绑定数最少的 Sub2 代理（并列时随机）", map[string]any{"proxy_id": proxy.ID, "proxy_name": proxy.Name, "account_count": *proxy.AccountCount, "tied_candidates": ties})
+		if settings.BindProxy {
+			log("已选择绑定数最少的 Sub2 代理（并列时随机）", map[string]any{"proxy_id": proxy.ID, "proxy_name": proxy.Name, "account_count": *proxy.AccountCount, "tied_candidates": ties})
+		}
 	}
 	created, err := s.sub2.CreateAccount(ctx, settings, password, attempt.Input, attempt.Key)
 	if err != nil {

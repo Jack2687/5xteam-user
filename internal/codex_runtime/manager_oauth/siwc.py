@@ -20,6 +20,17 @@ REDIRECT = "http://127.0.0.1:1456/auth/callback"
 
 
 class SIWCProtocolLogin(ProjectProtocolLogin):
+    @classmethod
+    def continue_authenticated(cls, flow):
+        # A protocol adapter over the existing live client, never a new login.
+        adapter = object.__new__(cls)
+        adapter.__dict__ = flow.__dict__
+        adapter.auth_url = adapter.prepare_oauth_authorize_url()
+        callback, _ = adapter.capture_oauth_callback(adapter.auth_url)
+        if not callback:
+            raise RuntimeError("原登录会话未返回 SIWC 授权码")
+        return adapter.exchange_oauth_callback(callback)
+
     def request(self, url, **kwargs):
         if urlsplit(url).path in {"/api/accounts/session/select", "/api/accounts/client_auth_session_dump",
                                   "/api/accounts/dynamic-agent-clients/consent/grant"} and self.sentinel_token:

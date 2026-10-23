@@ -768,6 +768,25 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 			return nil, errors.New("开通尚未成功，拒绝推进 OAuth 阶段")
 		}
 		tokens, _ := args["tokens"].(map[string]any)
+		if tokens["auth_mode"] == "siwc" {
+			var siwc model.SIWCCredentials
+			raw, e := json.Marshal(tokens)
+			if e == nil {
+				e = json.Unmarshal(raw, &siwc)
+			}
+			if e == nil {
+				_, paidSnapshot, readErr := s.store.GPTPayOrder(p.ProAuto.OrderID)
+				info, tokenErr := workflow.DecodeUserInfo(siwc.WebAccessToken)
+				if readErr != nil || tokenErr != nil || !strings.EqualFold(info.Email, email) || info.AccountID != paidSnapshot.Input.Session.Account.ID || siwc.WebAccountID != paidSnapshot.Input.Session.Account.ID {
+					return nil, errors.New("SIWC 网页凭证与本次开通空间不匹配，停止推送")
+				}
+				e = s.store.SaveMailAccountSIWC(email, siwc)
+			}
+			if e != nil {
+				return nil, e
+			}
+			return true, s.autoProUpdate(email, "oauth", "completed", "SIWC RT/AT 已保存，沿用首次登录会话完成授权")
+		}
 		at, _ := tokens["access_token"].(string)
 		rt, _ := tokens["refresh_token"].(string)
 		idToken, _ := tokens["id_token"].(string)
@@ -818,6 +837,17 @@ func (s *Server) runProContinuousSession(ctx context.Context, email string, rpc 
 	}
 	selection := selectOAuthLogin(s.store.AutoRotationSettings().OAuthLoginMode, c)
 	payload := map[string]any{"email": email, "proxy": proxy, "pickup_url": c.PickupURL, "stdio_rpc": true}
+	profile, _, e := s.store.MailAccountCredential(email)
+	if e != nil {
+		return e
+	}
+	push, _, _, e := s.proAccountPushSettings(profile)
+	if e != nil {
+		return e
+	}
+	if push.Sub2.AuthMode == "siwc" {
+		payload["credential_mode"], payload["siwc_host_id"] = "siwc", s.store.MailSIWCHostID(email, c)
+	}
 	selection.apply(payload)
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.ProAuto.ProxyName = lease.label
@@ -970,7 +1000,11 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 				return e
 			}
 		}
-		if err != nil || !validProQuotaWindow(p.Quota7D) || p.Quota7D.UsedPercent < p.ProAuto.QuotaUsedThreshold {
+		quotaSettings, _, _, quotaSettingsErr := s.proAccountPushSettings(p)
+		if err == nil && quotaSettingsErr != nil {
+			err = quotaSettingsErr
+		}
+		if err != nil || !s.proQuotaExitReached(p, quotaSettings, p.ProAuto.QuotaUsedThreshold) {
 			message := ""
 			if err != nil {
 				message = "额度检测暂未成功，等待下次重试：" + err.Error()
@@ -978,7 +1012,13 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) error {
 				message = "额度检测未返回有效的 7 天额度，等待下次重试"
 			}
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
-				next := time.Now().UTC().Add(time.Duration(max(10, p.ProAuto.QuotaIntervalSeconds)) * time.Second)
+				interval := p.ProAuto.QuotaIntervalSeconds
+				if quotaSettings.Sub2.AuthMode == "siwc" {
+					if cfg, e := s.siwcQuotaPolicy(); e == nil {
+						interval = cfg.PollSeconds
+					}
+				}
+				next := time.Now().UTC().Add(time.Duration(max(10, interval)) * time.Second)
 				if deadline := p.ProPushDeadline(); deadline != nil {
 					due := *deadline
 					if due.After(time.Now()) && due.Before(next) {
@@ -1060,6 +1100,7 @@ func (s *Server) startProAutomationMonitor() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.proAutoCancel = cancel
 	s.startProRestockMonitor(ctx)
+	s.startProSIWCWorker(ctx)
 	s.proAutoWG.Add(1)
 	go func() {
 		defer s.proAutoWG.Done()

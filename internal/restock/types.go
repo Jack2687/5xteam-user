@@ -148,6 +148,11 @@ func (w Window) Fresh(now time.Time, maxAge time.Duration) bool {
 }
 
 type Account struct {
+	TargetID            string        `json:"target_id,omitempty"`
+	RemoteID            int64         `json:"remote_id,omitempty"`
+	SourceURL           string        `json:"source_url,omitempty"`
+	SIWC                bool          `json:"siwc,omitempty"`
+	Quota5HThreshold    *float64      `json:"quota_5h_threshold,omitempty"`
 	TakeoverPending     bool          `json:"takeover_pending,omitempty"`
 	SupplyExcluded      bool          `json:"supply_excluded,omitempty"`
 	QuotaMergeThreshold *float64      `json:"quota_merge_threshold,omitempty"`

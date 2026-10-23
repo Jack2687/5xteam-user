@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Brain, LoaderCircle, Play, RefreshCw, Save } from 'lucide-vue-next'
 import { api } from '../api'
 import MessageBar from './MessageBar.vue'
+import ProSIWCSettings from './ProSIWCSettings.vue'
 const emit = defineEmits(['updated'])
 const form = reactive({ normal_group_ids: [], degraded_group_ids: [] })
 const data = ref(null), groups = ref([]), busy = ref(''), loaded = ref(false)
@@ -66,23 +67,24 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
         <label class="field"><span>连续检测失败次数</span><input v-model.number="form.error_failure_limit" aria-label="连续检测失败次数" type="number" min="1" max="20" step="1" required /><small>默认 2 次，达到次数后按降智处理；有效检测恢复后清零。</small></label>
         <div class="field"><span>检测条件</span><label class="quality-check"><input v-model="form.question_enabled" type="checkbox" />答题已确认异常</label><label class="quality-check"><input v-model="form.model_audit_enabled" type="checkbox" />模型已确认不一致</label></div>
         <label class="field"><span>触发条件</span><select v-model="form.condition_mode"><option value="any">任一勾选条件满足</option><option value="all">所有勾选条件同时满足</option></select></label>
-        <label class="field"><span>降智后处理</span><select v-model="form.action" aria-label="降智后处理"><option value="groups">切换分组</option><option value="merge">按配置执行合并/删除</option></select></label>
+        <label class="field"><span>降智后处理</span><select v-model="form.action" aria-label="降智后处理"><option value="groups">切换分组</option><option value="merge">按配置执行合并/删除</option><option value="siwc">推送 SIWC</option></select></label>
         <label class="field"><span>结果处理并发</span><input v-model.number="form.concurrency" type="number" min="1" max="8" required /><small>空间合并仍按合并并发执行，同母号串行。</small></label>
       </div>
-      <div v-if="form.action === 'groups'" class="quality-groups">
+      <div v-if="form.action === 'groups' || form.action === 'siwc'" class="quality-groups">
         <button class="btn ghost compact" type="button" :disabled="!!busy || !supported" @click="loadGroups"><LoaderCircle v-if="busy === 'groups'" class="spin" :size="14" /><RefreshCw v-else :size="14" />{{ busy === 'groups' ? '读取中…' : '读取 Pro Sub2 分组' }}</button>
         <div class="quality-fields">
-          <div v-for="field in [{ key: 'normal_group_ids', label: '移除的正常分组' }, { key: 'degraded_group_ids', label: '加入的降智分组' }]" :key="field.key" class="field">
+          <div v-for="field in [{ key: 'normal_group_ids', label: '移除的正常分组' }, { key: 'degraded_group_ids', label: '加入的降智分组' }]" :key="field.key" v-show="form.action === 'groups' || field.key === 'normal_group_ids'" class="field">
             <span>{{ field.label }}</span>
             <div class="quality-picker" :aria-label="field.label"><label v-for="group in groups" :key="group.id" class="quality-check"><input v-model="form[field.key]" type="checkbox" :value="Number(group.id)" />{{ group.name }} <small>#{{ group.id }}</small></label><small v-if="!groups.length">点击上方按钮读取分组</small></div>
             <small>已选：{{ form[field.key]?.join(', ') || '无' }}</small>
           </div>
         </div>
-        <label class="quality-check"><input v-model="form.auto_restore" type="checkbox" />恢复正常后自动恢复原分组</label>
+        <label v-if="form.action === 'groups'" class="quality-check"><input v-model="form.auto_restore" type="checkbox" />恢复正常后自动恢复原分组</label>
         <label v-if="form.auto_restore" class="field recovery-count"><span>连续正常次数</span><input v-model.number="form.recovery_limit" type="number" min="1" max="20" required /></label>
       </div>
-      <p class="table-note">{{ form.action === 'merge' ? '确认降智或连续检测失败达到次数后，跳过额度等待，按全自动配置执行空间合并或删除账户。' : '降智或失败达限后切组，保留其他分组；切组失败下次查询重试。' }} 接口查询失败按查询轮次累计，同一条 Sub2 检测失败结果不重复计数；未确认、过期结果不触发。</p>
+      <p class="table-note">{{ form.action === 'siwc' ? '降智后转入 SIWC。已直接推送 SIWC 的账号只更新检测结果，不重复转入；未选择移除分组时移除原推送分组。' : form.action === 'merge' ? '确认降智或连续检测失败达到次数后，跳过额度等待，按全自动配置执行空间合并或删除账户。' : '降智或失败达限后切组，保留其他分组；切组失败下次查询重试。' }} 接口查询失败按查询轮次累计，同一条 Sub2 检测失败结果不重复计数；未确认、过期结果不触发。</p>
       <div class="panel-actions"><button class="btn primary" type="submit" :disabled="!!busy"><LoaderCircle v-if="busy === 'save'" class="spin" :size="15" /><Save v-else :size="15" />{{ busy === 'save' ? '保存中…' : '保存设置' }}</button><button class="btn ghost" type="button" :disabled="!!busy || running || !data?.settings?.enabled || !!data?.inactive_reason" @click="run"><LoaderCircle v-if="busy === 'run' || running" class="spin" :size="15" /><Play v-else :size="15" />立即查询并处理</button></div>
+    <ProSIWCSettings v-if="form.action === 'siwc'"/>
     </form>
     <p v-else class="table-note"><LoaderCircle class="spin" :size="15" />正在加载配置…</p>
   </section>

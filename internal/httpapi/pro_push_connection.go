@@ -26,6 +26,13 @@ func (s *Server) proConnectionSettings(w http.ResponseWriter, r *http.Request) (
 			return v, "", "", false
 		}
 		if input.Sub2 != nil {
+			if input.Sub2.AuthMode != v.Sub2.AuthMode {
+				_, password, err = s.store.ProSub2Variant(input.Sub2.AuthMode)
+				if err != nil {
+					writeAPI(w, 400, nil, err.Error())
+					return v, "", "", false
+				}
+			}
 			v.Sub2 = *input.Sub2
 		}
 		if input.CPA != nil {

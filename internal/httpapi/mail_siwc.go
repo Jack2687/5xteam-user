@@ -84,6 +84,7 @@ func buildSIWCCredentialExport(c model.SIWCCredentials) map[string]any {
 		"client_id": c.ClientID, "auth_mode": "siwc", "openai_auth_mode": "siwc", "token_type": "Bearer",
 		"ext_agent_host_id": c.ExtAgentHostID, "subject": c.Subject, "email": c.Email,
 		"expires_at": c.ExpiresAt, "granted_scopes": c.GrantedScopes, "plan_use_enabled": c.PlanUseEnabled,
+		"siwc_web_access_token": c.WebAccessToken, "siwc_web_account_id": c.WebAccountID, "siwc_app_id": c.ClientID,
 	}
 	return map[string]any{"exported_at": time.Now().UTC().Format(time.RFC3339), "proxies": []any{}, "accounts": []any{
 		map[string]any{"name": c.Email, "platform": "openai", "type": "oauth", "concurrency": 10, "priority": 1,

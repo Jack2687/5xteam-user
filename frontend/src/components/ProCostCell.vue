@@ -9,6 +9,7 @@ defineProps({ account: { type: Object, required: true } })
     <strong>{{ costText(account) }}</strong>
     <template v-if="costSupported(account)">
       <small class="user-cost">{{ userCostText(account) }}</small>
+      <small v-if="account.pro_siwc">原站 ${{Number(account.pro_siwc.carried_cost||0).toFixed(2)}} + SIWC ${{Number(account.pro_siwc.new_cost||0).toFixed(2)}}</small>
       <small v-if="account.cost_checked_at" class="checked-at">{{ formatTime(account.cost_checked_at) }}</small>
     </template>
     <small v-else class="checked-at">{{ costProvider(account).toUpperCase() }} 不统计</small>

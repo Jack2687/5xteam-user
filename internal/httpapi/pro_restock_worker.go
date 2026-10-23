@@ -53,7 +53,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if profile.ProAuto.ID != "" {
 			t.CardID = profile.ProAuto.CardID
 		}
-		t.AccountID = profile.Sub2AccountID
+		t.AccountID = s.siwcRestockProfileID(profile, p)
 		if waiting, err := s.trackRestockCardImport(t, profile); err != nil {
 			return nil, 0, err
 		} else if waiting {
@@ -459,7 +459,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if e != nil {
 		return e
 	}
-	if c.Enabled && c.Mode == "auto" && limits.Failures < c.FailureLimit && ctx.Err() == nil {
+	if c.Enabled && c.Mode == "auto" && limits.Failures < c.FailureLimit && ctx.Err() == nil && s.proSIWCBlock() == "" {
 		s.continueProRestockCardImports(ctx, c, p)
 	}
 	s.observeTakeoverRecovery(c, snap, tasks)
@@ -468,6 +468,9 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	takeoverBlock := ts.Block(tc, now)
 	if te != nil || tse != nil {
 		takeoverBlock = "接管状态读取失败，暂停新增"
+	}
+	if reason := s.proSIWCBlock(); reason != "" {
+		takeoverBlock = reason
 	}
 	if snap.TakeoverToken != ts.Token(tc) {
 		takeoverBlock = "接管阶段已变化，等待新快照"
@@ -511,7 +514,11 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 		if e == nil {
 			var reserved []restock.Task
 			s.proCardAdmissionMu.Lock()
-			reserved, e = s.store.ReserveProRestock(d, target, d.Inflight)
+			if reason := s.proSIWCBlock(); reason != "" {
+				e = errors.New(reason)
+			} else {
+				reserved, e = s.store.ReserveProRestock(d, target, d.Inflight)
+			}
 			s.proCardAdmissionMu.Unlock()
 			d.Started = len(reserved)
 			tasks = append(tasks, reserved...)
@@ -626,7 +633,14 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		t.Status = "submitting"
 		t.SubmittedAt = &now
 		t.UpdatedAt = now
-		if e = s.store.ClaimProRestockDispatch(t); e != nil {
+		s.proCardAdmissionMu.Lock()
+		if reason := s.proSIWCBlock(); reason != "" {
+			s.proCardAdmissionMu.Unlock()
+			return
+		}
+		e = s.store.ClaimProRestockDispatch(t)
+		s.proCardAdmissionMu.Unlock()
+		if e != nil {
 			return
 		}
 		workCtx, finish, err := s.beginRestockStart(ctx, t.ID)

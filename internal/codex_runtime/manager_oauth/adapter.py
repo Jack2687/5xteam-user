@@ -674,11 +674,21 @@ def _run_once(payload, rpc=None):
     try:
         if credential_mode == "siwc":
             from .siwc import SIWCProtocolLogin
-            flow = SIWCProtocolLogin("local", local)
+            flow = ProjectProtocolLogin("local", {**local, "credential_mode": "chatgpt_at", "allow_sms": False, "skip_phone_verification": True})
         else:
             flow = ProjectProtocolLogin("local", local)
         bridge.emit("login_method", "login_start", "开始本次 ChatGPT 登录" if credential_mode == "chatgpt_at" else "开始本次 OAuth 登录")
         session = flow.login()
+        if credential_mode == "siwc":
+            web = session
+            session = SIWCProtocolLogin.continue_authenticated(flow)
+            web_at = web.get("access_token") or web.get("accessToken") or ""
+            if not web_at:
+                raise RuntimeError("SIWC 授权成功，但原登录会话未取得额度查询凭证")
+            bridge.protect_code(web_at)
+            web_auth = upstream.jwt_payload(web_at).get("https://api.openai.com/auth") or {}
+            session["web_access_token"] = web_at
+            session["web_account_id"] = web_auth.get("chatgpt_account_id") or (web.get("account") or {}).get("id", "")
         if credential_mode == "chatgpt_at" and getattr(flow, "rate_limit_error", None) is not None:
             raise flow.rate_limit_error
         token = upstream.jwt_payload(session.get("id_token") or session.get("access_token") or "")

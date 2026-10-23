@@ -126,6 +126,28 @@ func (s *Server) applyProQuality(ctx context.Context, initial model.MailAccountP
 		return
 	}
 	state, bad, recovered := proQualityObservation(p, q, c, snapshot, v, readErr)
+	if q.Action == "siwc" && bad && proQualityCanAct(p) {
+		_, err = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) { p.ProQuality = state })
+		if err != nil {
+			return
+		}
+		if c.Sub2.AuthMode == "siwc" || p.ProSIWC != nil {
+			_, _ = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {
+				p.ProQuality.Action = "siwc"
+				p.ProQuality.ActionStatus = "completed"
+				p.ProQuality.ActionError = ""
+			})
+			return
+		}
+		if err = s.queueProSIWC(p, c, password); err != nil {
+			_, _ = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) {
+				p.ProQuality.Action = "siwc"
+				p.ProQuality.ActionStatus = "failed"
+				p.ProQuality.ActionError = err.Error()
+			})
+		}
+		return
+	}
 	if proQualityCanAct(p) {
 		if q.Action == "merge" && (bad || state.Action == "merge" && state.ActionStarted) && (state.Action != "merge" || state.ActionStatus != "completed") {
 			state.Action = "merge"
