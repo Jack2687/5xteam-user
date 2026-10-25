@@ -64,6 +64,7 @@ func (s *Server) ejhRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/ejh/sync", s.syncEJH)
 	m.HandleFunc("POST /api/ejh/open", s.openEJH)
 	m.HandleFunc("POST /api/ejh/cards/{id}/action", s.ejhCardAction)
+	m.HandleFunc("POST /api/ejh/cards/{id}/private", s.ejhCardPrivate)
 	m.HandleFunc("POST /api/ejh/operations/{id}/resolve", s.resolveEJHOperation)
 	m.HandleFunc("PUT /api/ejh/trades/{id}/match", s.matchEJHTrade)
 	m.HandleFunc("PUT /api/ejh/cases/{id}/charge", s.linkEJHCharge)
@@ -403,6 +404,21 @@ func (s *Server) openEJH(w http.ResponseWriter, r *http.Request) {
 	op.Result = nil
 	writeAPI(w, 200, op, "")
 }
+func (s *Server) ejhCardPrivate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	card, secret, err := s.store.GPTPayCard(r.PathValue("id"))
+	if err != nil {
+		writeAPI(w, 400, nil, "请先刷新该卡的完整信息")
+		return
+	}
+	if card.Source != "ejh" && card.CardType != "ejh" {
+		writeAPI(w, 404, nil, "EJH 卡片不存在")
+		return
+	}
+	// Copy saved credentials even for closed or disabled cards, without issuer requests.
+	writeAPI(w, 200, secret, "")
+}
+
 func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Action  string `json:"action"`
