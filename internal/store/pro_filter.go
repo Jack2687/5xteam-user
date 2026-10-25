@@ -16,9 +16,10 @@ const proManagedTimeSQL = `COALESCE(
 // The payment lookup uses the existing email index and never reads credentials.
 const proAccountsCTE = `WITH accounts AS (
 	SELECT email, profile, encrypted_credentials, updated_at,
-  CASE WHEN json_extract(profile,'$.pro_deactivation.accepted_at') IS NOT NULL OR json_extract(profile,'$.pro_deactivation.confirmed_at') IS NOT NULL THEN 'deleted'
+  CASE WHEN json_extract(profile,'$.pro_merchant.completed_at') IS NOT NULL THEN 'merchant'
+  WHEN json_extract(profile,'$.pro_deactivation.accepted_at') IS NOT NULL OR json_extract(profile,'$.pro_deactivation.confirmed_at') IS NOT NULL THEN 'deleted'
   WHEN json_extract(profile,'$.space_merged_once')=1 THEN 'merged'
-  WHEN COALESCE(json_extract(profile,'$.pro_deactivation.status'),'')<>''
+  WHEN COALESCE(json_extract(profile,'$.pro_merchant.request_id'),'')<>'' OR COALESCE(json_extract(profile,'$.pro_deactivation.status'),'')<>''
    OR COALESCE(json_extract(profile,'$.pro_auto.id'),'')<>''
 			OR COALESCE(json_extract(profile,'$.pro_auto.status'),'') NOT IN ('','not_started','pending')
 			OR COALESCE(json_extract(profile,'$.pro_auto.stage'),'')<>''
@@ -54,7 +55,7 @@ const proAccountsCTE = `WITH accounts AS (
 		COALESCE(
 			julianday(NULLIF(json_extract(profile,'$.pro_deactivation.accepted_at'),'0001-01-01T00:00:00Z')),
 			julianday(NULLIF(json_extract(profile,'$.pro_deactivation.confirmed_at'),'0001-01-01T00:00:00Z'))
-		) AS deleted_at
+		) AS deleted_at, julianday(json_extract(profile,'$.pro_merchant.completed_at')) AS merchant_at
 	FROM mail_accounts WHERE LOWER(COALESCE(json_extract(profile,'$.management_scope'),''))='pro'
 )`
 
@@ -66,6 +67,8 @@ func proAccountsOrderSQL(state string) string {
 		return "COALESCE(progress_at,activated_at) DESC, managed_at DESC, email ASC"
 	case "merged":
 		return "merged_at DESC, managed_at DESC, email ASC"
+	case "merchant":
+		return "merchant_at DESC, managed_at DESC, email ASC"
 	case "deleted":
 		return "deleted_at DESC, managed_at DESC, email ASC"
 	default:
@@ -80,6 +83,8 @@ func proAccountsEventTimeSQL(state string) string {
 		return "COALESCE(progress_at,activated_at)"
 	case "merged":
 		return "merged_at"
+	case "merchant":
+		return "merchant_at"
 	case "deleted":
 		return "deleted_at"
 	default:
@@ -89,7 +94,7 @@ func proAccountsEventTimeSQL(state string) string {
 
 func normalizeProMergeFilter(value string) string {
 	switch value = strings.ToLower(strings.TrimSpace(value)); value {
-	case "unmerged", "in_progress", "merged", "deleted":
+	case "unmerged", "in_progress", "merged", "deleted", "merchant":
 		return value
 	default:
 		return ""

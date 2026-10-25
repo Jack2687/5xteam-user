@@ -17,7 +17,7 @@ func (p MailAccountProfile) ProPushEndTime() *time.Time {
 			end = &value
 		}
 	}
-	for _, stage := range []string{"merge", "deactivate"} {
+	for _, stage := range []string{"merge", "deactivate", "merchant"} {
 		add(p.ProManualStages[stage].StartedAt)
 		for _, state := range []string{"running", "completed", "failed"} {
 			add(p.ProAuto.StageTimes[stage+":"+state])
@@ -31,6 +31,9 @@ func (p MailAccountProfile) ProPushEndTime() *time.Time {
 		if p.ProDeactivation.ConfirmedAt != nil {
 			add(*p.ProDeactivation.ConfirmedAt)
 		}
+	}
+	if p.ProMerchant != nil {
+		add(p.ProMerchant.StartedAt)
 	}
 	if p.SpaceMergedAt != nil {
 		add(*p.SpaceMergedAt)
@@ -46,7 +49,7 @@ func (p *MailAccountProfile) FreezeProPushDuration(now time.Time) {
 		p.ProPushEndedAt = end
 		return
 	}
-	if p.ProWorkflowRunning || p.SpaceMergedOnce || p.DeletionSubmitted() ||
+	if p.ProWorkflowRunning || p.SpaceMergedOnce || p.DispositionStarted() ||
 		(p.ProAuto.Status == "running" && (p.ProAuto.Stage == "merge" || p.ProAuto.Stage == "deactivate")) {
 		p.ProPushEndedAt = &now
 	}

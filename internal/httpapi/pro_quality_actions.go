@@ -329,6 +329,8 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 		}
 		if runErr != nil {
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "failed", runErr.Error()
+		} else if p.MerchantStarted() && !p.MerchantCompleted() {
+			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "pending", "商户已提交，等待最终处理结果"
 		} else if p.DeletionSubmitted() && !p.DeletionAccepted() {
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "pending", "删除已提交，等待上游明确确认"
 		} else {
@@ -353,6 +355,18 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 			}
 			if runErr != nil {
 				message = "降智触发的删除流程未完成：" + redactSensitiveText(runErr.Error())
+			}
+		}
+		if p.MerchantStarted() {
+			status = "pending"
+			message = "降智触发 API 商户，等待最终结果"
+			if p.MerchantCompleted() {
+				status = "completed"
+				message = "降智触发的 API 商户已处理成功"
+			}
+			if p.ProMerchant.Status == "failed" {
+				status = "failed"
+				message = p.ProMerchant.Message
 			}
 		}
 		s.auditProEvent(p, "quality_action", status, "sub2", message, nil)

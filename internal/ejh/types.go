@@ -1,6 +1,7 @@
 package ejh
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"fmt"
 	"math"
 	"math/big"
@@ -25,6 +26,7 @@ type Settings struct {
 	Templates           []Template `json:"templates"`
 }
 type Template struct {
+	Platform  string `json:"platform"`
 	PlanCode  string `json:"plan_code,omitempty"`
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -173,6 +175,11 @@ func Normalize(v Settings) (Settings, error) {
 	seen := map[string]bool{}
 	for i := range v.Templates {
 		t := &v.Templates[i]
+		platform, err := cardplatform.Normalize(t.Platform)
+		if err != nil {
+			return v, err
+		}
+		t.Platform = platform
 		if t.PlanCode != "" && t.PlanCode != "pro5" && t.PlanCode != "pro20" {
 			return v, fmt.Errorf("模板适用套餐须为 5x 或 20x")
 		}

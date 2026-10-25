@@ -139,6 +139,7 @@ func (s *Store) decorateProCardLocked(card *gptpay.Card, secret gptpay.CardSecre
 	card.IssuerFrozen = false
 	card.IssuerDisabled = false
 	if issuer != nil {
+		card.Platform, card.TemplateID, card.TemplateName = issuer.Platform, issuer.TemplateID, issuer.TemplateName
 		card.IssuerDisabled = issuer.IssuerDisabled
 		card.IssuerCancelStatus = issuer.IssuerCancelStatus
 		card.IssuerFrozen = issuer.IssuerFrozen
@@ -310,7 +311,7 @@ func (s *Store) ReleaseProCard(email string) error {
 const proOpenedCondition = `(EXISTS(SELECT 1 FROM pro_card_usage u WHERE u.email=m.email AND u.status='success') OR coalesce(json_extract(m.profile,'$.pro_auto.steps.recharge'),'')='completed' OR coalesce(json_extract(m.profile,'$.pro_manual_stages.recharge.status'),'')='completed' OR lower(coalesce(json_extract(m.profile,'$.subscription_plan'),'')) LIKE '%pro%' OR lower(coalesce(json_extract(m.profile,'$.current_plan_type'),'')) LIKE '%pro%')`
 
 func proPopulation(q proCapacityQuery) (opened, pending int, err error) {
-	err = q.QueryRow(`SELECT count(*) FROM mail_accounts m WHERE json_extract(m.profile,'$.management_scope')='pro' AND coalesce(json_extract(m.profile,'$.space_merged_once'),0)=0 AND json_extract(m.profile,'$.pro_deactivation.accepted_at') IS NULL AND ` + proOpenedCondition).Scan(&opened)
+	err = q.QueryRow(`SELECT count(*) FROM mail_accounts m WHERE json_extract(m.profile,'$.management_scope')='pro' AND coalesce(json_extract(m.profile,'$.space_merged_once'),0)=0 AND json_extract(m.profile,'$.pro_deactivation.accepted_at') IS NULL AND json_extract(m.profile,'$.pro_merchant.completed_at') IS NULL AND ` + proOpenedCondition).Scan(&opened)
 	if err != nil {
 		return
 	}

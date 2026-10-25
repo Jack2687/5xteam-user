@@ -1,6 +1,7 @@
 package store
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"chatgpt-space-merge/internal/ejh"
 	"chatgpt-space-merge/internal/gptpay"
 	"database/sql"
@@ -43,8 +44,11 @@ func (s *Store) issuerSnapshotForPhysicalCard(q proCapacityQuery, key string) (*
 		return nil, e
 	}
 	var record struct {
-		Error  string `json:"error"`
-		Remote struct {
+		Platform     string `json:"platform"`
+		TemplateName string `json:"template_name,omitempty"`
+		TemplateID   string `json:"template_id"`
+		Error        string `json:"error"`
+		Remote       struct {
 			OrderNo string `json:"orderNo"`
 			Status  string `json:"status"`
 			Locked  string `json:"isLocked"`
@@ -58,7 +62,7 @@ func (s *Store) issuerSnapshotForPhysicalCard(q proCapacityQuery, key string) (*
 	if e = q.QueryRow(`SELECT EXISTS(SELECT 1 FROM ejh_card_links l JOIN ejh_operation_claims c ON c.scope='card:'||l.card_id WHERE l.card_key=?)`, key).Scan(&pending); e != nil {
 		return nil, e
 	}
-	card := &gptpay.Card{Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "" || pending, IssuerEnd: record.Remote.End}
+	card := &gptpay.Card{Platform: record.Platform, TemplateID: record.TemplateID, TemplateName: record.TemplateName, Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "" || pending, IssuerEnd: record.Remote.End}
 	card.IssuerFrozen = record.Remote.Locked == "1" || record.Remote.Status == "5"
 	if pending {
 		var operationSealed string
@@ -84,6 +88,9 @@ func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 	if e != nil {
 		return e
 	}
+	if c != nil && !cardplatform.IsOAI(c.Platform) {
+		return fmt.Errorf("Pro 只能使用 OAI 银行卡")
+	}
 	if c != nil && c.IssuerDisabled {
 		name := "EJH"
 		if c.Source == "nexovcc" {
@@ -98,7 +105,7 @@ func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 }
 
 func issuerCardUsable(c gptpay.Card) bool {
-	if c.IssuerDisabled {
+	if c.IssuerDisabled || !cardplatform.IsOAI(c.Platform) {
 		return false
 	}
 	if c.Source == "nexovcc" {

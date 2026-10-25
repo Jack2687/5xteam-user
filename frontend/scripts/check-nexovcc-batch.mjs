@@ -1,3 +1,4 @@
+import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -11,7 +12,7 @@ const code=readFileSync(new URL('../src/components/NexovccManagementView.vue',im
 for(const action of ['withdraw_all','cancel','withdraw_cancel']){
  const requests=[];let polls=0
  const rows=[]
- const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,
+ const context=vm.createContext({cardOrigin,...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,
   defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},clearTimeout(){},setTimeout:fn=>queueMicrotask(fn),formatTime:v=>v,
   async api(url,options={}){
    if(url==='/api/nexovcc/dashboard')return {cards:rows,cases:[],operations:[],products:[],balance:{},groups:[],finance:{}}
@@ -60,7 +61,7 @@ console.log('Passed: single/batch actions, server-side live balance, immediate p
 
 {
  const calls=[],mounts=[],timers=[]
- const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,localStorage:{getItem:()=>null},
+ const context=vm.createContext({cardOrigin,...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,localStorage:{getItem:()=>null},
   defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted:fn=>mounts.push(fn),onBeforeUnmount(){},clearTimeout(){},setTimeout:(fn,ms)=>{if(ms===1000)queueMicrotask(fn);else timers.push(fn)},formatTime:v=>v,
   async api(url,options={}){
    calls.push({url,options})
@@ -87,7 +88,7 @@ console.log('Passed: single/batch actions, server-side live balance, immediate p
 
 for (const pageAutoRefresh of [true, false]) {
  const calls=[],mounts=[]
- const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,localStorage:{getItem:()=>null},
+ const context=vm.createContext({cardOrigin,...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,localStorage:{getItem:()=>null},
   defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted:fn=>mounts.push(fn),onBeforeUnmount(){},clearTimeout(){},setTimeout(){},formatTime:v=>v,
   async api(url,options={}){
    calls.push({url,options})
@@ -120,7 +121,7 @@ for (const pageAutoRefresh of [true, false]) {
 console.log('Passed: page entry and progress polling only read cache, manual full refresh, exact-card transaction refresh, invalid card does not broaden scope')
 
 {
- const context=vm.createContext({...helpers,...finance,ref,reactive,computed,watch,
+ const context=vm.createContext({cardOrigin,...helpers,...finance,ref,reactive,computed,watch,
   defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},
  })
  vm.runInContext(code+';globalThis.view={data,tab,page,search,filtered,withdrawAttention,withdrawAttentionOnly,showWithdrawAttention};',context)

@@ -41,7 +41,7 @@ async function loadGroups() {
   finally { busy.value = '' }
 }
 async function run() {
-  if (!window.confirm('立即读取 Sub2 最新降智结果，并按已保存的配置切换分组或按配置执行合并/删除，继续？')) return
+  if (!window.confirm('立即读取 Sub2 最新降智结果，并按已保存的配置切换分组或按配置执行合并/删除/API 商户，继续？')) return
   busy.value = 'run'
   try { await api('/api/pro-quality/run', { method: 'POST' }); await load(); show('已开始查询并处理，可在账号列表查看结果', 'success'); emit('updated') }
   catch (e) { show(e.message) }
@@ -67,7 +67,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
         <label class="field"><span>连续检测失败次数</span><input v-model.number="form.error_failure_limit" aria-label="连续检测失败次数" type="number" min="1" max="20" step="1" required /><small>默认 2 次，达到次数后按降智处理；有效检测恢复后清零。</small></label>
         <div class="field"><span>检测条件</span><label class="quality-check"><input v-model="form.question_enabled" type="checkbox" />答题已确认异常</label><label class="quality-check"><input v-model="form.model_audit_enabled" type="checkbox" />模型已确认不一致</label></div>
         <label class="field"><span>触发条件</span><select v-model="form.condition_mode"><option value="any">任一勾选条件满足</option><option value="all">所有勾选条件同时满足</option></select></label>
-        <label class="field"><span>降智后处理</span><select v-model="form.action" aria-label="降智后处理"><option value="groups">切换分组</option><option value="merge">按配置执行合并/删除</option><option value="siwc">推送 SIWC</option></select></label>
+        <label class="field"><span>降智后处理</span><select v-model="form.action" aria-label="降智后处理"><option value="groups">切换分组</option><option value="merge">按配置执行合并/删除/API 商户</option><option value="siwc">推送 SIWC</option></select></label>
         <label class="field"><span>结果处理并发</span><input v-model.number="form.concurrency" type="number" min="1" max="8" required /><small>空间合并仍按合并并发执行，同母号串行。</small></label>
       </div>
       <div v-if="form.action === 'groups' || form.action === 'siwc'" class="quality-groups">

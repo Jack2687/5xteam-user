@@ -104,6 +104,11 @@ func (s *Store) ProSettings() (model.ProSettings, string, string, error) {
 		return v, "", "", err
 	}
 	v.VM2API.KeyPresent = vmKey != ""
+	var merchantKey string
+	if err := s.db.QueryRow("SELECT encrypted_key FROM pro_merchant_secret WHERE id=1").Scan(&merchantKey); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return v, "", "", err
+	}
+	v.MerchantKeyPresent = merchantKey != ""
 	return v, subPassword, cpaKey, nil
 }
 
@@ -253,13 +258,15 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	wasConfirmed := p.TransferStatus == "completed" && p.ProMergeConfirmedSource != ""
 	wasRemoved := p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed"
 	wasDeleted := p.DeletionAccepted()
+	wasMerchantCompleted := p.MerchantCompleted()
+	wasMerchantAccepted := p.MerchantAccepted()
 	previousProvider, previousSub2ID := p.PushProvider, p.Sub2AccountID
 	previousPushStatus := p.PushStatus
 	// Preserve a historical end before a manual retry replaces its stage data.
 	if p.ProPushStartedAt != nil && p.ProPushEndedAt == nil {
 		p.ProPushEndedAt = p.ProPushEndTime()
 	}
-	wasEnding := p.ProWorkflowRunning || p.SpaceMergedOnce || p.DeletionSubmitted() ||
+	wasEnding := p.ProWorkflowRunning || p.SpaceMergedOnce || p.DispositionStarted() ||
 		(p.ProAuto.Status == "running" && (p.ProAuto.Stage == "merge" || p.ProAuto.Stage == "deactivate"))
 	if mutate != nil {
 		mutate(&p)
@@ -276,7 +283,9 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 		}
 	}
 	p.UpdatedAt = time.Now()
-	if p.DeletionSubmitted() {
+	if p.MerchantStarted() {
+		p.ReconcileProMerchant(p.UpdatedAt)
+	} else if p.DeletionSubmitted() {
 		p.ReconcileProAutoDeletion(p.UpdatedAt)
 	} else {
 		p.ReconcileProAutoMerge(p.UpdatedAt)
@@ -301,10 +310,13 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	if err = s.recordEJHConsumptionTx(tx, p, p.UpdatedAt); err != nil {
 		return p, err
 	}
+	if err = recordProMerchantFeeTx(tx, p); err != nil {
+		return p, err
+	}
 	if err = s.recordNexovccRevenueTx(tx, p); err != nil {
 		return p, err
 	}
-	if (!wasRemoved && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed")) || (!wasDeleted && p.DeletionAccepted()) {
+	if (!wasRemoved && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed")) || (!wasDeleted && p.DeletionAccepted()) || (!wasMerchantCompleted && p.MerchantCompleted()) {
 		if err = releaseProCardOrdersTx(tx, email, formatTime(p.UpdatedAt)); err != nil {
 			return p, err
 		}
@@ -315,6 +327,11 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 			at = *p.SpaceMergedAt
 		}
 		if err = ejhMarkRequestedTx(tx, p.Email, p.ProAuto.OrderID, p.ProMergeConfirmedSource, at); err != nil {
+			return p, err
+		}
+	}
+	if !wasMerchantAccepted && p.MerchantAccepted() {
+		if err = ejhMarkRequestedTx(tx, p.Email, p.ProAuto.OrderID, "api_merchant", *p.ProMerchant.AcceptedAt); err != nil {
 			return p, err
 		}
 	}
@@ -366,8 +383,14 @@ func (s *Store) RecoverProWorkflows() error {
 			deletionReconciled = p.ReconcileProAutoDeletion(time.Now())
 		}
 		deletionNeedsRecovery := p.ProDeactivation != nil && (deletionReconciled || p.ProDeactivation.Status == "running" || p.DeletionNeedsContinuation() && p.ProDeactivation.NextCheckAt == nil)
+		merchantReconciled := p.ReconcileProMerchant(time.Now())
+		if p.MerchantNeedsContinuation() && p.ProMerchant.NextCheckAt == nil && !p.ProAuto.StopRequested {
+			next := time.Now().Add(15 * time.Second)
+			p.ProMerchant.NextCheckAt = &next
+			merchantReconciled = true
+		}
 		stopReconciled := p.ReconcileProStop()
-		if !p.ProWorkflowRunning && !legacyCancelled && !groupsRunning && !deletionNeedsRecovery && !stopReconciled {
+		if !p.ProWorkflowRunning && !legacyCancelled && !groupsRunning && !deletionNeedsRecovery && !merchantReconciled && !stopReconciled {
 			continue
 		}
 		if legacyCancelled {
@@ -410,6 +433,7 @@ func (s *Store) RecoverProWorkflows() error {
 			p.ProDeactivation.Status, p.ProDeactivation.Stage = "completed", "confirm"
 			p.ProLastError = p.ProDeactivation.Error
 		}
+		p.ReconcileProMerchant(time.Now())
 		p.ReconcileProStop()
 		p.UpdatedAt = time.Now()
 		updates = append(updates, item{email: email, profile: p})

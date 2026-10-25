@@ -1,6 +1,7 @@
 package nexovcc
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"crypto/sha256"
 	"fmt"
 	"regexp"
@@ -43,6 +44,7 @@ type Settings struct {
 	Templates                   []Template `json:"templates"`
 }
 type Template struct {
+	Platform   string   `json:"platform"`
 	PlanCode   string   `json:"plan_code,omitempty"`
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -65,6 +67,10 @@ type Balance struct {
 	At     time.Time `json:"at"`
 }
 type Card struct {
+	Platform     string `json:"platform"`
+	TemplateName string `json:"template_name,omitempty"`
+	TemplateID   string `json:"template_id,omitempty"`
+
 	Holder          *CardHolder `json:"holder,omitempty"`
 	ID              string      `json:"id"`
 	Serial          string      `json:"serial_no"`
@@ -101,6 +107,9 @@ type PrivateCard struct {
 	Month, Year int
 }
 type Operation struct {
+	Platform     string `json:"platform"`
+	TemplateName string `json:"template_name,omitempty"`
+
 	RestockTaskID        string             `json:"restock_task_id,omitempty"`
 	PlanCode             string             `json:"plan_code,omitempty"`
 	ID                   string             `json:"id"`
@@ -209,6 +218,11 @@ func Normalize(s Settings) (Settings, error) {
 	seen := map[string]bool{}
 	for i := range s.Templates {
 		t := &s.Templates[i]
+		platform, err := cardplatform.Normalize(t.Platform)
+		if err != nil {
+			return s, err
+		}
+		t.Platform = platform
 		if t.PlanCode != "" && t.PlanCode != "pro5" && t.PlanCode != "pro20" {
 			return s, fmt.Errorf("模板适用套餐须为 5x 或 20x")
 		}

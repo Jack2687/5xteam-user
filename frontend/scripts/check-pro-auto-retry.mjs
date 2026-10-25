@@ -7,7 +7,7 @@ const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^imp
 function fixture(){
  const calls=[], timers=new Map()
  let fail=false,resolve,hold=false
- const ctx=vm.createContext({computed,ref,defineEmits:()=>()=>{},defineExpose(){},onBeforeUnmount(){},clearTimeout:id=>timers.delete(id),setTimeout:fn=>{timers.set(1,fn);return 1},window:{confirm:()=>true},async api(path,options){
+ const ctx=vm.createContext({computed,ref,defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},defineExpose(){},onBeforeUnmount(){},clearTimeout:id=>timers.delete(id),setTimeout:fn=>{timers.set(1,fn);return 1},window:{confirm:()=>true},async api(path,options){
   calls.push({path,options})
   if(options?.method==='POST'){
    if(hold)await new Promise(r=>resolve=r)
@@ -32,8 +32,12 @@ for(const payment_status of ['success','manual_review','processing','submission_
  const f=fixture();f.state.value={id:'old',status:'failed',order_id:'original',payment_status}
  assert.equal(f.retryCurrent.value,true);assert.equal(f.restartable.value,false)
 }
-for(const status of ['running','waiting_quota','completed']){
+for(const status of ['running','waiting_quota','awaiting_merchant','completed']){
  const f=fixture();f.state.value={id:'old',status,order_id:'original'};assert.equal(f.retryCurrent.value,false)
+}
+for(const status of ['failed','stopped','awaiting_merchant','completed']){
+ const f=fixture();f.state.value={id:'merchant-flow',status,pro_merchant:{request_id:'existing'},steps:{oauth:'completed'}}
+ assert.equal(f.canStart.value,false);assert.equal(f.retryCurrent.value,false);assert.equal(f.resumable.value,false)
 }
 const resumed=fixture();resumed.state.value={id:'old',status:'failed',steps:{oauth:'completed'}}
 assert.equal(resumed.resumable.value,true);assert.equal(resumed.retryCurrent.value,false);assert.equal(resumed.canStart.value,false)

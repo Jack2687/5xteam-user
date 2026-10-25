@@ -81,7 +81,7 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 	}
 	closed := map[string]bool{}
 	for _, c := range savedCards {
-		if c.Remote.Status == "2" {
+		if c.Remote.Status == "2" || c.NormalPending {
 			closed[c.Remote.OrderNo] = true
 		}
 	}
@@ -140,7 +140,7 @@ func (s *Server) syncEJHLocked(ctx context.Context, start, end time.Time) (retEr
 	settledClosures := ejhSettledClosures(trades)
 	var failures []error
 	for _, card := range cards {
-		if card.Remote.OrderNo == "" || card.Remote.Status == "2" && settledClosures[card.ID] {
+		if card.NormalPending || card.Remote.OrderNo == "" || card.Remote.Status == "2" && settledClosures[card.ID] {
 			continue
 		}
 		if e = ctx.Err(); e != nil {

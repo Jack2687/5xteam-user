@@ -30,7 +30,7 @@ func proQualityEligible(p model.MailAccountProfile, c model.ProSettings) bool {
 	if p.ManagementScope != "pro" || p.PushStatus != "completed" || p.PushProvider != "sub2" || p.Sub2AccountID <= 0 || p.VM2 != nil || c.Provider != "sub2" {
 		return false
 	}
-	if p.DeletionSubmitted() || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" || proImportedDownstreamOK(p, c) != nil {
+	if p.DispositionStarted() || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" || proImportedDownstreamOK(p, c) != nil {
 		return false
 	}
 	// IDs alone do not identify an account across two Sub2 installations.
@@ -128,7 +128,7 @@ func (s *Server) saveProQualitySettings(w http.ResponseWriter, r *http.Request) 
 			writeAPI(w, 400, nil, "Pro 降智检测仅支持 Pro 推送设置中的 Sub2")
 			return
 		}
-		if q.Action == "merge" && !c.AutoDeleteEnabled && strings.TrimSpace(c.TargetAdminID) == "" {
+		if q.Action == "merge" && c.Disposition() == "merge" && strings.TrimSpace(c.TargetAdminID) == "" {
 			writeAPI(w, 400, nil, "请先在空间合并设置中选择目标母号")
 			return
 		}
@@ -274,7 +274,7 @@ func (s *Server) runProQualityBatch(ctx context.Context, force bool) error {
 	for _, p := range profiles {
 		state := p.ProQuality
 		if p.ProSIWC != nil {
-			if p.ProSIWC.Status == "active" && !p.DeletionSubmitted() && !p.SpaceMergedOnce && (force || state.NextAt == nil || !time.Now().Before(*state.NextAt)) {
+			if p.ProSIWC.Status == "active" && !p.DispositionStarted() && !p.SpaceMergedOnce && (force || state.NextAt == nil || !time.Now().Before(*state.NextAt)) {
 				s.observeSIWCQuality(ctx, p, q)
 			}
 			continue

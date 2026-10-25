@@ -42,6 +42,10 @@ type Settings struct {
 }
 
 type Card struct {
+	Platform     string `json:"platform"`
+	TemplateName string `json:"template_name,omitempty"`
+	TemplateID   string `json:"template_id,omitempty"`
+
 	CardType            string         `json:"card_type"`
 	Source              string         `json:"source,omitempty"`
 	IssuerOrderNo       string         `json:"issuer_order_no,omitempty"`

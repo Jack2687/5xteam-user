@@ -30,8 +30,8 @@ func (s ProSettings) ValidateDisposition() error {
 	if s.DeletionCheckIntervalSeconds < 0 || s.DeletionCheckIntervalSeconds > 86400 {
 		return errors.New("删除结果核验间隔须为 1～86400 秒")
 	}
-	if s.AutoDeleteEnabled && s.AutoMergeEnabled {
-		return errors.New("自动删除账户与自动合并只能开启一个")
+	if (s.AutoDeleteEnabled && s.AutoMergeEnabled) || (s.AutoMerchantEnabled && (s.AutoDeleteEnabled || s.AutoMergeEnabled)) {
+		return errors.New("自动合并、自动删除与 API 商户只能开启一个")
 	}
 	return nil
 }
@@ -50,12 +50,18 @@ func (p MailAccountProfile) DeletionNeedsContinuation() bool {
 	return p.DeletionSubmitted() && !p.DeletionConfirmed()
 }
 func (s ProSettings) Disposition() string {
+	if s.AutoMerchantEnabled {
+		return "merchant"
+	}
 	if s.AutoDeleteEnabled {
 		return "deactivate"
 	}
 	return "merge"
 }
 func (s ProSettings) DispositionLabel() string {
+	if s.AutoMerchantEnabled {
+		return "API 商户"
+	}
 	if s.AutoDeleteEnabled {
 		return "删除账户"
 	}
@@ -80,6 +86,10 @@ func (p *MailAccountProfile) ReconcileProStop() bool {
 	changed := p.ProAuto.Status != "stopped" || p.ProAuto.NextCheckAt != nil || p.ProAuto.RetryAt != nil || p.ProForceMergeNextAt != nil
 	p.ProAuto.Status = "stopped"
 	p.ProAuto.NextCheckAt, p.ProAuto.RetryAt, p.ProForceMergeNextAt = nil, nil, nil
+	if m := p.ProMerchant; m != nil && m.NextCheckAt != nil {
+		m.NextCheckAt = nil
+		changed = true
+	}
 	if d := p.ProDeactivation; d != nil && d.NextCheckAt != nil {
 		d.NextCheckAt = nil
 		changed = true

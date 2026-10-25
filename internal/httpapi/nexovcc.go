@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -271,7 +272,12 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取交易核实记录失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState, "withdraw": withdrawState, "control": control}, "")
+	merchantFees, feeErr := s.store.ProMerchantFees("nexovcc")
+	if feeErr != nil {
+		writeAPI(w, 500, nil, "读取 API 收费失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"merchant_fees": merchantFees, "cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState, "withdraw": withdrawState, "control": control}, "")
 }
 func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Lock()
@@ -796,6 +802,9 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if t == nil {
 		return op, fmt.Errorf("请选择已保存的环球开卡模板")
 	}
+	if automatic && !cardplatform.IsOAI(t.Platform) {
+		return op, fmt.Errorf("Pro 开卡只能使用 OAI 模板")
+	}
 	if automatic {
 		pro, _, _, err := s.store.ProSettings()
 		if err != nil {
@@ -866,7 +875,7 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if available < amount+buffer {
 		return op, fmt.Errorf("环球账户余额不足以覆盖开卡金额和预留费用")
 	}
-	op = nexovcc.Operation{RestockTaskID: taskID, PlanCode: t.PlanCode, ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	op = nexovcc.Operation{Platform: t.Platform, TemplateName: t.Name, RestockTaskID: taskID, PlanCode: t.PlanCode, ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if e = s.store.BeginNexovccOperation(op, admission); e != nil {
 		return op, e
 	}
@@ -1136,7 +1145,7 @@ func (s *Server) validateNexovccAutomation(v model.ProSettings) error {
 		return fmt.Errorf("请先启用环球卡台")
 	}
 	for _, t := range cfg.Templates {
-		if t.ID == v.NexovccTemplateID {
+		if t.ID == v.NexovccTemplateID && cardplatform.IsOAI(t.Platform) {
 			return nil
 		}
 	}

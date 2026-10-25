@@ -23,7 +23,7 @@ func restockAccountExiting(p model.MailAccountProfile) bool {
 			return false
 		}
 	}
-	return p.ProWorkflowRunning || p.ProAuto.Stage == "merge" || p.ProAuto.Stage == "deactivate" || p.DeletionSubmitted() || p.SpaceMergedOnce ||
+	return p.ProWorkflowRunning || p.ProAuto.Stage == "merge" || p.ProAuto.Stage == "deactivate" || p.DispositionStarted() || p.SpaceMergedOnce ||
 		p.ProAuto.Steps["merge"] == "completed" || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed"
 }
 

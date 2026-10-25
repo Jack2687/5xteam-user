@@ -11,8 +11,9 @@ import (
 
 func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Automation model.ProSettings `json:"automation"`
-		GPTPay     struct {
+		MerchantAPIKey string            `json:"merchant_api_key"`
+		Automation     model.ProSettings `json:"automation"`
+		GPTPay         struct {
 			gptpay.Settings
 			APIKey string `json:"api_key"`
 		} `json:"gptpay"`
@@ -26,6 +27,8 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	// still fails validation after decoding.
 	input.Automation.MergeConcurrency = current.MergeConcurrency
 	input.Automation.AutoDeleteEnabled = current.AutoDeleteEnabled
+	input.Automation.AutoMerchantEnabled = current.AutoMerchantEnabled
+	input.Automation.MerchantSuccessFeeUSD = current.MerchantSuccessFeeUSD
 	input.Automation.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.Automation.PurchaseScheduleEnabled, input.Automation.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
 	input.Automation.EJHPlanTemplates, input.Automation.NexovccPlanTemplates = current.EJHPlanTemplates, current.NexovccPlanTemplates
@@ -33,6 +36,10 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	v := input.Automation
+	if v.AutoMerchantEnabled && strings.TrimSpace(input.MerchantAPIKey) == "" && !current.MerchantKeyPresent {
+		writeAPI(w, 400, nil, "请填写 API 商户密钥")
+		return
+	}
 	if v.DeletionCheckIntervalSeconds < 1 || v.DeletionCheckIntervalSeconds > 86400 {
 		writeAPI(w, 400, nil, "删除结果核验间隔须为 1～86400 秒")
 		return
@@ -49,7 +56,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	if v.ScheduledEnabled && (v.MaxUnmerged < 1 || v.MaxUnmerged > 10000 || v.ScheduleIntervalSeconds < 10 || v.ScheduleIntervalSeconds > 86400 || (!v.AutoDeleteEnabled && strings.TrimSpace(v.TargetAdminID) == "")) {
+	if v.ScheduledEnabled && (v.MaxUnmerged < 1 || v.MaxUnmerged > 10000 || v.ScheduleIntervalSeconds < 10 || v.ScheduleIntervalSeconds > 86400 || (v.Disposition() == "merge" && strings.TrimSpace(v.TargetAdminID) == "")) {
 		writeAPI(w, 400, nil, "定时开通需设置目标母号、最大未合并数（1～10000）和检查间隔（10～86400 秒）")
 		return
 	}
@@ -84,7 +91,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	v, pay, err = s.store.SaveProAutomationSettings(v, pay, input.GPTPay.APIKey)
+	v, pay, err = s.store.SaveProAutomationSettings(v, pay, input.GPTPay.APIKey, input.MerchantAPIKey)
 	if err != nil {
 		writeAPI(w, 500, nil, "保存 Pro 全自动配置失败")
 		return

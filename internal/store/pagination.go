@@ -59,6 +59,7 @@ type ProAccountsPageSummary struct {
 	Pushed     int `json:"pushed"`
 	Merged     int `json:"merged"`
 	Deleted    int `json:"deleted"`
+	Merchant   int `json:"merchant"`
 	Unmerged   int `json:"unmerged"`
 	InProgress int `json:"in_progress"`
 }
@@ -447,8 +448,8 @@ func (s *Store) ProAccountsPageContext(ctx context.Context, query, mergeState st
 	if err := s.db.QueryRowContext(ctx, cte+` SELECT COUNT(*),
 		COALESCE(SUM(json_extract(profile,'$.access_token_present')=1 AND json_extract(profile,'$.refresh_token_present')=1),0),
 		COALESCE(SUM(json_extract(profile,'$.push_status')='completed'),0), COALESCE(SUM(merge_state='merged'),0),
-  COALESCE(SUM(merge_state='unmerged'),0), COALESCE(SUM(merge_state='in_progress'),0), COALESCE(SUM(merge_state='deleted'),0) FROM accounts`).Scan(
-		&summary.All, &summary.OAuthReady, &summary.Pushed, &summary.Merged, &summary.Unmerged, &summary.InProgress, &summary.Deleted); err != nil {
+  COALESCE(SUM(merge_state='unmerged'),0), COALESCE(SUM(merge_state='in_progress'),0), COALESCE(SUM(merge_state='deleted'),0), COALESCE(SUM(merge_state='merchant'),0) FROM accounts`).Scan(
+		&summary.All, &summary.OAuthReady, &summary.Pushed, &summary.Merged, &summary.Unmerged, &summary.InProgress, &summary.Deleted, &summary.Merchant); err != nil {
 		return nil, 0, summary, err
 	}
 	like := "%" + query + "%"

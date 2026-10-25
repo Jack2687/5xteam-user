@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
@@ -63,7 +64,7 @@ func (s *Server) validatePurchaseTemplate(r *model.ProPurchaseRoute) error {
 			return err
 		}
 		for _, t := range cfg.Templates {
-			if t.ID == r.TemplateID && t.PlanCode == r.PlanCode {
+			if t.ID == r.TemplateID && t.PlanCode == r.PlanCode && cardplatform.IsOAI(t.Platform) {
 				return nil
 			}
 		}
@@ -73,12 +74,12 @@ func (s *Server) validatePurchaseTemplate(r *model.ProPurchaseRoute) error {
 			return err
 		}
 		for _, t := range cfg.Templates {
-			if t.ID == r.TemplateID && t.PlanCode == r.PlanCode {
+			if t.ID == r.TemplateID && t.PlanCode == r.PlanCode && cardplatform.IsOAI(t.Platform) {
 				return nil
 			}
 		}
 	}
-	return fmt.Errorf("%s 的 %s 开卡模板不存在或适用套餐不匹配，请重新配置", restock.CardProviderName(r.CardProvider), r.PlanCode)
+	return fmt.Errorf("%s 的 %s OAI 开卡模板不存在或适用套餐不匹配，请重新配置", restock.CardProviderName(r.CardProvider), r.PlanCode)
 }
 func (s *Server) resolveProPurchase(p model.ProSettings, pay gptpay.Settings, c restock.Config, now time.Time) (model.ProSettings, gptpay.Settings, error) {
 	p, pay, err := store.ResolveProPurchase(p, pay, c, now)

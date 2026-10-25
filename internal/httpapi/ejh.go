@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -45,6 +46,7 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 	return c, k, nil
 }
 func (s *Server) ejhRoutes(m *http.ServeMux) {
+	m.HandleFunc("PUT /api/ejh/cards/{id}/category", s.ejhCardCategory)
 	m.HandleFunc("PUT /api/ejh/refund-fees/{id}", s.saveEJHRefundFee)
 	m.HandleFunc("PUT /api/ejh/recharge-ledger", s.saveEJHRechargeLedger)
 	m.HandleFunc("PUT /api/ejh/external-transfer", s.saveEJHExternalTransfer)
@@ -288,7 +290,12 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	writeAPI(w, 200, map[string]any{"cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "refund_fees": refundFees, "reversal_fee_percent": settings.ReversalFeePercent, "page_refresh_seconds": settings.PageRefreshSeconds, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
+	merchantFees, feeErr := s.store.ProMerchantFees("ejh")
+	if feeErr != nil {
+		writeAPI(w, 500, nil, "读取 API 收费失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"merchant_fees": merchantFees, "cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "refund_fees": refundFees, "reversal_fee_percent": settings.ReversalFeePercent, "page_refresh_seconds": settings.PageRefreshSeconds, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {
 	if len(n) > 4 {
@@ -333,8 +340,18 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 		for _, t := range c.Templates {
 			if t.ID == op.TemplateID {
 				op.PlanCode = t.PlanCode
+				op.Platform, op.TemplateName = t.Platform, t.Name
 			}
 		}
+	}
+	if op.TemplateID != "" && op.TemplateName == "" {
+		return op, fmt.Errorf("请选择已保存的 EJH 开卡模板")
+	}
+	if automatic && !cardplatform.IsOAI(op.Platform) {
+		return op, fmt.Errorf("Pro 开卡只能使用 OAI 模板")
+	}
+	if op.Platform == "" {
+		op.Platform = "oai"
 	}
 	if e = s.store.EJHBeginOperation(op); e != nil {
 		return op, e
@@ -357,7 +374,7 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 			s.notifyEJHOpened(op)
 			return op, e
 		}
-		local, ie := s.store.ImportEJHCard(card, true)
+		local, ie := s.store.ImportEJHCard(card, true, &op)
 		if ie != nil {
 			op.Error = ie.Error()
 		} else {
@@ -464,6 +481,9 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 		case "balance":
 			writeAPI(w, 200, map[string]any{"balance": card.Balance, "cached": true, "at": card.BalanceAt}, "")
 			return
+		case "sync_trades":
+			writeAPI(w, 200, map[string]bool{"cached": true}, "")
+			return
 		}
 	}
 	c, k, e := s.ejhConfig()
@@ -472,6 +492,19 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Action {
+	case "sync_trades":
+		// Save only a complete collection for this card; the paginated viewer is read-only.
+		now := time.Now()
+		e = s.collectEJHCardTrades(r.Context(), s.ejhClientLocked(), c, k, card, now.AddDate(0, 0, -90), now)
+		if e == nil {
+			e = s.store.EJHReconcile()
+		}
+		if e != nil {
+			writeAPI(w, 502, nil, e.Error())
+			return
+		}
+		writeAPI(w, 200, map[string]bool{"synced": true}, "")
+		return
 	case "details", "refresh":
 		var remote ejh.Card
 		e = s.ejhClientLocked().Call(r.Context(), c, k, "card.query.info", data, &remote)
@@ -668,7 +701,7 @@ func (s *Server) resolveEJHOperation(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, 502, nil, "卡台返回订单号不一致")
 			return
 		}
-		local, e := s.store.ImportEJHCard(remote, true)
+		local, e := s.store.ImportEJHCard(remote, true, &op)
 		if e != nil {
 			writeAPI(w, 400, nil, e.Error())
 			return
@@ -746,7 +779,7 @@ func (s *Server) validateEJHAutomation(v model.ProSettings) error {
 			return fmt.Errorf("请先启用 EJH 卡台")
 		}
 		for _, t := range cfg.Templates {
-			if t.ID == v.EJHTemplateID {
+			if t.ID == v.EJHTemplateID && cardplatform.IsOAI(t.Platform) {
 				return nil
 			}
 		}

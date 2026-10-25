@@ -179,7 +179,7 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	byID := map[int64]model.MailAccountProfile{}
 	duplicates := map[int64]bool{}
 	for _, v := range profiles {
-		if v.Sub2AccountID <= 0 || v.PushStatus != "completed" || v.PushProvider != "sub2" || v.DeletionSubmitted() || v.SpaceMergedOnce || v.RemoveStatus == "completed" || v.RemoveStatus == "team_removed" {
+		if v.Sub2AccountID <= 0 || v.PushStatus != "completed" || v.PushProvider != "sub2" || v.DispositionStarted() || v.SpaceMergedOnce || v.RemoveStatus == "completed" || v.RemoveStatus == "team_removed" {
 			continue
 		}
 		matched := false

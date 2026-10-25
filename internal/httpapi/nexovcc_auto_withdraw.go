@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -71,7 +72,7 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		if card.NormalPending || card.Status != "1" || card.Control == "frozen" || !card.Imported || !nexovccCardUsed(card, cases, groups) {
+		if !cardplatform.IsOAI(card.Platform) || card.NormalPending || card.Status != "1" || card.Control == "frozen" || !card.Imported || !nexovccCardUsed(card, cases, groups) {
 			continue
 		}
 		local, _, e := s.store.GPTPayCard(card.ID)

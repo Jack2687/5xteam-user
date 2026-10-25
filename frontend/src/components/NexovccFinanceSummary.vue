@@ -14,7 +14,7 @@ const r=v=>props.masked?'---':t.value.ready?rmb(v):'—'
    <button @click="$emit('details',{type:'funds',feesOnly:true})"><span>{{serial?'本卡成本':'总成本'}}{{t.balanceDifference?'（含暂估）':''}}</span><strong>{{r(t.cost)}} <em>R</em></strong><small>{{usd(t.cost)}} USD{{serial?' · 不含账户充值费':''}}</small></button>
    <button class="profit" :class="{negative:t.profit<0}" @click="$emit('details',{type:'accounts'})"><span>{{partial?'已知收益净额':t.balanceDifference||t.balanceRecoveredPending?'净利润（暂计）':'净利润'}}</span><strong>{{masked?'---':t.ready?money(t.profit):'—'}} <em>R</em></strong><small>收益 − 成本 · 1 USD = 6.7 R</small></button>
   </div>
-  <div class="cost-row">
+  <div class="cost-row"><button @click="$emit('details',{type:'funds',kind:'api-merchant'})"><span>API 收费</span><b>{{usd(t.merchantFee)}} USD</b><small>{{r(t.merchantFee)}} R · 外部商户最终成功后记账</small></button>
    <button v-if="!serial" @click="$emit('details',{type:'recharges'})"><span>成功充值 / 实际到账</span><b>{{usd(t.gross)}} / {{usd(t.received)}} USD</b><small>充值费 {{usd(t.rechargeFee)}} USD / {{r(t.rechargeFee)}} R · 1%</small></button>
    <button @click="$emit('details',{type:'funds',kind:'3003'})"><span>开卡费</span><b>{{usd(t.opening)}} USD</b><small>{{r(t.opening)}} R</small></button>
    <button @click="$emit('details',{type:'funds',kind:'card-service'})"><span>卡服务费</span><b>{{usd(t.service)}} USD</b><small>{{r(t.service)}} R</small></button>

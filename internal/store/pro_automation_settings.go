@@ -13,7 +13,12 @@ import (
 
 // Only automation fields are changed here. Downstream credentials and groups
 // may be edited separately, so never overwrite them from an automation form.
-func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Settings, key string) (model.ProSettings, gptpay.Settings, error) {
+func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Settings, key string, merchantKeys ...string) (model.ProSettings, gptpay.Settings, error) {
+	fee, feeErr := merchantFeeAmount(input.MerchantSuccessFeeUSD)
+	if feeErr != nil {
+		return input, pay, feeErr
+	}
+	input.MerchantSuccessFeeUSD = fee
 	if err := input.ValidateDisposition(); err != nil {
 		return input, pay, err
 	}
@@ -46,6 +51,25 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	v.DeletionCheckIntervalSeconds = int(input.DeletionCheckInterval() / time.Second)
 	v.QuotaEnabled, v.AutoMergeEnabled = input.QuotaEnabled, input.AutoMergeEnabled
 	v.AutoDeleteEnabled = input.AutoDeleteEnabled
+	v.AutoMerchantEnabled = input.AutoMerchantEnabled
+	v.MerchantSuccessFeeUSD = input.MerchantSuccessFeeUSD
+	var merchantSecret string
+	if err = tx.QueryRow("SELECT encrypted_key FROM pro_merchant_secret WHERE id=1").Scan(&merchantSecret); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return v, pay, err
+	}
+	if len(merchantKeys) > 0 && strings.TrimSpace(merchantKeys[0]) != "" {
+		merchantSecret, err = s.encrypt(strings.TrimSpace(merchantKeys[0]))
+		if err != nil {
+			return v, pay, err
+		}
+		if _, err = tx.Exec("INSERT INTO pro_merchant_secret(id,encrypted_key) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET encrypted_key=excluded.encrypted_key", merchantSecret); err != nil {
+			return v, pay, err
+		}
+	}
+	v.MerchantKeyPresent = merchantSecret != ""
+	if v.AutoMerchantEnabled && !v.MerchantKeyPresent {
+		return v, pay, errors.New("请先填写 API 商户密钥")
+	}
 	v.CardProvider = input.AutoCardProvider()
 	v.PurchaseScheduleEnabled, v.PurchaseWindows = input.PurchaseScheduleEnabled, input.PurchaseWindows
 	v.EJHPlanTemplates, v.NexovccPlanTemplates = input.EJHPlanTemplates, input.NexovccPlanTemplates

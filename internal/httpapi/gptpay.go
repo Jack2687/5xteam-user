@@ -112,7 +112,7 @@ func (s *Server) listGPTPayCards(w http.ResponseWriter, r *http.Request) {
 			items = items[offset:min(total, offset+p.Limit)]
 		}
 	} else {
-		items, total, err = s.store.GPTPayCards(p.Limit, p.Offset, r.URL.Query().Get("enabled") == "true")
+		items, total, err = s.store.GPTPayCards(p.Limit, p.Offset, r.URL.Query().Get("enabled") == "true", true)
 	}
 	if err != nil {
 		writeAPI(w, 500, nil, "读取银行卡失败")

@@ -92,9 +92,10 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 		PaymentRetryHint      string                 `json:"payment_retry_hint"`
 		RestockRetryAvailable bool                   `json:"restock_retry_available"`
 		QuotaResumeAvailable  bool                   `json:"quota_resume_available"`
+		Merchant              *model.ProMerchant     `json:"pro_merchant,omitempty"`
 		Deactivation          *model.ProDeactivation `json:"pro_deactivation,omitempty"`
 		WorkflowRunning       bool                   `json:"pro_workflow_running"`
-	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success", p.ProDeactivation, p.ProWorkflowRunning}, "")
+	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success", p.ProMerchant, p.ProDeactivation, p.ProWorkflowRunning}, "")
 }
 
 func (s *Server) autoProUpdate(email, stage, status, message string) error {
@@ -162,6 +163,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
+	if p.MerchantStarted() {
+		writeAPI(w, 409, nil, "该账号已进入 API 商户流程，请从商户状态续跑")
+		return
+	}
 	if p.DeletionSubmitted() {
 		writeAPI(w, 409, nil, "该账号已提交删除，请使用执行或续跑删除账户，不会重新开通或付款")
 		return
@@ -253,7 +258,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	if !pro.AutoDeleteEnabled && pro.TargetAdminID == "" {
+	if pro.Disposition() == "merge" && pro.TargetAdminID == "" {
 		writeAPI(w, 400, nil, "请先在 Pro 全自动配置中选择目标母号")
 		return
 	}
@@ -922,6 +927,10 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	if p.DeletionConfirmed() || p.ProAuto.Status == "completed" {
 		return nil
 	}
+	if p.MerchantStarted() {
+		_, err = s.performProMerchant(ctx, email)
+		return err
+	}
 	if p.DeletionSubmitted() {
 		_, err = s.performProAutomaticDeactivation(ctx, email)
 		return err
@@ -941,7 +950,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 		if h.Quota != nil {
 			quota = h.Quota
 		}
-		if h.Merge != nil && !settings.AutoDeleteEnabled {
+		if h.Merge != nil && settings.Disposition() == "merge" {
 			merge = h.Merge
 		}
 	}
@@ -1048,7 +1057,9 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	}
 	action := forceSettings.Disposition()
 	merge = s.performProMerge
-	if action == "deactivate" {
+	if action == "merchant" {
+		merge = s.performProMerchant
+	} else if action == "deactivate" {
 		merge = s.performProAutomaticDeactivation
 	} else if s.proAutoHooks != nil && s.proAutoHooks.Merge != nil {
 		merge = s.proAutoHooks.Merge
@@ -1062,7 +1073,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 		}
 		// Preserve original merge semantics, only reschedule a safe failed tail.
 		latest, _, readErr := s.store.MailAccountCredential(email)
-		if readErr == nil && ctx.Err() == nil && s.forcedMergeRetry(latest, forceSettings) && !proTransferNeedsConfirmation(latest) && !latest.DeletionSubmitted() && !latest.ProAuto.StopRequested && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
+		if readErr == nil && ctx.Err() == nil && s.forcedMergeRetry(latest, forceSettings) && !proTransferNeedsConfirmation(latest) && !latest.DispositionStarted() && !latest.ProAuto.StopRequested && latest.ProAuto.Status != "stopped" && (latest.ProMigration == nil || !latest.ProMigration.Paused) {
 			_, saveErr := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 				p.ProAuto.Status = "waiting_quota"
 				p.ProAuto.Steps[action] = "failed"
@@ -1080,7 +1091,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 		}
 		return err
 	}
-	if action == "deactivate" {
+	if action == "deactivate" || action == "merchant" {
 		return nil
 	}
 	if err = s.autoProUpdate(email, "merge", "completed", "空间四步流程完成"); err != nil {
@@ -1124,6 +1135,7 @@ func (s *Server) startProAutomationMonitor() {
 				return
 			case <-ticker.C:
 				s.tickProDeactivations(ctx)
+				s.tickProMerchants(ctx)
 				s.tickProSchedule(false)
 				items, err := s.store.DueProAutomations(time.Now())
 				if err != nil {

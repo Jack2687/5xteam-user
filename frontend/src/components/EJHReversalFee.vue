@@ -2,13 +2,13 @@
 import { computed } from 'vue'
 import { financeProfit } from '../ejh-profit'
 import { summarizeReversalFees, reversalProfit } from '../ejh-reversal-fees'
-const props = defineProps({ clearing: {type:Object,default:null}, records: { type: Array, default: () => [] }, feePercent: { type: Number, default: 6 }, cards: { type: Array, default: () => [] }, operations: { type: Array, default: () => [] }, confirmedOnly: Boolean, hideLabel: Boolean, showProfit: Boolean, consumption: {type:Number,default:null}, consumptionMissing: {type:Number,default:0} })
+const props = defineProps({ merchantFeeUSD:{type:String,default:'0.00'}, clearing: {type:Object,default:null}, records: { type: Array, default: () => [] }, feePercent: { type: Number, default: 6 }, cards: { type: Array, default: () => [] }, operations: { type: Array, default: () => [] }, confirmedOnly: Boolean, hideLabel: Boolean, showProfit: Boolean, consumption: {type:Number,default:null}, consumptionMissing: {type:Number,default:0} })
 const fee = computed(() => summarizeReversalFees(props.records, props.feePercent, props.confirmedOnly, props.cards, props.operations))
 const result = computed(() => {
  const base=reversalProfit(fee.value, props.consumption, props.consumptionMissing)
- if(!props.clearing)return base
- const earnings=financeProfit({openingUSD:0,rechargeUSD:0,reversalUSD:fee.value.usd.amount??(!fee.value.count?'0.00':null),clearingUSD:props.clearing.usd.amount,consumption:props.consumption,consumptionMissing:props.consumptionMissing,costMissing:fee.value.missing+fee.value.pending+fee.value.usd.missing+props.clearing.missing+props.clearing.pending})
- return {...base,profit:earnings.profitR,estimated:base.estimated||props.clearing.estimated}
+ if(!props.clearing&&!Number(props.merchantFeeUSD))return base
+ const earnings=financeProfit({openingUSD:0,rechargeUSD:0,reversalUSD:fee.value.usd.amount??(!fee.value.count?'0.00':null),merchantUSD:props.merchantFeeUSD,clearingUSD:props.clearing?.usd.amount||'0.00',consumption:props.consumption,consumptionMissing:props.consumptionMissing,costMissing:fee.value.missing+fee.value.pending+fee.value.usd.missing+(props.clearing?.missing||0)+(props.clearing?.pending||0)})
+ return {...base,profit:earnings.profitR,estimated:base.estimated||props.clearing?.estimated}
 })
 </script>
 
@@ -26,7 +26,8 @@ const result = computed(() => {
    <small v-if="fee.pending">{{fee.pending}} 笔待确认，未计入</small>
   </div>
  </div>
- <div v-if="showProfit" class="reversal-profit" title="账号结余＝消费收益 R − 本账号授权撤销费 R − 清算成本 R；开卡费和充值手续费在总账扣除">
+ <div v-if="showProfit" class="reversal-fee"><span>API 收费</span><strong>{{merchantFeeUSD}} USD</strong></div>
+ <div v-if="showProfit" class="reversal-profit" title="账号结余＝消费收益 R − 本账号授权撤销费 R − 清算成本 R − API 收费；开卡费和充值手续费在总账扣除">
   <span>账号结余</span><div><strong :class="{'negative':result.profit?.startsWith('-')}">{{result.profit!==null&&result.estimated?'≈ ':''}}{{result.profit??'—'}} R</strong><small>未分摊开卡费、充值手续费</small><small v-if="result.profit===null">{{consumptionMissing||consumption===null?'消费未查询完整':'费用待核实'}}</small></div>
  </div>
 </template>

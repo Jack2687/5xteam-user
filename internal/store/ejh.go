@@ -248,7 +248,7 @@ func EJHID(scope, value string) string {
 	h := sha256.Sum256([]byte(scope + "|" + value))
 	return "ejh-" + fmt.Sprintf("%x", h[:16])
 }
-func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card, retErr error) {
+func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool, origins ...*ejh.Operation) (result gptpay.Card, retErr error) {
 	var empty gptpay.Card
 	if remote.OrderNo == "" {
 		return empty, fmt.Errorf("卡台未返回订单号")
@@ -265,12 +265,22 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 	}()
 	var prior ejh.CardRecord
 	if s.EJHGet("card", id, &prior) == nil {
+		record.NormalPending, record.NormalPendingAt = prior.NormalPending, prior.NormalPendingAt
+		record.Platform, record.TemplateID, record.TemplateName = prior.Platform, prior.TemplateID, prior.TemplateName
 		record.CreatedAt = prior.CreatedAt
 		if record.CreatedAt.IsZero() {
 			record.CreatedAt = prior.SyncedAt
 		}
 		record.Balance, record.BalanceAt = prior.Balance, prior.BalanceAt
 		record.BalanceError, record.BalanceAttemptAt = prior.BalanceError, prior.BalanceAttemptAt
+	}
+	if remote.Status == "2" || remote.Status == "8" {
+		record.NormalPending, record.NormalPendingAt = false, nil
+	}
+	if record.Platform == "" || (record.TemplateID == "" && len(origins) > 0) {
+		if err := s.setEJHCardOrigin(&record, origins...); err != nil {
+			return empty, err
+		}
 	}
 	if e := s.EJHPut("card", id, record); e != nil {
 		return empty, e
@@ -316,6 +326,7 @@ func (s *Store) ImportEJHCard(remote ejh.Card, enabled bool) (result gptpay.Card
 		card = existing
 		card.MaxAccounts = nil
 	}
+	card.Platform, card.TemplateID, card.TemplateName = record.Platform, record.TemplateID, record.TemplateName
 	card.Source, card.IssuerOrderNo = "ejh", remote.OrderNo
 	card.IssuerStatus = remote.Status
 	card.IssuerLocked = remote.Locked == "1"
@@ -515,6 +526,10 @@ type ejhCaseQuery interface {
 }
 
 func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, error) {
+	merchantFees, err := proMerchantFeesByOrder(q)
+	if err != nil {
+		return nil, err
+	}
 	overrides, err := ejhCaseStateOverrides(q)
 	if err != nil {
 		return nil, err
@@ -589,6 +604,7 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		if e = json.Unmarshal([]byte(raw), &v); e != nil {
 			return nil, e
 		}
+		v.MerchantFeeUSD = merchantFees[v.ID]
 		v.ConsumptionTotal = nil
 		if consumption.Valid {
 			v.ConsumptionTotal = &consumption.Float64

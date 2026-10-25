@@ -46,7 +46,7 @@ func (p MailAccountProfile) ApplyProStageOverrides(v *ProStageDisplay) {
 // OAuth/push results, never editable display overrides, to skip provisioning.
 func (p MailAccountProfile) CanResumeProQuota() bool {
 	a := p.ProAuto
-	if p.ManagementScope != "pro" || p.DeletionSubmitted() || a.ID == "" || a.OrderID == "" || p.ProWorkflowRunning || p.SpaceMergedOnce ||
+	if p.ManagementScope != "pro" || p.DispositionStarted() || a.ID == "" || a.OrderID == "" || p.ProWorkflowRunning || p.SpaceMergedOnce ||
 		(p.ProMigration != nil && p.ProMigration.Paused) ||
 		p.TransferStatus != "" && p.TransferStatus != "not_started" || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" ||
 		p.ChatGPTStatus == "dead" || p.OAuthStatus != "completed" || !p.AccessTokenPresent || !p.RefreshTokenPresent ||
@@ -82,7 +82,7 @@ func (p MailAccountProfile) CanResumeProQuota() bool {
 // automation, replay payment, resume stopped/import-paused work or repeat merge.
 func (p *MailAccountProfile) ReconcileProAutoManual(now time.Time) bool {
 	a := &p.ProAuto
-	if p.ManagementScope != "pro" || p.DeletionSubmitted() || a.ID == "" || a.StopRequested || p.ProWorkflowRunning || p.SpaceMergedOnce || p.TransferStatus == "completed" ||
+	if p.ManagementScope != "pro" || p.DispositionStarted() || a.ID == "" || a.StopRequested || p.ProWorkflowRunning || p.SpaceMergedOnce || p.TransferStatus == "completed" ||
 		(p.ProMigration != nil && p.ProMigration.Paused) || (a.Status != "failed" && a.Status != "interrupted" && a.Status != "awaiting_push") ||
 		(a.Stage != "oauth" && a.Stage != "push") || a.Steps["recharge"] != "completed" ||
 		p.ChatGPTStatus == "dead" || p.OAuthStatus != "completed" || !p.AccessTokenPresent || !p.RefreshTokenPresent ||
@@ -134,6 +134,9 @@ func (p *MailAccountProfile) ReconcileProAutoMerge(now time.Time) bool {
 			p.ProAuto.UpdatedAt = now
 		}
 		return changed
+	}
+	if p.MerchantStarted() {
+		return p.ReconcileProMerchant(now)
 	}
 	if p.DeletionSubmitted() {
 		return p.ReconcileProAutoDeletion(now)
@@ -245,6 +248,21 @@ func (p MailAccountProfile) ProStages() ProStageDisplay {
 		}
 	}
 	p.ApplyProStageOverrides(&v)
+	if m := p.ProMerchant; m != nil {
+		status := "waiting"
+		if m.Error != "" || m.Status == "failed" {
+			status = "failed"
+		}
+		if m.CompletedAt != nil {
+			status = "completed"
+		}
+		v.Steps["merchant"] = status
+		delete(v.Manual, "merchant")
+		delete(v.Errors, "merchant")
+		if m.Error != "" {
+			v.Errors["merchant"] = m.Error
+		}
+	}
 	return v
 }
 

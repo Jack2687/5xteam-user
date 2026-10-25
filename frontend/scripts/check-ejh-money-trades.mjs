@@ -1,3 +1,4 @@
+import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -40,7 +41,7 @@ assert.equal(accountAmounts({charge,returns:[timedReturn('reversal','2026-10-16 
 const code=readFileSync(new URL('../src/components/EJHCardTrades.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const calls=[],unmounts=[]
 let fail=false,release,hold=false
-const context=vm.createContext({ref,reactive,AbortController,defineEmits:()=>()=>{},defineProps:()=>({feePercent:6,defaultPageSize:50}),defineExpose(){},onBeforeUnmount:fn=>unmounts.push(fn),async api(url,options){calls.push({url,options});if(hold)await new Promise(resolve=>{release=resolve});if(fail)throw Error('fixture failure');return {items:[{tradeNo:'saved'}],page:options.body.page,has_more:true,queried_at:'2026-10-15T00:00:00Z'}}})
+const context=vm.createContext({cardOrigin,ref,reactive,AbortController,defineEmits:()=>()=>{},defineProps:()=>({feePercent:6,defaultPageSize:50}),defineExpose(){},onBeforeUnmount:fn=>unmounts.push(fn),async api(url,options){calls.push({url,options});if(hold)await new Promise(resolve=>{release=resolve});if(fail)throw Error('fixture failure');return {items:[{tradeNo:'saved'}],page:options.body.page,has_more:true,queried_at:'2026-10-15T00:00:00Z'}}})
 vm.runInContext(code+';globalThis.f={open,query,dates,rows,page,applied,requestedPage,error,busy};',context)
 const f=context.f
 await f.open({id:'card/one'})

@@ -3,6 +3,9 @@ package ejh
 import "time"
 
 type Operation struct {
+	Platform     string `json:"platform"`
+	TemplateName string `json:"template_name,omitempty"`
+
 	PlanCode    string     `json:"plan_code,omitempty"`
 	TemplateID  string     `json:"template_id,omitempty"`
 	ID          string     `json:"id"`
@@ -23,6 +26,12 @@ type Operation struct {
 	CheckError  string     `json:"check_error,omitempty"`
 }
 type CardRecord struct {
+	NormalPending   bool       `json:"normal_pending,omitempty"`
+	NormalPendingAt *time.Time `json:"normal_pending_at,omitempty"`
+	Platform        string     `json:"platform"`
+	TemplateName    string     `json:"template_name,omitempty"`
+	TemplateID      string     `json:"template_id,omitempty"`
+
 	ID               string     `json:"id"`
 	CreatedAt        time.Time  `json:"created_at"`
 	Remote           Card       `json:"remote"`
@@ -59,6 +68,7 @@ func ValidCaseState(state string) bool {
 }
 
 type Case struct {
+	MerchantFeeUSD string `json:"merchant_fee_usd"`
 	// Removal only affects the unopened return record in the EJH dashboard.
 	// Keep the underlying case for payment reconciliation and card occupancy.
 	RemovedAt *time.Time `json:"removed_at,omitempty"`

@@ -87,7 +87,7 @@ func (s *Store) CaptureDailyEJHMerge(now time.Time) (*ProDailyMergeRun, error) {
 		if payment.OpenedAt == nil || payment.OpenedAt.After(at) || payment.PaymentStatus != "success" || payment.RemovedAt != nil || payment.RequestedAt != nil {
 			continue
 		}
-		if p.DeletionSubmitted() || p.TransferStatus == "completed" || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" || p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || p.ProAuto.Status == "completed" || (p.ProMigration != nil && p.ProMigration.Paused) {
+		if p.DispositionStarted() || p.TransferStatus == "completed" || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" || p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || p.ProAuto.Status == "completed" || (p.ProMigration != nil && p.ProMigration.Paused) {
 			continue
 		}
 		if p.ProAuto.ID != "" && p.ProAuto.OrderID != payment.ID {

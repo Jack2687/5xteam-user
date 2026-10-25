@@ -1,3 +1,4 @@
+import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import vm from 'node:vm'
@@ -9,7 +10,7 @@ const source=readFileSync(new URL('../src/components/NexovccManagementView.vue',
 const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const calls=[],timers=[]
 let paused=false
-const ctx=vm.createContext({...helpers,ref,reactive,computed,watch,crypto:webcrypto,
+const ctx=vm.createContext({cardOrigin,...helpers,ref,reactive,computed,watch,crypto:webcrypto,
  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},clearTimeout(){},setTimeout:fn=>timers.push(fn),formatTime:v=>v,
  async api(url,options={}){
   calls.push({url,body:options.body})

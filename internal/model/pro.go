@@ -52,6 +52,7 @@ func (s ProAutoState) PaymentOrderID() string {
 // ProSettings is intentionally independent from Team rotation push settings.
 // Its providers are mutually exclusive through Provider.
 type ProSettings struct {
+	MerchantSuccessFeeUSD        string              `json:"merchant_success_fee_usd"`
 	PurchaseScheduleEnabled      bool                `json:"purchase_schedule_enabled"`
 	PurchaseWindows              []ProPurchaseWindow `json:"purchase_windows"`
 	EJHPlanTemplates             map[string]string   `json:"ejh_plan_templates"`
@@ -81,6 +82,8 @@ type ProSettings struct {
 	QuotaUsedThreshold           float64             `json:"quota_used_threshold"`
 	QuotaCheckIntervalSeconds    int                 `json:"quota_check_interval_seconds"`
 	AutoMergeEnabled             bool                `json:"auto_merge_enabled"`
+	AutoMerchantEnabled          bool                `json:"auto_merchant_enabled"`
+	MerchantKeyPresent           bool                `json:"merchant_key_present"`
 	AutoDeleteEnabled            bool                `json:"auto_delete_enabled"`
 	AutoDeletePaused             bool                `json:"auto_delete_paused"`
 	DeletionCheckIntervalSeconds int                 `json:"deletion_check_interval_seconds"`

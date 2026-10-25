@@ -1,6 +1,7 @@
 package store
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -198,6 +199,7 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 		if e = json.Unmarshal([]byte(raw), &old); e != nil {
 			return c, e
 		}
+		c.Platform, c.TemplateID, c.TemplateName = old.Platform, old.TemplateID, old.TemplateName
 		c.Imported = old.Imported
 		// List and balance responses omit the holder; keep the last detail snapshot.
 		if c.Holder == nil {
@@ -227,6 +229,11 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 		}
 		if c.Status == "4" && old.Status == "4" {
 			c.ClosedAt = old.ClosedAt
+		}
+	}
+	if c.Platform == "" || c.TemplateID == "" {
+		if e = setNexovccCardOrigin(tx, &c); e != nil {
+			return c, e
 		}
 	}
 	if c.Status == "4" {
@@ -276,6 +283,7 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 				return c, e
 			}
 		}
+		card.Platform, card.TemplateID, card.TemplateName = c.Platform, c.TemplateID, c.TemplateName
 		card.CardType = "nexovcc"
 		card.Source = "nexovcc"
 		card.Last4 = secret.Number[len(secret.Number)-4:]
@@ -345,7 +353,7 @@ func (s *Store) nexovccIssuer(q proCapacityQuery, key string) (*gptpay.Card, err
 	if e = json.Unmarshal([]byte(raw), &c); e != nil {
 		return nil, e
 	}
-	out := &gptpay.Card{Source: "nexovcc", IssuerOrderNo: c.Serial, IssuerStatus: c.Status, IssuerFrozen: c.Control == "frozen", IssuerLocked: pending || c.Control == "frozen" || c.Error != "" || !c.Imported}
+	out := &gptpay.Card{Platform: c.Platform, TemplateID: c.TemplateID, TemplateName: c.TemplateName, Source: "nexovcc", IssuerOrderNo: c.Serial, IssuerStatus: c.Status, IssuerFrozen: c.Control == "frozen", IssuerLocked: pending || c.Control == "frozen" || c.Error != "" || !c.Imported}
 	var uncertain bool
 	if e = q.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_card_usage WHERE card_key=? AND status IN ('submission_unknown','manual_review'))`, key).Scan(&uncertain); e != nil {
 		return nil, e
@@ -484,6 +492,9 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...Nexovcc
 		}
 		if c.Status == "4" {
 			return fmt.Errorf("环球卡片已销卡，不能重复操作")
+		}
+		if (op.AutoWithdraw || op.CapacityRecycle) && !cardplatform.IsOAI(c.Platform) {
+			return fmt.Errorf("CC 卡不参与自动提现或自动销卡")
 		}
 		if op.AutoWithdraw && c.NormalPending {
 			return fmt.Errorf("正常待定卡不参与自动提现")
@@ -688,28 +699,29 @@ func (s *Store) SaveNexovccOperation(op nexovcc.Operation) error {
 }
 
 type NexovccCase struct {
-	SharedFees    *NexovccSharedFees `json:"shared_fees,omitempty"`
-	CardName      string             `json:"card_name"`
-	Provider      string             `json:"provider"`
-	OpenedAt      *time.Time         `json:"opened_at,omitempty"`
-	Deleted       bool               `json:"deleted"`
-	ManualState   string             `json:"manual_state,omitempty"`
-	RemovedAt     string             `json:"removed_at,omitempty"`
-	Match         *NexovccMatch      `json:"match,omitempty"`
-	Revenue       *float64           `json:"revenue_r"`
-	RevenueNote   string             `json:"revenue_note,omitempty"`
-	ID            string             `json:"id"`
-	Email         string             `json:"email"`
-	CardID        string             `json:"card_id"`
-	Last4         string             `json:"last4"`
-	Plan          string             `json:"plan"`
-	PaymentStatus string             `json:"payment_status"`
-	State         string             `json:"state"`
-	Reason        string             `json:"reason"`
-	RequestedAt   string             `json:"requested_at"`
-	UpdatedAt     string             `json:"updated_at"`
-	Revision      int                `json:"revision"`
-	CreatedAt     time.Time          `json:"created_at"`
+	MerchantFeeUSD string             `json:"merchant_fee_usd"`
+	SharedFees     *NexovccSharedFees `json:"shared_fees,omitempty"`
+	CardName       string             `json:"card_name"`
+	Provider       string             `json:"provider"`
+	OpenedAt       *time.Time         `json:"opened_at,omitempty"`
+	Deleted        bool               `json:"deleted"`
+	ManualState    string             `json:"manual_state,omitempty"`
+	RemovedAt      string             `json:"removed_at,omitempty"`
+	Match          *NexovccMatch      `json:"match,omitempty"`
+	Revenue        *float64           `json:"revenue_r"`
+	RevenueNote    string             `json:"revenue_note,omitempty"`
+	ID             string             `json:"id"`
+	Email          string             `json:"email"`
+	CardID         string             `json:"card_id"`
+	Last4          string             `json:"last4"`
+	Plan           string             `json:"plan"`
+	PaymentStatus  string             `json:"payment_status"`
+	State          string             `json:"state"`
+	Reason         string             `json:"reason"`
+	RequestedAt    string             `json:"requested_at"`
+	UpdatedAt      string             `json:"updated_at"`
+	Revision       int                `json:"revision"`
+	CreatedAt      time.Time          `json:"created_at"`
 }
 
 func (s *Store) NexovccCases() ([]NexovccCase, error) {
@@ -719,6 +731,10 @@ func (s *Store) NexovccCases() ([]NexovccCase, error) {
 }
 
 func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
+	merchantFees, err := proMerchantFeesByOrder(q)
+	if err != nil {
+		return nil, err
+	}
 	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,'') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0) ORDER BY o.created_at DESC,o.id DESC`)
 	if e != nil {
 		return nil, e
@@ -731,6 +747,7 @@ func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
 		if e = rows.Scan(&v.ID, &v.Email, &v.CardID, &v.Last4, &v.Plan, &v.PaymentStatus, &v.State, &v.Reason, &v.RequestedAt, &v.UpdatedAt, &v.Revision, &at, &v.CardName, &v.Provider, &openedAt, &v.Deleted, &v.ManualState, &v.RemovedAt); e != nil {
 			return nil, e
 		}
+		v.MerchantFeeUSD = merchantFees[v.ID]
 		v.CreatedAt, _ = time.Parse(time.RFC3339Nano, at)
 		if opened, err := time.Parse(time.RFC3339Nano, openedAt); err == nil && !opened.IsZero() {
 			v.OpenedAt = &opened

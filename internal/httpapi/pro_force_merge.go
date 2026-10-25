@@ -16,7 +16,7 @@ func (s *Server) forcedMergeReason(p model.MailAccountProfile, c model.ProSettin
 	if c.AutoDeleteEnabled && c.AutoDeletePaused {
 		return ""
 	}
-	if p.DeletionSubmitted() {
+	if p.DispositionStarted() {
 		return ""
 	}
 	if p.DailyMergeMatches() && p.ManagementScope == "pro" && p.PushStatus == "completed" && !p.ProWorkflowRunning && !p.ProAuto.StopRequested && p.ProAuto.Status != "stopped" && (p.ProMigration == nil || !p.ProMigration.Paused) && !proTransferNeedsConfirmation(p) && !(p.TransferStatus == "completed" && p.RemoveStatus == "completed") {
@@ -56,7 +56,7 @@ func forceMergeDue(p model.MailAccountProfile, c model.ProSettings, now time.Tim
 	if c.AutoDeleteEnabled && c.AutoDeletePaused {
 		return false
 	}
-	if p.ProAuto.StopRequested || p.DeletionSubmitted() {
+	if p.ProAuto.StopRequested || p.DispositionStarted() {
 		return false
 	}
 	if p.ProPushDeadline() == nil || p.ManagementScope != "pro" || p.ProPushStartedAt == nil || p.PushStatus != "completed" || p.ProWorkflowRunning || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) || proTransferNeedsConfirmation(p) {

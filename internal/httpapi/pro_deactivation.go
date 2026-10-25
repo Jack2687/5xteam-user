@@ -27,6 +27,9 @@ func (s *Server) performProDisposition(ctx context.Context, email string) (model
 	if err != nil {
 		return p, err
 	}
+	if p.MerchantStarted() {
+		return s.performProMerchant(ctx, email)
+	}
 	if p.DeletionConfirmed() {
 		return p, nil
 	}
@@ -37,6 +40,9 @@ func (s *Server) performProDisposition(ctx context.Context, email string) (model
 	// An accepted/uncertain request must be reconciled even after a mode change.
 	if p.DeletionSubmitted() || c.AutoDeleteEnabled {
 		return s.performProAutomaticDeactivation(ctx, email)
+	}
+	if c.AutoMerchantEnabled {
+		return s.performProMerchant(ctx, email)
 	}
 	return s.performProMerge(ctx, email)
 }

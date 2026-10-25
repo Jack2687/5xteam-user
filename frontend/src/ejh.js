@@ -69,7 +69,7 @@ export function returnStatus(state) { return Object.hasOwn(returnStatusLabels, s
 export function cardHasCase(card, row) { return row.card_id === card.id || row.ejh_card_id === card.id }
 export const cardStates = { '1': '已激活', '2': '已销卡', '3': '活跃', '4': '未激活', '5': '卡台状态受限', '6': '销卡失败', '7': '非活跃', '8': '销卡处理中', cancel_pending: '销卡结果确认中', review: '资料待核实', unknown: '状态待核实', unlinked: '手动添加 · 未绑定卡台' }
 export function cardLifecycle(card) {
-  return ['2','8'].includes(String(card.remote?.status ?? card.local?.issuer_status ?? '')) || !!card.local?.issuer_cancel_status ? 'closed' : 'normal'
+  return ['2','8'].includes(String(card.remote?.status ?? card.local?.issuer_status ?? '')) || !!card.local?.issuer_cancel_status ? 'closed' : card.normal_pending ? 'normal_pending' : 'normal'
 }
 export function cardState(card) {
   if (card.issuer_linked === false) return 'unlinked'

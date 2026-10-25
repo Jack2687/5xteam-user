@@ -208,7 +208,7 @@ func (s *Server) tickProSchedule(force bool) {
 	if err == nil {
 		err = s.validateProAutoPush(model.MailAccountProfile{}, cfg, password)
 	}
-	if err != nil || key == "" || (!cfg.AutoDeleteEnabled && cfg.TargetAdminID == "") {
+	if err != nil || key == "" || (cfg.Disposition() == "merge" && cfg.TargetAdminID == "") {
 		finish("failed", "开通配置不完整，请检查 GPTPay、Pro 推送和目标母号")
 		return
 	}

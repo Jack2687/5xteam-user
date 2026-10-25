@@ -24,6 +24,11 @@ func (s *Server) beginProManualStage(email, stage string) func(error) {
 		if errors.Is(err, errProAutoDeletePaused) {
 			status, message = "interrupted", ""
 		}
+		if stage == "merchant" && err == nil {
+			if p, _, e := s.store.MailAccountCredential(email); e == nil && !p.MerchantCompleted() {
+				status = "waiting"
+			}
+		}
 		_ = s.store.FinishProManualStage(email, stage, id, status, message)
 	}
 }

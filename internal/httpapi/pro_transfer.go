@@ -170,6 +170,16 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取 Pro 配置失败")
 		return
 	}
+	if p.MerchantStarted() || cfg.AutoMerchantEnabled && (p.InviteStatus == "completed" || p.AcceptStatus == "completed" || p.TransferStatus == "completed" || p.SpaceMergedOnce) {
+		p, err = s.startProEndJob(email, lock.Unlock, nil, "manual_merchant")
+		if err != nil {
+			writeAPI(w, 409, nil, err.Error())
+			return
+		}
+		locked = false
+		writeAPI(w, 202, p, "")
+		return
+	}
 	if p.DeletionSubmitted() || cfg.AutoDeleteEnabled && (p.InviteStatus == "completed" || p.AcceptStatus == "completed" || p.TransferStatus == "completed" || p.SpaceMergedOnce) {
 		p, err = s.startProEndJob(email, lock.Unlock, nil, "manual_deactivate")
 		if err != nil {
@@ -205,14 +215,14 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 200, p, "")
 		return
 	}
-	if !cfg.AutoDeleteEnabled {
+	if cfg.Disposition() == "merge" {
 		p, err = s.importedProTarget(p)
 	}
 	if err != nil {
 		writeAPI(w, 409, nil, err.Error())
 		return
 	}
-	if !cfg.AutoDeleteEnabled && proTransferNeedsConfirmation(p) {
+	if cfg.Disposition() == "merge" && proTransferNeedsConfirmation(p) {
 		writeAPI(w, 409, nil, errProTransferUncertain.Error())
 		return
 	}

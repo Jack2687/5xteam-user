@@ -118,7 +118,7 @@ export function reconciliation(data, now = Date.now(), freshnessSeconds = 120) {
  const closedAuthorization = sum((data.groups || []).filter(g => closedSerials.has(g.serial_no) && g.valid && !g.fully_returned && !g.settled), g => Math.max(0, cents(g.difference)))
  const pendingAssets = totals.pending - closedAuthorization - totals.balanceRecoveredPending
  const assets = cents(data.balance?.amount) + cardBalance + pendingAssets
- const gap = totals.ready && !moneyMissing ? totals.gross - assets - totals.cost - externalWithdrawn : null
+ const gap = totals.ready && !moneyMissing ? totals.gross - assets - (totals.cost - totals.merchantFee) - externalWithdrawn : null
  const closurePending = sum(summaries, s => s.closurePending || 0)
  if (!totals.ready) reasons.push('财务流水尚未同步')
  if (moneyMissing) reasons.push('账户或卡片余额缺失')

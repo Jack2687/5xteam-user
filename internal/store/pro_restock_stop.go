@@ -55,7 +55,7 @@ func (s *Store) StopProRestockTask(id string) (restock.Task, bool, error) {
 	if err = json.Unmarshal([]byte(raw), &p); err != nil {
 		return task, false, err
 	}
-	if p.ManagementScope != "pro" || p.ProRestockTaskID != task.ID || p.ProWorkflowRunning || p.DeletionSubmitted() || p.SpaceMergedOnce {
+	if p.ManagementScope != "pro" || p.ProRestockTaskID != task.ID || p.ProWorkflowRunning || p.DispositionStarted() || p.SpaceMergedOnce {
 		return task, false, ErrProRestockStopConflict
 	}
 	now := time.Now()

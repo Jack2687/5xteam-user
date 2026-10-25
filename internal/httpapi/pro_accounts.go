@@ -107,7 +107,7 @@ func (s *Server) proAccountListWithCardsContext(ctx context.Context, items []mod
 				row.ProPushEndedAt = stopped
 			}
 			row.PushElapsedMinutes = max(0, int64(end.Sub(*item.ProPushStartedAt)/time.Minute))
-			if row.ProPushEndedAt == nil && (item.SpaceMergedOnce || item.DeletionSubmitted()) {
+			if row.ProPushEndedAt == nil && (item.SpaceMergedOnce || item.DispositionStarted()) {
 				row.PushElapsedMinutes = -1 // historical stopping time was not recorded
 			}
 			row.ForceMergeDeadline = item.ProPushDeadline()
@@ -733,6 +733,8 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.AutoDeleteEnabled, input.AutoMergeEnabled = current.AutoDeleteEnabled, current.AutoMergeEnabled
+	input.AutoMerchantEnabled, input.MerchantKeyPresent = current.AutoMerchantEnabled, current.MerchantKeyPresent
+	input.MerchantSuccessFeeUSD = current.MerchantSuccessFeeUSD
 	input.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.TargetAdminID, input.TargetSeatType = current.TargetAdminID, current.TargetSeatType
 	if input.AutoMergeEnabled && strings.TrimSpace(input.TargetAdminID) == "" {
@@ -1204,7 +1206,7 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	if err == nil && !applied {
 		return profile, errors.New("额度查询期间下游账号已变化，已丢弃旧响应，请重新查询")
 	}
-	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoDeleteEnabled && !currentSettings.AutoDeletePaused) && !profile.SpaceMergedOnce && !profile.DeletionSubmitted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
+	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoMerchantEnabled || currentSettings.AutoDeleteEnabled && !currentSettings.AutoDeletePaused) && !profile.SpaceMergedOnce && !profile.DispositionStarted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
 		profile, err = s.startProDispositionJob(email, nil, nil)
 		if errors.Is(err, errProAutoDeletePaused) {
 			err = nil
@@ -1555,7 +1557,7 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 				if p.ProAuto.ID != "" || p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) {
 					continue
 				}
-				needsQuota := !p.SpaceMergedOnce && !p.DeletionSubmitted()
+				needsQuota := !p.SpaceMergedOnce && !p.DispositionStarted()
 				needsCleanup := p.ProVM2CleanupPending() || p.SpaceMergedOnce && p.RemoveStatus != "completed"
 				if p.PushStatus == "completed" && (p.PushProvider == v.Provider || p.VM2 != nil) && !p.ProWorkflowRunning && (needsQuota || needsCleanup) {
 					target, _, _, targetErr := s.proAccountPushSettings(p)

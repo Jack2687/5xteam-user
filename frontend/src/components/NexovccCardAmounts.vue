@@ -7,6 +7,7 @@ const incomplete=computed(()=>!props.totals.ready||props.totals.unknownRevenue||
 const usd=v=>props.totals.ready?money(v):'—'
 const r=v=>props.totals.ready?rmb(v):'—'
 const fees=computed(()=>[
+ {label:'API 收费',value:props.totals.merchantFee,kind:'api-merchant'},
  {label:'开卡费',value:props.totals.opening,kind:'3003'},
  {label:'卡服务费',value:props.totals.service,kind:'card-service'},
  {label:'授权撤销费',value:props.totals.reversal,kind:'2003'},
@@ -21,7 +22,7 @@ const fees=computed(()=>[
  <div class="card-money">
   <div class="money-row"><span>消费收益</span><button @click="$emit('details',{type:'accounts'})"><strong>{{totals.unknownRevenue?'—':money(totals.revenue)}} R</strong></button></div>
   <div class="money-row"><span>卡片成本{{totals.balanceDifference?'（含暂估）':''}}</span><button @click="$emit('details',{type:'funds',feesOnly:true})"><strong>{{r(totals.cost)}} R</strong><small>{{usd(totals.cost)}} USD</small></button></div>
-  <div class="cost-note"><span>开卡 {{r(totals.opening)}} R</span><span>撤销 {{r(totals.reversal)}} R</span><span>交易及其他 {{r(totals.transaction+totals.otherFees)}} R</span><span>损耗及清算 {{r(totals.cardLoss+totals.settlement)}} R</span></div>
+  <div class="cost-note"><span>API 收费 {{r(totals.merchantFee)}} R</span><span>开卡 {{r(totals.opening)}} R</span><span>撤销 {{r(totals.reversal)}} R</span><span>交易及其他 {{r(totals.transaction+totals.otherFees)}} R</span><span>损耗及清算 {{r(totals.cardLoss+totals.settlement)}} R</span></div>
   <div v-if="totals.balanceDifference" class="money-row"><span>余额差额（暂估）</span><button @click="$emit('details',{type:'funds',kind:'balance-difference'})"><strong>{{r(totals.balanceDifference)}} R</strong><small>{{usd(totals.balanceDifference)}} USD · 已计成本</small></button></div>
   <div v-if="totals.service" class="money-row"><span>卡服务费</span><button @click="$emit('details',{type:'funds',kind:'card-service'})"><strong>{{r(totals.service)}} R</strong><small>{{usd(totals.service)}} USD</small></button></div>
   <div class="money-row profit"><span>卡片结余{{totals.pending||totals.balanceDifference?'（暂计）':''}}</span><strong :class="{negative:!incomplete&&totals.profit<0}">{{incomplete?'—':money(totals.profit)}} R</strong></div>

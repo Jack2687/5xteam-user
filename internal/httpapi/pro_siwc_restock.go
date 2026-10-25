@@ -96,7 +96,7 @@ func (s *Server) appendSIWCRestock(ctx context.Context, c restock.Config, p mode
 	}
 	targets := map[string][]model.MailAccountProfile{}
 	for _, v := range profiles {
-		if v.ProSIWC != nil && v.ProSIWC.AccountID > 0 && !v.DeletionSubmitted() && !v.SpaceMergedOnce && v.ProSIWC.Status != "ended" {
+		if v.ProSIWC != nil && v.ProSIWC.AccountID > 0 && !v.DispositionStarted() && !v.SpaceMergedOnce && v.ProSIWC.Status != "ended" {
 			targets[v.ProSIWC.TargetID] = append(targets[v.ProSIWC.TargetID], v)
 		}
 	}

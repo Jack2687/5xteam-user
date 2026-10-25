@@ -461,7 +461,7 @@ func (s *Server) manageProSIWC(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 200, current, "")
 		return
 	}
-	if current.ProSIWC == nil || current.ProSIWC.Status == "ended" || current.ProSIWC.Status == "active" || current.DeletionSubmitted() || current.SpaceMergedOnce {
+	if current.ProSIWC == nil || current.ProSIWC.Status == "ended" || current.ProSIWC.Status == "active" || current.DispositionStarted() || current.SpaceMergedOnce {
 		writeAPI(w, 409, nil, "当前状态不能重试转入")
 		return
 	}

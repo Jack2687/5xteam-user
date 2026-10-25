@@ -33,7 +33,7 @@ func (s *Server) finishProPostMergeGroups(ctx context.Context, p model.MailAccou
 	if p.ProPostMergeGroups.Action == "deactivate" && !p.DeletionAccepted() {
 		return p, errors.New("删除请求尚未受理，暂不调整删除后分组")
 	}
-	if !p.DeletionAccepted() && (p.TransferStatus != "completed" || (p.RemoveStatus != "completed" && p.RemoveStatus != "team_removed")) {
+	if !p.DeletionAccepted() && !p.MerchantAccepted() && (p.TransferStatus != "completed" || (p.RemoveStatus != "completed" && p.RemoveStatus != "team_removed")) {
 		return p, errors.New("合并移出成功或删除请求受理后才能调整 Sub2 分组")
 	}
 	target := *p.ProPostMergeGroups

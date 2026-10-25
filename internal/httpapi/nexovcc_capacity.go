@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -16,7 +17,7 @@ type nexovccCapacityWaitError struct{ message string }
 func (e *nexovccCapacityWaitError) Error() string { return e.message }
 
 func nexovccRecycleCandidate(card nexovcc.Card, cases []store.NexovccCase, groups []nexovcc.TradeGroup) bool {
-	if card.Status == "4" || !card.Imported || card.Error != "" {
+	if !cardplatform.IsOAI(card.Platform) || card.Status == "4" || !card.Imported || card.Error != "" {
 		return false
 	}
 	for _, c := range cases {

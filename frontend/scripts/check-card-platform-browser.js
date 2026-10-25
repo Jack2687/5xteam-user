@@ -1,0 +1,25 @@
+(async()=>{
+ const f=window.cardFixture;if(!f)throw Error('Fixture required')
+ const pause=ms=>new Promise(r=>setTimeout(r,ms)),assert=(x,m)=>{if(!x)throw Error(m)}
+ const btn=text=>[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===text)
+ const wait=async fn=>{for(let i=0;i<100;i++){if(fn())return;await pause(40)}throw Error('Timed out')}
+ await wait(()=>document.body.textContent.includes('OAI test template'))
+ assert(!document.body.textContent.includes('CC test template'),'CC visible by default')
+ btn('移到正常待定').click();await wait(()=>!document.body.textContent.includes('OAI test template'))
+ ;[...document.querySelectorAll('button')].find(b=>b.textContent.startsWith('正常待定')).click()
+ await wait(()=>btn('恢复正常'))
+ btn('一键刷新正常待定卡片数据').click();await wait(()=>f.requests.filter(r=>r.path==='/api/ejh/cards/oai/action').length===3)
+ const actions=f.requests.filter(r=>r.path==='/api/ejh/cards/oai/action').map(r=>r.body.action)
+ assert(actions.join(',')==='refresh,balance,sync_trades','pending refresh must target full single-card sync')
+ await wait(()=>!btn('恢复正常').disabled);btn('恢复正常').click();await wait(()=>!document.body.textContent.includes('OAI test template'))
+ ;[...document.querySelectorAll('button')].find(b=>/^正常 \d/.test(b.textContent.trim())).click()
+ btn('CC').click();await wait(()=>document.body.textContent.includes('CC test template'))
+ assert(!document.body.textContent.includes('OAI test template'),'platform filters mixed')
+ btn('列表视图').click();await wait(()=>document.querySelector('thead')?.textContent.includes('开卡模板'))
+ assert(document.querySelector('tbody').textContent.includes('CC test template'),'list badge missing')
+ btn('测试环球').click();await wait(()=>document.body.textContent.includes('OAI test template'))
+ assert(!document.body.textContent.includes('CC test template'),'Global CC visible by default')
+ btn('CC').click();await wait(()=>document.body.textContent.includes('CC test template'))
+ assert(!document.body.textContent.includes('OAI test template'),'Global platform filter mixed')
+ return {passed:true,checks:['EJH pending/restore','pending manual full single-card sync','OAI default both issuers','CC filtering both issuers','template/platform badge in list']}
+})()

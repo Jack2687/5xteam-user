@@ -1,6 +1,7 @@
 package store
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -217,7 +218,7 @@ func (s *Store) DeleteGPTPayCard(id string) error {
 	}
 	return nil
 }
-func (s *Store) GPTPayCards(limit, offset int, enabledOnly bool) ([]gptpay.Card, int, error) {
+func (s *Store) GPTPayCards(limit, offset int, enabledOnly bool, oaiOnly ...bool) ([]gptpay.Card, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query("SELECT profile,encrypted_secret FROM gptpay_cards ORDER BY created_at DESC,id DESC")
@@ -259,6 +260,9 @@ func (s *Store) GPTPayCards(limit, offset int, enabledOnly bool) ([]gptpay.Card,
 	for _, v := range loaded {
 		if err = s.decorateProCardLocked(&v.card, v.secret); err != nil {
 			return nil, 0, err
+		}
+		if len(oaiOnly) > 0 && oaiOnly[0] && !cardplatform.IsOAI(v.card.Platform) {
+			continue
 		}
 		if !enabledOnly || v.card.Available {
 			items = append(items, v.card)

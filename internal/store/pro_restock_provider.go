@@ -1,6 +1,7 @@
 package store
 
 import (
+	"chatgpt-space-merge/internal/cardplatform"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -57,6 +58,9 @@ func (s *Store) ProRestockDispatchTask(id string) (restock.Task, error) {
 }
 
 func RestockCardMatches(card gptpay.Card, provider string, strict bool) bool {
+	if !cardplatform.IsOAI(card.Platform) {
+		return false
+	}
 	if provider == "nexovcc" {
 		return card.Source == "nexovcc" || card.CardType == "nexovcc"
 	}

@@ -66,7 +66,7 @@ type ProSIWCState struct {
 }
 
 func (p MailAccountProfile) SIWCTransferring() bool {
-	if p.ProSIWC == nil || p.DeletionSubmitted() || p.SpaceMergedOnce {
+	if p.ProSIWC == nil || p.DispositionStarted() || p.SpaceMergedOnce {
 		return false
 	}
 	return p.ProSIWC.Status != "active" && p.ProSIWC.Status != "ended"

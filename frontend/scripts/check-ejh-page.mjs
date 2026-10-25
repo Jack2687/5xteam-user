@@ -1,3 +1,4 @@
+import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -23,7 +24,7 @@ function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,
  const calls=[],mounts=[],unmounts=[],confirmations=[]
  let release,savedPercent=6,failSave=false
  const blocked=new Promise(resolve=>{release=resolve})
- const context=vm.createContext({...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
+ const context=vm.createContext({cardOrigin,...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
  async api(url,options={}){
   calls.push({url,options})
   if(url==='/api/ejh/settings'){

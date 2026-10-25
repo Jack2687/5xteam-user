@@ -57,7 +57,7 @@ func Open(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	path := filepath.Join(dataDir, "state.db")
-	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	dsn := "file:" + strings.NewReplacer("%", "%25", "#", "%23", "?", "%3F").Replace(filepath.ToSlash(path)) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -215,6 +215,10 @@ func (s *Store) initSchema() error {
 			id INTEGER PRIMARY KEY CHECK (id = 1), profile TEXT NOT NULL,
 			encrypted_sub2_password TEXT NOT NULL DEFAULT '', encrypted_cpa_key TEXT NOT NULL DEFAULT ''
 		);
+		CREATE TABLE IF NOT EXISTS pro_merchant_fees (request_id TEXT PRIMARY KEY, order_id TEXT NOT NULL, email TEXT NOT NULL, card_id TEXT NOT NULL, issuer TEXT NOT NULL, amount_cents INTEGER NOT NULL, at TEXT NOT NULL);
+		CREATE INDEX IF NOT EXISTS pro_merchant_fees_order ON pro_merchant_fees(order_id);
+		CREATE TABLE IF NOT EXISTS pro_merchant_secret (id INTEGER PRIMARY KEY CHECK(id=1), encrypted_key TEXT NOT NULL);
+		CREATE TABLE IF NOT EXISTS pro_merchant_requests (email TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, encrypted_submission TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS pro_vm2api_secret (id INTEGER PRIMARY KEY CHECK(id=1), encrypted_key TEXT NOT NULL DEFAULT '');
 		CREATE TABLE IF NOT EXISTS gptpay_settings (id INTEGER PRIMARY KEY CHECK(id=1), profile TEXT NOT NULL, encrypted_key TEXT NOT NULL DEFAULT '');
 		CREATE TABLE IF NOT EXISTS gptpay_provider_settings (provider TEXT PRIMARY KEY, profile TEXT NOT NULL, encrypted_key TEXT NOT NULL DEFAULT '');
@@ -967,6 +971,9 @@ func (s *Store) deleteMailAccountLocked(email string, pro bool) error {
 	}
 	result, err := tx.Exec("DELETE FROM mail_accounts WHERE email=?", email)
 	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM pro_merchant_requests WHERE email=?", email); err != nil {
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {

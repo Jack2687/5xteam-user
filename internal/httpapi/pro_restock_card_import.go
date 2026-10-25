@@ -40,7 +40,7 @@ func (s *Server) beginRestockStart(parent context.Context, id string) (context.C
 }
 
 func (s *Server) trackRestockCardImport(t *restock.Task, p model.MailAccountProfile) (bool, error) {
-	if t.CardProvider != "nexovcc" || t.Status == "reserved" || p.ProRestockTaskID != t.ID || p.ProAuto.ID != "" || p.PushStatus == "completed" || p.DeletionSubmitted() || p.SpaceMergedOnce {
+	if t.CardProvider != "nexovcc" || t.Status == "reserved" || p.ProRestockTaskID != t.ID || p.ProAuto.ID != "" || p.PushStatus == "completed" || p.DispositionStarted() || p.SpaceMergedOnce {
 		return false, nil
 	}
 	op, err := s.store.NexovccRestockOperation(t.ID)
@@ -121,7 +121,7 @@ func (s *Server) continueProRestockCardImports(ctx context.Context, c restock.Co
 			continue
 		}
 		profile, _, err := s.store.MailAccountCredential(t.Email)
-		if err != nil || profile.ProRestockTaskID != t.ID || profile.ProAuto.ID != "" || profile.ProAuto.StopRequested || profile.ProAuto.Status == "stopped" || profile.DeletionSubmitted() || profile.SpaceMergedOnce || profile.PushStatus == "completed" || profile.ProWorkflowRunning || s.proLoginAlreadyRunning(t.Email) {
+		if err != nil || profile.ProRestockTaskID != t.ID || profile.ProAuto.ID != "" || profile.ProAuto.StopRequested || profile.ProAuto.Status == "stopped" || profile.DispositionStarted() || profile.SpaceMergedOnce || profile.PushStatus == "completed" || profile.ProWorkflowRunning || s.proLoginAlreadyRunning(t.Email) {
 			continue
 		}
 		s.proMergeMu.Lock()
