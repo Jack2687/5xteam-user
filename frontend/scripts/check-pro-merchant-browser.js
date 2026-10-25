@@ -15,12 +15,15 @@
  merchant.click();await pause(40);assert(merchant.checked&&!merge.checked&&!deletion.checked,'merchant not exclusive')
  const key=[...document.querySelectorAll('label.field')].find(l=>l.textContent.includes('API 商户密钥')).querySelector('input')
  const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set
+ const address=[...document.querySelectorAll('label.field')].find(l=>l.querySelector('span')?.textContent==='API 商户地址').querySelector('input')
+ setter.call(address,'https://merchant.example.test/service/v1/cemifh');address.dispatchEvent(new Event('input',{bubbles:true}))
  setter.call(key,'fixture-only-key');key.dispatchEvent(new Event('input',{bubbles:true}))
  await wait(()=>!button('保存 Pro 配置').disabled)
  button('保存 Pro 配置').click()
  await wait(()=>f.requests.some(r=>r.path==='/api/pro-settings/automation'))
  await wait(()=>key.value==='')
  const saved=f.requests.find(r=>r.path==='/api/pro-settings/automation').body
+ assert(saved.automation.merchant_api_url==='https://merchant.example.test/service/v1/cemifh','custom merchant address missing from save')
  assert(saved.merchant_api_key==='fixture-only-key'&&saved.automation.auto_merchant_enabled&&!saved.automation.auto_delete_enabled&&!saved.automation.auto_merge_enabled,'wrong saved payload')
  button('测试商户列表').click()
  await wait(()=>document.querySelector('.pro-table')?.textContent.includes('商户核验中'))
@@ -33,5 +36,9 @@
  await pause(80)
  assert(document.querySelector('tbody').textContent.includes('done@example.com')&&!document.querySelector('tbody').textContent.includes('pending@example.com'),'merchant filter not respected')
  assert(!document.querySelector('tbody').textContent.includes('下次查询'),'completed account still schedules progress')
- return {passed:true,checks:['three exclusive toggles','encrypted-key form payload and clearing','merchant final automation stage','separate progress column','final-success-only filter','no timer after completion']}
+ button('测试商户设置').click();await wait(()=>document.querySelector('nav'))
+ ;[...document.querySelectorAll('nav button')].find(b=>b.textContent.includes('空间合并/删除账户/API 商户')).click()
+ await wait(()=>[...document.querySelectorAll('label.field')].find(l=>l.querySelector('span')?.textContent==='API 商户地址')?.querySelector('input')?.value===saved.automation.merchant_api_url)
+ assert([...document.querySelectorAll('label.field')].find(l=>l.querySelector('span')?.textContent==='API 商户密钥').querySelector('input').value==='','saved key echoed on reload')
+ return {passed:true,checks:['exclusive toggles','custom merchant address save and reload','encrypted-key form payload and clearing','merchant final automation stage','separate progress column','final-success-only filter','no timer after completion']}
 })()

@@ -117,6 +117,53 @@ func TestProMerchantAutoTailAndTerminalStatuses(t *testing.T) {
 	}
 }
 
+func TestProMerchantUsesPinnedCustomAddressAndKey(t *testing.T) {
+	f := merchantFixture(t)
+	var posts, gets, replacementCalls atomic.Int32
+	original := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer pinned-merchant-key" {
+			t.Error("inflight request used replacement key")
+		}
+		if r.Method == "POST" {
+			posts.Add(1)
+			if r.URL.Path != "/proxy/v1/cemifh" {
+				t.Error("wrong submission path", r.URL.Path)
+			}
+			w.WriteHeader(202)
+			fmt.Fprint(w, `{"ids":["pinned-job"]}`)
+			return
+		}
+		gets.Add(1)
+		if r.URL.Path != "/proxy/v1/cemifh/pinned-job" {
+			t.Error("wrong progress path", r.URL.Path)
+		}
+		fmt.Fprintf(w, `{"refund":{"id":"pinned-job","email":%q,"status":"succeeded"}}`, f.email)
+	}))
+	defer original.Close()
+	replacement := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { replacementCalls.Add(1); w.WriteHeader(500) }))
+	defer replacement.Close()
+	v, _, _, err := f.s.store.ProSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.MerchantAPIURL = original.URL + "/proxy/v1/cemifh"
+	if _, _, err = f.s.store.SaveProAutomationSettings(v, gptpay.Settings{PlanCode: "pro5"}, "", "pinned-merchant-key"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.s.performProMerchant(t.Context(), f.email)
+	if err != nil || !p.MerchantAccepted() || p.MerchantCompleted() {
+		t.Fatal("custom submission failed", err)
+	}
+	v.MerchantAPIURL = replacement.URL + "/v1/refunds"
+	if _, _, err = f.s.store.SaveProAutomationSettings(v, gptpay.Settings{PlanCode: "pro5"}, "", "replacement-key"); err != nil {
+		t.Fatal(err)
+	}
+	p, err = f.s.performProMerchant(t.Context(), f.email)
+	if err != nil || !p.MerchantCompleted() || posts.Load() != 1 || gets.Load() != 1 || replacementCalls.Load() != 0 {
+		t.Fatal("inflight request changed merchants", err, posts.Load(), gets.Load(), replacementCalls.Load())
+	}
+}
+
 func TestProMerchantLostResponseUsesOriginalRequest(t *testing.T) {
 	f := merchantFixture(t)
 	var originalBody, originalKey string

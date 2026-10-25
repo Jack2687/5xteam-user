@@ -15,6 +15,7 @@ import (
 )
 
 const URL = "https://refunds.llmrefund.com"
+const DefaultSubmitURL = URL + "/v1/refunds"
 
 type Account struct {
 	Email      string `json:"email"`
@@ -65,16 +66,27 @@ func (j Job) Label() string {
 }
 
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	// SubmitURL is the complete endpoint. BaseURL is retained for existing
+	// callers using the original API at a different host.
+	SubmitURL string
+	BaseURL   string
+	HTTP      *http.Client
 }
 
 func (c Client) request(ctx context.Context, method, path, key, idempotency string, payload []byte) ([]byte, error) {
-	base := c.BaseURL
-	if base == "" {
-		base = URL
+	endpoint := c.SubmitURL
+	if endpoint == "" && c.BaseURL != "" {
+		endpoint = strings.TrimRight(c.BaseURL, "/") + "/v1/refunds"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+path, bytes.NewReader(payload))
+	endpoint, err := NormalizeSubmitURL(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	address := endpoint + path
+	if strings.HasPrefix(path, "/") {
+		address = strings.TrimRight(endpoint, "/") + path
+	}
+	req, err := http.NewRequestWithContext(ctx, method, address, bytes.NewReader(payload))
 	if err != nil {
 		return nil, errors.New("商户请求地址无效")
 	}
@@ -114,7 +126,7 @@ type Receipt struct {
 }
 
 func (c Client) Submit(ctx context.Context, key, idempotency string, payload []byte, email string) (Receipt, error) {
-	raw, err := c.request(ctx, http.MethodPost, "/v1/refunds", key, idempotency, payload)
+	raw, err := c.request(ctx, http.MethodPost, "", key, idempotency, payload)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -150,9 +162,11 @@ func submissionID(v any, email string) string {
 		if actual, ok := x["email"].(string); ok && !strings.EqualFold(actual, email) {
 			return ""
 		}
-		if ids, ok := x["job_ids"].([]any); ok && len(ids) == 1 {
-			if id, ok := ids[0].(string); ok && validID(id) {
-				return id
+		for _, name := range []string{"job_ids", "ids"} {
+			if ids, ok := x[name].([]any); ok && len(ids) == 1 {
+				if id, ok := ids[0].(string); ok && validID(id) {
+					return id
+				}
 			}
 		}
 		for _, name := range []string{"jobs", "items", "refunds", "accounts", "data"} {
@@ -175,12 +189,12 @@ func submissionID(v any, email string) string {
 }
 
 // Some versions return a batch receipt. Resolve its one submitted account from
-// the documented batch filter, then use GET /v1/refunds/{id} for all checks.
+// the documented batch filter, then use GET {SubmitURL}/{id} for all checks.
 func (c Client) ResolveBatch(ctx context.Context, key, batch, email string) (string, error) {
 	if !validID(batch) {
 		return "", errors.New("商户批次编号无效")
 	}
-	raw, err := c.request(ctx, http.MethodGet, "/v1/refunds?batch_id="+url.QueryEscape(batch)+"&page_size=100&page=1", key, "", nil)
+	raw, err := c.request(ctx, http.MethodGet, "?batch_id="+url.QueryEscape(batch)+"&page_size=100&page=1", key, "", nil)
 	if err != nil {
 		return "", err
 	}
@@ -215,11 +229,22 @@ func (c Client) Progress(ctx context.Context, key, id, email string) (Job, error
 	if !validID(id) {
 		return job, errors.New("商户申请编号无效")
 	}
-	raw, err := c.request(ctx, http.MethodGet, "/v1/refunds/"+url.PathEscape(id), key, "", nil)
+	raw, err := c.request(ctx, http.MethodGet, "/"+url.PathEscape(id), key, "", nil)
 	if err != nil {
 		return job, err
 	}
-	if json.Unmarshal(raw, &job) != nil || job.ID != id || !strings.EqualFold(job.Email, email) || job.Status == "" {
+	var response struct {
+		Job
+		Refund *Job `json:"refund"`
+	}
+	if json.Unmarshal(raw, &response) != nil {
+		return Job{}, errors.New("商户进度格式无效")
+	}
+	job = response.Job
+	if response.Refund != nil && job.ID == "" {
+		job = *response.Refund
+	}
+	if job.ID != id || !strings.EqualFold(job.Email, email) || job.Status == "" {
 		return Job{}, errors.New("商户进度缺少状态或申请编号、账号不匹配，未标记完成")
 	}
 	return job, nil

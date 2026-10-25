@@ -71,9 +71,12 @@ func (s *Server) performProMerchant(ctx context.Context, email string) (out mode
 	if err != nil {
 		return p, err
 	}
-	client := refundmerchant.Client{}
+	client := refundmerchant.Client{SubmitURL: submission.APIURL}
 	if s.proMerchantClient != nil {
 		client = *s.proMerchantClient
+		if client.BaseURL == "" && client.SubmitURL == "" {
+			client.SubmitURL = submission.APIURL
+		}
 	}
 	defer func() {
 		// Keep the existing downstream retirement rule, without invoking any

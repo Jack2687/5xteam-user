@@ -136,3 +136,76 @@ func TestMerchantBatchReceiptRequiresAccountResolution(t *testing.T) {
 		t.Fatal(job, err)
 	}
 }
+
+func TestMerchantCustomAddressAndWorkbenchEnvelope(t *testing.T) {
+	for _, path := range []string{"/v1/refunds", "/v1/cemifh", "/gateway/v1/cemifh/", "/open/v1/requests"} {
+		t.Run(path, func(t *testing.T) {
+			posts, batches, details := 0, 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer custom-key" {
+					t.Error("missing custom key")
+				}
+				switch r.Method + " " + r.URL.Path {
+				case "POST " + path:
+					posts++
+					if r.Header.Get("Idempotency-Key") != "unique-key" {
+						t.Error("missing idempotency key")
+					}
+					w.WriteHeader(202)
+					fmt.Fprint(w, `{"ids":["workbench-job"],"status":"queued"}`)
+				case "GET " + path:
+					batches++
+					if r.URL.Query().Get("batch_id") != "custom-batch" || r.URL.Query().Get("page_size") != "100" {
+						t.Error("missing batch filter")
+					}
+					fmt.Fprint(w, `{"items":[{"id":"workbench-job","batch_id":"custom-batch","email":"person@example.com"}]}`)
+				case "GET " + strings.TrimRight(path, "/") + "/workbench-job":
+					details++
+					fmt.Fprint(w, `{"refund":{"id":"workbench-job","email":"person@example.com","status":"succeeded"},"events":[]}`)
+				default:
+					t.Error("wrong custom path", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer srv.Close()
+			c := Client{SubmitURL: srv.URL + path}
+			receipt, err := c.Submit(t.Context(), "custom-key", "unique-key", nil, "person@example.com")
+			if err != nil || receipt.JobID != "workbench-job" {
+				t.Fatal(receipt, err)
+			}
+			job, err := c.Progress(t.Context(), "custom-key", receipt.JobID, "person@example.com")
+			if err != nil || !job.Succeeded() {
+				t.Fatal(job, err)
+			}
+			if _, err = c.Progress(t.Context(), "custom-key", receipt.JobID, "different@example.com"); err == nil {
+				t.Fatal("envelope bypassed account identity")
+			}
+			id, err := c.ResolveBatch(t.Context(), "custom-key", "custom-batch", "person@example.com")
+			if err != nil || id != receipt.JobID || posts != 1 || batches != 1 || details != 2 {
+				t.Fatal("custom endpoint submit/progress/batch mismatch", id, err, posts, batches, details)
+			}
+		})
+	}
+}
+
+func TestNormalizeMerchantAPIURL(t *testing.T) {
+	for input, want := range map[string]string{
+		"":                        DefaultSubmitURL,
+		" https://example.com/ ":  "https://example.com/",
+		"https://example.com/v1/": "https://example.com/v1/",
+		"https://example.com/service/v1/refunds/": "https://example.com/service/v1/refunds/",
+		"http://127.0.0.1:18740/v1/refunds":       "http://127.0.0.1:18740/v1/refunds",
+		"http://127.0.0.1:18740/v1/cemifh":        "http://127.0.0.1:18740/v1/cemifh",
+		"http://127.0.0.1:18740":                  "http://127.0.0.1:18740",
+	} {
+		got, err := NormalizeSubmitURL(input)
+		if err != nil || got != want {
+			t.Errorf("%q: %q %v", input, got, err)
+		}
+	}
+	for _, input := range []string{"example.com", "ftp://example.com", "https:///v1", "https://user:secret@example.com", "https://example.com?key=secret", "https://example.com/#refunds", "https://example.com/a/../b", "https://example.com/a/%2e%2e/b", "http://exa mple.com", "http://example.com\\path"} {
+		if _, err := NormalizeSubmitURL(input); err == nil {
+			t.Errorf("invalid address accepted: %q", input)
+		}
+	}
+}

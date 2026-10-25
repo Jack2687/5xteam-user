@@ -3,10 +3,51 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"chatgpt-space-merge/internal/model"
 )
+
+func TestProMerchantAddressSettingsCompatibility(t *testing.T) {
+	s, st, _ := gptPayFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("saving merchant config made an upstream request") })
+	pro := model.DefaultProSettings()
+	pro.AutoMerchantEnabled = true
+	pro.MerchantAPIURL = "http://127.0.0.1:18740/prefix/v1/refunds/"
+	input := map[string]any{"automation": pro, "gptpay": map[string]any{"plan_code": "pro5"}, "merchant_api_key": "private-test-merchant-key"}
+	rec := payCall(t, s.saveProAutomationSettings, "", "", input)
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), "private-test-merchant-key") {
+		t.Fatal("save failed or leaked key", rec.Code)
+	}
+	saved, _, _, _ := st.ProSettings()
+	if saved.MerchantAPIURL != pro.MerchantAPIURL || !saved.MerchantKeyPresent {
+		t.Fatal("merchant config not saved")
+	}
+	encoded, _ := json.Marshal(pro)
+	var legacy map[string]any
+	json.Unmarshal(encoded, &legacy)
+	delete(legacy, "merchant_api_url")
+	input["automation"] = legacy
+	input["merchant_api_key"] = ""
+	if rec = payCall(t, s.saveProAutomationSettings, "", "", input); rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	for _, bad := range []string{"not-a-url", "file:///local", "https://user:secret@example.com", "https://example.com?key=secret"} {
+		legacy["merchant_api_url"] = bad
+		input["merchant_api_key"] = "must-not-save"
+		if rec = payCall(t, s.saveProAutomationSettings, "", "", input); rec.Code != 400 {
+			t.Fatal("accepted bad merchant address", bad, rec.Code)
+		}
+	}
+	other := map[string]any{"provider": "cpa", "cpa": map[string]any{"url": "http://cpa.invalid"}, "cpa_key": "fixture", "merchant_api_url": "https://wrong.example.com"}
+	if rec = payCall(t, s.saveProSettings, "", "", other); rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	saved, _, _, _ = st.ProSettings()
+	if saved.MerchantAPIURL != pro.MerchantAPIURL {
+		t.Fatal("legacy or unrelated save changed merchant address")
+	}
+}
 
 func TestProAutomationSettingsSaveWithoutPushCredentials(t *testing.T) {
 	s, st, _ := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("saving config must not contact supplier") })

@@ -10,9 +10,13 @@ import (
 	"time"
 
 	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/refundmerchant"
 )
 
 func normalizeProSettings(v *model.ProSettings) {
+	if strings.TrimSpace(v.MerchantAPIURL) == "" {
+		v.MerchantAPIURL = refundmerchant.DefaultSubmitURL
+	}
 	groupNames := make(map[int64]string)
 	for index, id := range v.PostMergeGroupIDs {
 		if index < len(v.PostMergeGroupNames) && groupNames[id] == "" {

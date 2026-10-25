@@ -7,6 +7,7 @@ import (
 
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/refundmerchant"
 )
 
 func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +31,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	input.Automation.AutoMerchantEnabled = current.AutoMerchantEnabled
 	input.Automation.AutoMergeV2Enabled = current.AutoMergeV2Enabled
 	input.Automation.MerchantSuccessFeeUSD = current.MerchantSuccessFeeUSD
+	input.Automation.MerchantAPIURL = current.MerchantAPIURL
 	input.Automation.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.Automation.PurchaseScheduleEnabled, input.Automation.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
 	input.Automation.EJHPlanTemplates, input.Automation.NexovccPlanTemplates = current.EJHPlanTemplates, current.NexovccPlanTemplates
@@ -37,6 +39,12 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	v := input.Automation
+	merchantURL, urlErr := refundmerchant.NormalizeSubmitURL(v.MerchantAPIURL)
+	if urlErr != nil {
+		writeAPI(w, 400, nil, urlErr.Error())
+		return
+	}
+	v.MerchantAPIURL = merchantURL
 	if v.AutoMerchantEnabled && strings.TrimSpace(input.MerchantAPIKey) == "" && !current.MerchantKeyPresent {
 		writeAPI(w, 400, nil, "请填写 API 商户密钥")
 		return

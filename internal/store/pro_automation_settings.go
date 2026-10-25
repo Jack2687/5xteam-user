@@ -9,11 +9,16 @@ import (
 
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/refundmerchant"
 )
 
 // Only automation fields are changed here. Downstream credentials and groups
 // may be edited separately, so never overwrite them from an automation form.
 func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Settings, key string, merchantKeys ...string) (model.ProSettings, gptpay.Settings, error) {
+	merchantURL, urlErr := refundmerchant.NormalizeSubmitURL(input.MerchantAPIURL)
+	if urlErr != nil {
+		return input, pay, urlErr
+	}
 	fee, feeErr := merchantFeeAmount(input.MerchantSuccessFeeUSD)
 	if feeErr != nil {
 		return input, pay, feeErr
@@ -54,6 +59,7 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	v.AutoMerchantEnabled = input.AutoMerchantEnabled
 	v.AutoMergeV2Enabled = input.AutoMergeV2Enabled
 	v.MerchantSuccessFeeUSD = input.MerchantSuccessFeeUSD
+	v.MerchantAPIURL = merchantURL
 	var merchantSecret string
 	if err = tx.QueryRow("SELECT encrypted_key FROM pro_merchant_secret WHERE id=1").Scan(&merchantSecret); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return v, pay, err

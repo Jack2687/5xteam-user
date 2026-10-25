@@ -13,11 +13,12 @@ import (
 )
 
 type ProMerchantSubmission struct {
+	APIURL  string          `json:"api_url"`
 	APIKey  string          `json:"api_key"`
 	Payload json.RawMessage `json:"payload"`
 }
 
-// Pin the key and exact payload before sending anything. Retrying a lost POST
+// Pin the endpoint, key and exact payload before sending anything. Retrying a lost POST
 // response uses the original idempotency key even after credentials are edited.
 func (s *Store) PrepareProMerchant(email string) (model.MailAccountProfile, ProMerchantSubmission, error) {
 	s.mu.Lock()
@@ -46,6 +47,9 @@ func (s *Store) PrepareProMerchant(email string) (model.MailAccountProfile, ProM
 			return p, submission, e
 		}
 		e = json.Unmarshal([]byte(plain), &submission)
+		if e == nil {
+			submission.APIURL, e = refundmerchant.NormalizeSubmitURL(submission.APIURL)
+		}
 		return p, submission, e
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -61,6 +65,22 @@ func (s *Store) PrepareProMerchant(email string) (model.MailAccountProfile, ProM
 		return p, submission, errors.New("请先配置 API 商户密钥")
 	}
 	submission.APIKey, err = s.decrypt(encrypted)
+	if err != nil {
+		return p, submission, err
+	}
+	// Legacy snapshots without an address belong to the original merchant.
+	// Only a new request reads the current merchant configuration.
+	var settingsRaw string
+	var settings model.ProSettings
+	if err = s.db.QueryRow("SELECT profile FROM pro_settings WHERE id=1").Scan(&settingsRaw); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return p, submission, err
+	}
+	if settingsRaw != "" {
+		if err = json.Unmarshal([]byte(settingsRaw), &settings); err != nil {
+			return p, submission, err
+		}
+	}
+	submission.APIURL, err = refundmerchant.NormalizeSubmitURL(settings.MerchantAPIURL)
 	if err != nil {
 		return p, submission, err
 	}

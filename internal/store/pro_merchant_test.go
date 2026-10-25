@@ -3,6 +3,7 @@ package store
 import (
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/refundmerchant"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 func TestProMerchantDurableSubmissionAndSettings(t *testing.T) {
 	s := transferStore(t)
 	v := model.DefaultProSettings()
+	v.MerchantAPIURL = "https://first.example.com/gateway/v1/refunds"
 	v.AutoMerchantEnabled = true
 	if _, _, err := s.SaveProAutomationSettings(v, gptpay.Settings{PlanCode: "pro5"}, ""); err == nil {
 		t.Fatal("enabled without key")
@@ -28,7 +30,7 @@ func TestProMerchantDurableSubmissionAndSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, _, _, err := s.ProSettings()
-	if err != nil || !stored.AutoMerchantEnabled || !stored.MerchantKeyPresent || stored.Disposition() != "merchant" {
+	if err != nil || !stored.AutoMerchantEnabled || !stored.MerchantKeyPresent || stored.Disposition() != "merchant" || stored.MerchantAPIURL != "https://first.example.com/gateway/v1/refunds" {
 		t.Fatal(stored, err)
 	}
 	email := "merchant@example.com"
@@ -54,6 +56,7 @@ func TestProMerchantDurableSubmissionAndSettings(t *testing.T) {
 			t.Fatal("plaintext secret")
 		}
 	}
+	v.MerchantAPIURL = "https://second.example.com/v1/cemifh"
 	if _, _, err = s.SaveProAutomationSettings(v, gptpay.Settings{PlanCode: "pro5"}, "", "replacement-key"); err != nil {
 		t.Fatal(err)
 	}
@@ -63,13 +66,41 @@ func TestProMerchantDurableSubmissionAndSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	q, b, err := s.PrepareProMerchant(email)
-	if err != nil || q.ProMerchant.RequestID != p.ProMerchant.RequestID || string(a.Payload) != string(b.Payload) || b.APIKey != "merchant-secret" {
+	if err != nil || q.ProMerchant.RequestID != p.ProMerchant.RequestID || string(a.Payload) != string(b.Payload) || b.APIKey != "merchant-secret" || b.APIURL != "https://first.example.com/gateway/v1/refunds" {
 		t.Fatal("retry did not retain immutable request", err)
 	}
 	data, _ := json.Marshal(q)
 	if strings.Contains(string(data), "password-secret") {
 		t.Fatal("response leaked credentials")
 	}
+	// Pre-upgrade requests had no address; they must stay at the original vendor.
+	legacy := map[string]any{"api_key": b.APIKey, "payload": b.Payload}
+	legacySealed, err := s.encrypt(mustJSON(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec("UPDATE pro_merchant_requests SET encrypted_submission=? WHERE email=?", legacySealed, email); err != nil {
+		t.Fatal(err)
+	}
+	_, old, err := s.PrepareProMerchant(email)
+	if err != nil || old.APIURL != refundmerchant.DefaultSubmitURL || old.APIKey != b.APIKey {
+		t.Fatal("legacy request moved to new merchant", err)
+	}
+	newEmail := "new-merchant@example.com"
+	if _, err = s.SaveMailAccount(model.MailAccountProfile{Email: newEmail}, credentialsForMerchantTest(newEmail)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.UpdateMailAccountManagementScope(newEmail, "pro"); err != nil {
+		t.Fatal(err)
+	}
+	_, fresh, err := s.PrepareProMerchant(newEmail)
+	if err != nil || fresh.APIURL != v.MerchantAPIURL || fresh.APIKey != "replacement-key" {
+		t.Fatal("new request did not use new merchant", err)
+	}
+}
+
+func credentialsForMerchantTest(email string) model.MailAccountCredentials {
+	return model.MailAccountCredentials{Email: email, GptPassword: "fixture-password", TotpSecret: "fixture-totp"}
 }
 
 func TestProMerchantSchedulingRecoveryAndPartitions(t *testing.T) {

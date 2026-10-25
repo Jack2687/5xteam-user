@@ -736,6 +736,7 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	input.AutoMergeV2Enabled = current.AutoMergeV2Enabled
 	input.AutoMerchantEnabled, input.MerchantKeyPresent = current.AutoMerchantEnabled, current.MerchantKeyPresent
 	input.MerchantSuccessFeeUSD = current.MerchantSuccessFeeUSD
+	input.MerchantAPIURL = current.MerchantAPIURL
 	input.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.TargetAdminID, input.TargetSeatType = current.TargetAdminID, current.TargetSeatType
 	if input.AutoMergeEnabled && strings.TrimSpace(input.TargetAdminID) == "" {
