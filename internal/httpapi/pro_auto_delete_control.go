@@ -10,11 +10,11 @@ import (
 	"chatgpt-space-merge/internal/model"
 )
 
-var errProAutoDeletePaused = errors.New("自动删除已暂停，额度检测继续")
+var errProAutoFinalStepPaused = errors.New("全自动最后一步已暂停，额度检测继续")
 
-type proAutomaticDeleteJob struct{ cancel context.CancelCauseFunc }
+type proAutomaticFinalStepJob struct{ cancel context.CancelCauseFunc }
 
-func (s *Server) setProAutoDeleteControl(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setProAutoFinalStepControl(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Paused *bool `json:"paused"`
 	}
@@ -22,76 +22,76 @@ func (s *Server) setProAutoDeleteControl(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if input.Paused == nil {
-		writeAPI(w, 400, nil, "请选择停止或启动自动删除")
+		writeAPI(w, 400, nil, "请选择停止或启动全自动最后一步")
 		return
 	}
-	s.proDeleteMu.Lock()
-	defer s.proDeleteMu.Unlock()
+	s.proFinalStepMu.Lock()
+	defer s.proFinalStepMu.Unlock()
 	if err := s.store.SetProAutoDeletePaused(*input.Paused); err != nil {
-		writeAPI(w, 500, nil, "保存自动删除状态失败")
+		writeAPI(w, 500, nil, "保存全自动最后一步状态失败")
 		return
 	}
 	if *input.Paused {
-		for job := range s.proDeleteJobs {
-			job.cancel(errProAutoDeletePaused)
+		for job := range s.proFinalStepJobs {
+			job.cancel(errProAutoFinalStepPaused)
 		}
 	}
 	// Resume only opens admission. The existing monitors evaluate their rules.
 	writeAPI(w, 200, map[string]any{"auto_delete_paused": *input.Paused}, "")
 }
 
-func (s *Server) checkProAutoDeleteAllowed() error {
+func (s *Server) checkProAutoFinalStepAllowed() error {
 	cfg, _, _, err := s.store.ProSettings()
 	if err != nil {
 		return err
 	}
 	if cfg.AutoDeletePaused {
-		return errProAutoDeletePaused
+		return errProAutoFinalStepPaused
 	}
 	return nil
 }
 
-// Register deletion alone: pausing it must never cancel login/push/quota jobs.
+// Register only the final step: never cancel provisioning/push/quota jobs.
 // Registration and the durable switch share a lock, including queued work.
-func (s *Server) beginProAutomaticDeletion(parent context.Context) (context.Context, func(), error) {
-	s.proDeleteMu.Lock()
-	defer s.proDeleteMu.Unlock()
+func (s *Server) beginProAutomaticFinalStep(parent context.Context) (context.Context, func(), error) {
+	s.proFinalStepMu.Lock()
+	defer s.proFinalStepMu.Unlock()
 	if err := parent.Err(); err != nil {
 		return nil, nil, err
 	}
-	if err := s.checkProAutoDeleteAllowed(); err != nil {
+	if err := s.checkProAutoFinalStepAllowed(); err != nil {
 		return nil, nil, err
 	}
 	ctx, cancel := context.WithCancelCause(parent)
-	job := &proAutomaticDeleteJob{cancel: cancel}
-	if s.proDeleteJobs == nil {
-		s.proDeleteJobs = make(map[*proAutomaticDeleteJob]struct{})
+	job := &proAutomaticFinalStepJob{cancel: cancel}
+	if s.proFinalStepJobs == nil {
+		s.proFinalStepJobs = make(map[*proAutomaticFinalStepJob]struct{})
 	}
-	s.proDeleteJobs[job] = struct{}{}
+	s.proFinalStepJobs[job] = struct{}{}
 	return ctx, sync.OnceFunc(func() {
-		s.proDeleteMu.Lock()
-		delete(s.proDeleteJobs, job)
+		s.proFinalStepMu.Lock()
+		delete(s.proFinalStepJobs, job)
 		cancel(nil)
-		s.proDeleteMu.Unlock()
+		s.proFinalStepMu.Unlock()
 	}), nil
 }
 
-func (s *Server) performProAutomaticDeactivation(ctx context.Context, email string) (model.MailAccountProfile, error) {
-	deleteCtx, finish, err := s.beginProAutomaticDeletion(ctx)
+func (s *Server) performProAutomaticFinalStep(ctx context.Context, email string, run func(context.Context, string) (model.MailAccountProfile, error)) (model.MailAccountProfile, error) {
+	finalCtx, finish, err := s.beginProAutomaticFinalStep(ctx)
 	if err != nil {
 		return model.MailAccountProfile{}, err
 	}
 	defer finish()
-	p, err := s.performProDeactivation(deleteCtx, email)
-	if errors.Is(context.Cause(deleteCtx), errProAutoDeletePaused) {
-		err = errProAutoDeletePaused
+	p, err := run(finalCtx, email)
+	if errors.Is(context.Cause(finalCtx), errProAutoFinalStepPaused) {
+		err = errProAutoFinalStepPaused
 	}
 	return p, err
 }
 
 // Keep the full-automation account eligible for its normal quota timer. Never
 // clear upstream submission facts or restart the earlier paid provisioning.
-func (s *Server) waitProAutoDeleteResume(email string) error {
+func (s *Server) waitProAutoFinalStepResume(email string) error {
 	p, _, err := s.store.MailAccountCredential(email)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (s *Server) waitProAutoDeleteResume(email string) error {
 		return err
 	}
 	_, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
-		if p.DeletionSubmitted() || p.ProAuto.StopRequested {
+		if p.DispositionStarted() || p.ProAuto.StopRequested || p.ProAuto.Status == "completed" {
 			return
 		}
 		// Operator pauses are not failed attempts. Leave the original deadline
@@ -131,9 +131,35 @@ func (s *Server) waitProAutoDeleteResume(email string) error {
 			p.ProAuto.Steps = map[string]string{}
 		}
 		p.ProAuto.Steps["quota"] = "waiting"
-		if p.ProAuto.Steps["deactivate"] == "running" {
-			p.ProAuto.Steps["deactivate"] = "interrupted"
+		for _, stage := range []string{"merge", "deactivate", "merchant", "merge_v2"} {
+			if p.ProAuto.Steps[stage] == "running" {
+				p.ProAuto.Steps[stage] = "interrupted"
+			}
 		}
+		p.ProLastError = ""
 	})
 	return err
+}
+
+func (s *Server) tickProPausedMergeV2(ctx context.Context) {
+	if ctx.Err() != nil || s.checkProAutoFinalStepAllowed() != nil {
+		return
+	}
+	items, err := s.store.DuePausedProMergeV2(time.Now())
+	if err != nil {
+		return
+	}
+	for _, p := range items {
+		if ctx.Err() != nil {
+			return
+		}
+		value, _ := s.proLocks.LoadOrStore("account:"+p.Email, &sync.Mutex{})
+		lock := value.(*sync.Mutex)
+		if !lock.TryLock() {
+			continue
+		}
+		if _, err = s.startProEndJob(p.Email, lock.Unlock, nil, "merge_v2"); err != nil {
+			lock.Unlock()
+		}
+	}
 }

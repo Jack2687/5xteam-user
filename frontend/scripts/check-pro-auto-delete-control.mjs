@@ -6,30 +6,30 @@ import { ref } from 'vue'
 
 const source = readFileSync(new URL('../src/components/ProManagementView.vue', import.meta.url), 'utf8')
 const parsed = ts.createSourceFile('view.js', source.split('<script setup>')[1].split('</script>')[0], ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
-const fn = parsed.statements.find(s => ts.isFunctionDeclaration(s) && s.name.text === 'toggleAutoDelete').getText(parsed)
+const fn = parsed.statements.find(s => ts.isFunctionDeclaration(s) && s.name.text === 'toggleAutoFinalStep').getText(parsed)
 const requests = [], messages = [], polls = []
 const settings = { auto_delete_paused: false, quota_enabled: true }
 const busy = ref(false)
-const c = vm.createContext({ settings, deleteControlBusy: busy, deleteControlRevision: 0, settingsLoaded: ref(true),
+const c = vm.createContext({ settings, finalStepControlBusy: busy, finalStepControlRevision: 0, settingsLoaded: ref(true),
   api: (url, input) => new Promise((resolve, reject) => requests.push({ url, input, resolve, reject })),
   setMessage: (...v) => messages.push(v), schedulePoll: v => polls.push(v) })
 vm.runInContext(fn, c)
-const stop = c.toggleAutoDelete()
-await c.toggleAutoDelete()
+const stop = c.toggleAutoFinalStep()
+await c.toggleAutoFinalStep()
 assert.equal(requests.length, 1, 'rapid clicks must not submit conflicting toggles')
-assert.equal(requests[0].url, '/api/pro-settings/auto-delete-control')
+assert.equal(requests[0].url, '/api/pro-settings/auto-final-step-control')
 assert.equal(requests[0].input.body.paused, true)
 requests[0].resolve({ auto_delete_paused: true }); await stop
 assert.equal(settings.auto_delete_paused, true)
 assert.equal(settings.quota_enabled, true)
 assert.equal(busy.value, false)
-const resume = c.toggleAutoDelete()
+const resume = c.toggleAutoFinalStep()
 assert.equal(requests[1].input.body.paused, false)
 requests[1].resolve({ auto_delete_paused: false }); await resume
 assert.equal(requests.length, 2, 'resume must not call an account deletion or start API')
 assert.equal(settings.auto_delete_paused, false)
-assert.match(messages.at(-1)[0], /不直接执行删除/)
-const failure = c.toggleAutoDelete()
+assert.match(messages.at(-1)[0], /不直接执行最后一步/)
+const failure = c.toggleAutoFinalStep()
 requests[2].reject(new Error('save failed')); await failure
 assert.equal(settings.auto_delete_paused, false, 'failed save must retain last confirmed state')
 assert.equal(busy.value, false)

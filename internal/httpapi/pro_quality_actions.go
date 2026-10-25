@@ -175,7 +175,7 @@ func (s *Server) applyProQuality(ctx context.Context, initial model.MailAccountP
 		return
 	}
 	if state.Action == "merge" {
-		if c.AutoDeleteEnabled && s.checkProAutoDeleteAllowed() != nil {
+		if s.checkProAutoFinalStepAllowed() != nil {
 			return
 		}
 		// Persist attempts before dispatch; a restart cannot create an unbounded retry loop.
@@ -319,9 +319,9 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 		if p.ProQuality.Identity != request.Identity {
 			return
 		}
-		if errors.Is(runErr, errProAutoDeletePaused) {
+		if errors.Is(runErr, errProAutoFinalStepPaused) {
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "pending", ""
-			if !p.DeletionSubmitted() {
+			if !p.DispositionStarted() {
 				p.ProQuality.MergeAttempts = max(0, p.ProQuality.MergeAttempts-1)
 				p.ProQuality.ActionStarted = false
 			}
@@ -337,7 +337,7 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "completed", ""
 		}
 	})
-	if errors.Is(runErr, errProAutoDeletePaused) {
+	if errors.Is(runErr, errProAutoFinalStepPaused) {
 		return
 	}
 	status, message := "completed", "降智触发的空间合并已完成"

@@ -21,7 +21,7 @@ func (s *Server) beginProManualStage(email, stage string) func(error) {
 		if errors.Is(err, errProTransferUncertain) {
 			status = "unknown"
 		}
-		if errors.Is(err, errProAutoDeletePaused) {
+		if errors.Is(err, errProAutoFinalStepPaused) {
 			status, message = "interrupted", ""
 		}
 		if stage == "merchant" && err == nil {

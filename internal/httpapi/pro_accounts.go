@@ -148,7 +148,7 @@ func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg, _, _, err := s.store.ProSettings()
 		if err != nil {
-			writeAPI(w, 500, nil, "读取自动删除状态失败")
+			writeAPI(w, 500, nil, "读取全自动最后一步状态失败")
 			return
 		}
 		writeProAccountList(w, r, paginatedData(rows, total, page, map[string]any{"summary": summary, "auto_delete_paused": cfg.AutoDeletePaused}))
@@ -1208,9 +1208,9 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	if err == nil && !applied {
 		return profile, errors.New("额度查询期间下游账号已变化，已丢弃旧响应，请重新查询")
 	}
-	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoMergeV2Enabled || currentSettings.AutoMerchantEnabled || currentSettings.AutoDeleteEnabled && !currentSettings.AutoDeletePaused) && !profile.SpaceMergedOnce && !profile.DispositionStarted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
+	if err == nil && auto && !currentSettings.AutoDeletePaused && (currentSettings.AutoMergeEnabled || currentSettings.AutoMergeV2Enabled || currentSettings.AutoMerchantEnabled || currentSettings.AutoDeleteEnabled) && !profile.SpaceMergedOnce && !profile.DispositionStarted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
 		profile, err = s.startProDispositionJob(email, nil, nil)
-		if errors.Is(err, errProAutoDeletePaused) {
+		if errors.Is(err, errProAutoFinalStepPaused) {
 			err = nil
 		}
 	}
@@ -1261,6 +1261,9 @@ func retryProStep(ctx context.Context, attempts, delay int, operation func() err
 }
 
 func (s *Server) performProMerge(ctx context.Context, email string) (out model.MailAccountProfile, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
 	profile, credentials, err := s.store.MailAccountCredential(email)
 	if err != nil {
 		return profile, err

@@ -17,7 +17,7 @@ import (
 func setAutoDeletePaused(t *testing.T, s *Server, paused bool) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.setProAutoDeleteControl(w, httptest.NewRequest("PUT", "/api/pro-settings/auto-delete-control", strings.NewReader(fmt.Sprintf(`{"paused":%t}`, paused))))
+	s.setProAutoFinalStepControl(w, httptest.NewRequest("PUT", "/api/pro-settings/auto-delete-control", strings.NewReader(fmt.Sprintf(`{"paused":%t}`, paused))))
 	if w.Code != 200 {
 		t.Fatalf("control: %d %s", w.Code, w.Body.String())
 	}
@@ -178,7 +178,7 @@ func TestProAutoDeletePauseQueuedWorkAndManualOverride(t *testing.T) {
 		t.Fatal("queued deletion survived stop/start")
 	}
 	setAutoDeletePaused(t, f.s, true)
-	if _, err := f.s.startProDispositionJob(f.email, nil, nil); !errors.Is(err, errProAutoDeletePaused) {
+	if _, err := f.s.startProDispositionJob(f.email, nil, nil); !errors.Is(err, errProAutoFinalStepPaused) {
 		t.Fatal("automatic admission was not blocked", err)
 	}
 	if _, err := f.s.startProEndJob(f.email, nil, nil, "manual_deactivate"); err != nil {
@@ -198,7 +198,7 @@ func TestProAutoDeletePauseQueuedWorkAndManualOverride(t *testing.T) {
 	}
 }
 
-func TestProAutoDeletePauseDoesNotBlockMergeOrConsumeTimeoutAttempts(t *testing.T) {
+func TestProAutoFinalStepPauseBlocksMergeTimeoutButAllowsExplicitManual(t *testing.T) {
 	f := newProExecutionFixture(t)
 	f.s.stopProAutomations()
 	setAutoDeletePaused(t, f.s, true)
@@ -214,10 +214,13 @@ func TestProAutoDeletePauseDoesNotBlockMergeOrConsumeTimeoutAttempts(t *testing.
 		t.Fatal("paused deletion still forced timeout")
 	}
 	cfg.AutoDeleteEnabled = false
-	if !forceMergeDue(p, cfg, time.Now()) {
-		t.Fatal("pause changed merge timeout rules")
+	if forceMergeDue(p, cfg, time.Now()) {
+		t.Fatal("paused final step still forced merge timeout")
 	}
-	if _, err := f.s.startProEndJob(f.email, nil, nil, "merge"); err != nil {
+	if _, err := f.s.startProEndJob(f.email, nil, nil, "merge"); !errors.Is(err, errProAutoFinalStepPaused) {
+		t.Fatal("automatic merge was not blocked", err)
+	}
+	if _, err := f.s.startProEndJob(f.email, nil, nil, "manual_merge"); err != nil {
 		t.Fatal(err)
 	}
 	f.s.proMergeWG.Wait()

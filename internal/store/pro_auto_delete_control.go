@@ -8,7 +8,9 @@ import (
 	"chatgpt-space-merge/internal/model"
 )
 
-// Change only the deletion gate, without resetting quota clocks or credentials.
+// The legacy field now gates all automatic final steps. Retain its storage key
+// so existing paused installations stay paused across upgrades and rollbacks.
+// Never reset quota clocks or credentials.
 func (s *Store) SetProAutoDeletePaused(paused bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

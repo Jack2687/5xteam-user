@@ -97,9 +97,9 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 		return p, errors.New("合并空间2.0已完成，无需重复执行")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	var finishDeletion func()
-	if action == "deactivate" && !manual {
-		ctx, finishDeletion, err = s.beginProAutomaticDeletion(ctx)
+	var finishFinalStep func()
+	if !manual {
+		ctx, finishFinalStep, err = s.beginProAutomaticFinalStep(ctx)
 		if err != nil {
 			cancel()
 			return p, err
@@ -108,8 +108,8 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	started := false
 	defer func() {
 		if !started {
-			if finishDeletion != nil {
-				finishDeletion()
+			if finishFinalStep != nil {
+				finishFinalStep()
 			}
 			cancel()
 		}
@@ -158,8 +158,8 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	go func() {
 		defer s.proMergeWG.Done()
 		defer cancel()
-		if finishDeletion != nil {
-			defer finishDeletion()
+		if finishFinalStep != nil {
+			defer finishFinalStep()
 		}
 		defer func() {
 			s.proMergeMu.Lock()
@@ -186,9 +186,9 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 				_, runErr = s.performProMerge(ctx, email)
 			}
 		}
-		if errors.Is(context.Cause(ctx), errProAutoDeletePaused) {
-			runErr = errProAutoDeletePaused
-			_ = s.waitProAutoDeleteResume(email)
+		if errors.Is(context.Cause(ctx), errProAutoFinalStepPaused) {
+			runErr = errProAutoFinalStepPaused
+			_ = s.waitProAutoFinalStepResume(email)
 		}
 		s.finishProQualityMerge(email, quality, runErr)
 		// Also clear the queued flag if preparation or lock acquisition failed.
@@ -197,9 +197,9 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 			if runErr == nil && p.DailyMergeMatches() && (action != "deactivate" || p.DeletionAccepted()) && (action != "merchant" || p.MerchantCompleted()) && (action != "merge_v2" || p.MergeV2Completed()) {
 				p.ProDailyMerge.Completed = true
 			}
-			if runErr != nil && !errors.Is(runErr, errProAutoDeletePaused) {
+			if runErr != nil && !errors.Is(runErr, errProAutoFinalStepPaused) {
 				p.ProLastError = runErr.Error()
-			} else if p.ProMigration != nil && action == "merge" {
+			} else if runErr == nil && p.ProMigration != nil && action == "merge" {
 				p.ProMigration.Paused = false
 				p.ProMigration.Notice = "迁移流程已完成"
 				if p.ProAuto.ID != "" {

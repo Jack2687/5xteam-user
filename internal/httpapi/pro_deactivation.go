@@ -23,6 +23,10 @@ type proDeactivationHooks struct {
 }
 
 func (s *Server) performProDisposition(ctx context.Context, email string) (model.MailAccountProfile, error) {
+	return s.performProAutomaticFinalStep(ctx, email, s.performProDispositionUnchecked)
+}
+
+func (s *Server) performProDispositionUnchecked(ctx context.Context, email string) (model.MailAccountProfile, error) {
 	p, _, err := s.store.MailAccountCredential(email)
 	if err != nil {
 		return p, err
@@ -42,7 +46,7 @@ func (s *Server) performProDisposition(ctx context.Context, email string) (model
 	}
 	// An accepted/uncertain request must be reconciled even after a mode change.
 	if p.DeletionSubmitted() || c.AutoDeleteEnabled {
-		return s.performProAutomaticDeactivation(ctx, email)
+		return s.performProDeactivation(ctx, email)
 	}
 	if c.AutoMergeV2Enabled {
 		return s.performProMergeV2(ctx, email)
@@ -150,9 +154,9 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 		}
 	}
 	defer func() {
-		paused := errors.Is(context.Cause(ctx), errProAutoDeletePaused)
+		paused := errors.Is(context.Cause(ctx), errProAutoFinalStepPaused)
 		if paused {
-			runErr = errProAutoDeletePaused
+			runErr = errProAutoFinalStepPaused
 		}
 		latest, _, readErr := s.store.MailAccountCredential(email)
 		if readErr != nil {
@@ -198,7 +202,7 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 			}
 			if paused && !p.DeletionSubmitted() {
 				d.Status, d.Steps[d.Stage] = "interrupted", "interrupted"
-				d.Error, p.ProLastError, d.Message = "", "", errProAutoDeletePaused.Error()
+				d.Error, p.ProLastError, d.Message = "", "", errProAutoFinalStepPaused.Error()
 			}
 			d.NextCheckAt = nil
 			if p.DeletionNeedsContinuation() && !p.ProAuto.StopRequested {
@@ -445,7 +449,7 @@ func (s *Server) loginForProDeletion(ctx context.Context, p model.MailAccountPro
 }
 
 func (s *Server) tickProDeactivations(ctx context.Context) {
-	if s.checkProAutoDeleteAllowed() != nil {
+	if s.checkProAutoFinalStepAllowed() != nil {
 		return
 	}
 	items, err := s.store.DueProDeactivations(time.Now())

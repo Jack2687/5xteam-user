@@ -916,8 +916,8 @@ func (s *Server) runProContinuousSession(ctx context.Context, email string, rpc 
 
 func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr error) {
 	defer func() {
-		if errors.Is(runErr, errProAutoDeletePaused) {
-			runErr = s.waitProAutoDeleteResume(email)
+		if errors.Is(runErr, errProAutoFinalStepPaused) {
+			runErr = s.waitProAutoFinalStepResume(email)
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -932,16 +932,8 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	if p.DeletionConfirmed() || p.ProAuto.Status == "completed" {
 		return nil
 	}
-	if p.MergeV2Started() {
-		_, err = s.performProMergeV2(ctx, email)
-		return err
-	}
-	if p.MerchantStarted() {
-		_, err = s.performProMerchant(ctx, email)
-		return err
-	}
-	if p.DeletionSubmitted() {
-		_, err = s.performProAutomaticDeactivation(ctx, email)
+	if p.DispositionStarted() {
+		_, err = s.performProDisposition(ctx, email)
 		return err
 	}
 	settings, _, _, err := s.proAccountPushSettings(p)
@@ -985,8 +977,8 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	forceProfile := p
 	forceProfile.ProWorkflowRunning = false
 	forceReason := s.forcedMergeReason(forceProfile, forceSettings, time.Now())
-	deletionPaused := forceSettings.AutoDeleteEnabled && forceSettings.AutoDeletePaused
-	if deletionPaused {
+	finalStepPaused := forceSettings.AutoDeletePaused
+	if finalStepPaused {
 		p.ProAuto.Steps["quota"] = "waiting"
 	}
 	if (p.ProMergeTrigger == "push_timeout" || p.ProMergeTrigger == "daily_ejh") && p.ProAuto.Steps["quota"] == "skipped" && forceReason == "" {
@@ -1032,7 +1024,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 		if err == nil && quotaSettingsErr != nil {
 			err = quotaSettingsErr
 		}
-		if err != nil || deletionPaused || !s.proQuotaExitReached(p, quotaSettings, p.ProAuto.QuotaUsedThreshold) {
+		if err != nil || finalStepPaused || !s.proQuotaExitReached(p, quotaSettings, p.ProAuto.QuotaUsedThreshold) {
 			message := ""
 			if err != nil {
 				message = "额度检测暂未成功，等待下次重试：" + err.Error()
@@ -1071,15 +1063,15 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	} else if action == "merchant" {
 		merge = s.performProMerchant
 	} else if action == "deactivate" {
-		merge = s.performProAutomaticDeactivation
+		merge = s.performProDeactivation
 	} else if s.proAutoHooks != nil && s.proAutoHooks.Merge != nil {
 		merge = s.proAutoHooks.Merge
 	}
 	if err = s.autoProUpdate(email, action, "running", "执行"+forceSettings.DispositionLabel()); err != nil {
 		return err
 	}
-	if _, err = merge(ctx, email); err != nil {
-		if errors.Is(err, errProAutoDeletePaused) {
+	if _, err = s.performProAutomaticFinalStep(ctx, email, merge); err != nil {
+		if errors.Is(err, errProAutoFinalStepPaused) {
 			return err
 		}
 		// Preserve original merge semantics, only reschedule a safe failed tail.
@@ -1147,6 +1139,7 @@ func (s *Server) startProAutomationMonitor() {
 			case <-ticker.C:
 				s.tickProDeactivations(ctx)
 				s.tickProMerchants(ctx)
+				s.tickProPausedMergeV2(ctx)
 				s.tickProSchedule(false)
 				items, err := s.store.DueProAutomations(time.Now())
 				if err != nil {

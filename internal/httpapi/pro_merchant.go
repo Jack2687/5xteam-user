@@ -98,6 +98,10 @@ func (s *Server) performProMerchant(ctx context.Context, email string) (out mode
 				m.Error = runErr.Error()
 				p.ProLastError = m.Error
 			}
+			if errors.Is(context.Cause(ctx), errProAutoFinalStepPaused) {
+				m.Error, p.ProLastError = "", ""
+				m.Message = errProAutoFinalStepPaused.Error()
+			}
 			if p.MerchantNeedsContinuation() && !p.ProAuto.StopRequested {
 				next := now.Add(15 * time.Second)
 				m.NextCheckAt = &next
@@ -203,6 +207,9 @@ func (s *Server) finishProMerchantRetirement(ctx context.Context, p model.MailAc
 }
 
 func (s *Server) tickProMerchants(ctx context.Context) {
+	if s.checkProAutoFinalStepAllowed() != nil {
+		return
+	}
 	items, err := s.store.DueProMerchants(time.Now())
 	if err != nil {
 		return

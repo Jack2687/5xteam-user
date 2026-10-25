@@ -87,7 +87,7 @@ type ProSettings struct {
 	AutoMerchantEnabled          bool                `json:"auto_merchant_enabled"`
 	MerchantKeyPresent           bool                `json:"merchant_key_present"`
 	AutoDeleteEnabled            bool                `json:"auto_delete_enabled"`
-	AutoDeletePaused             bool                `json:"auto_delete_paused"`
+	AutoDeletePaused             bool                `json:"auto_delete_paused"` // Legacy key; pauses all automatic final-step modes.
 	DeletionCheckIntervalSeconds int                 `json:"deletion_check_interval_seconds"`
 	TargetAdminID                string              `json:"target_admin_id,omitempty"`
 	TargetSeatType               string              `json:"target_seat_type"`

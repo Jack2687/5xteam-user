@@ -13,7 +13,7 @@ import (
 func ejhCardID(order string) string { return store.EJHID("card", order) }
 
 func (s *Server) forcedMergeReason(p model.MailAccountProfile, c model.ProSettings, now time.Time) string {
-	if c.AutoDeleteEnabled && c.AutoDeletePaused {
+	if c.AutoDeletePaused {
 		return ""
 	}
 	if p.DispositionStarted() {
@@ -53,7 +53,7 @@ func (s *Server) forcedMergeRetry(p model.MailAccountProfile, c model.ProSetting
 }
 
 func forceMergeDue(p model.MailAccountProfile, c model.ProSettings, now time.Time) bool {
-	if c.AutoDeleteEnabled && c.AutoDeletePaused {
+	if c.AutoDeletePaused {
 		return false
 	}
 	if p.ProAuto.StopRequested || p.DispositionStarted() {
@@ -125,8 +125,8 @@ func (s *Server) tickProForceMerge(ctx context.Context) {
 			continue
 		}
 		if _, e = s.startProDispositionJob(p.Email, lock.Unlock, nil); e != nil {
-			if errors.Is(e, errProAutoDeletePaused) {
-				_ = s.waitProAutoDeleteResume(p.Email)
+			if errors.Is(e, errProAutoFinalStepPaused) {
+				_ = s.waitProAutoFinalStepResume(p.Email)
 			}
 			lock.Unlock()
 		} else {

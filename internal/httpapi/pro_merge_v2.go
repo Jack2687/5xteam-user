@@ -162,6 +162,41 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 	if err != nil {
 		return p, err
 	}
+	// Consume the one scheduled continuation before credential/network work.
+	// A new ordinary failure must not turn into a retry on every monitor tick.
+	if p.ProMergeV2 != nil && p.ProMergeV2.AutoResumeAt != nil {
+		p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) { p.ProMergeV2.AutoResumeAt = nil })
+		if err != nil {
+			return p, err
+		}
+	}
+	defer func() {
+		if !errors.Is(context.Cause(ctx), errProAutoFinalStepPaused) {
+			return
+		}
+		var saveErr error
+		out, saveErr = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+			m := p.ProMergeV2
+			if m == nil || m.CompletedAt != nil || (m.SubmittedAt != nil && m.AcceptedAt == nil) {
+				return
+			}
+			m.Status, m.Error, p.ProLastError = "interrupted", "", ""
+			m.Message = errProAutoFinalStepPaused.Error()
+			if m.Steps[m.Stage] != "completed" {
+				if m.Steps == nil {
+					m.Steps = map[string]string{}
+				}
+				m.Steps[m.Stage] = "interrupted"
+			}
+			interval := settings.QuotaCheckIntervalSeconds
+			if p.ProAuto.QuotaIntervalSeconds > 0 {
+				interval = p.ProAuto.QuotaIntervalSeconds
+			}
+			next := time.Now().Add(time.Duration(max(10, interval)) * time.Second)
+			m.AutoResumeAt = &next
+		})
+		runErr = errors.Join(runErr, saveErr)
+	}()
 	if !p.MergeV2Started() {
 		if err = s.checkProQualityMerge(ctx, p, true); err != nil {
 			return p, err
@@ -219,6 +254,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 	p, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.ProWorkflowRunning = true
 		p.ProLastError = ""
+		p.ProMergeV2.AutoResumeAt = nil
 		if p.ProPostMergeGroups != nil {
 			p.ProPostMergeGroups.Action = "merge_v2"
 		}
@@ -243,6 +279,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 					m.Steps[m.Stage] = m.Status
 				}
 			} else {
+				m.AutoResumeAt = nil
 				m.Status = "completed"
 				m.CompletedAt = &m.UpdatedAt
 				m.Error = ""

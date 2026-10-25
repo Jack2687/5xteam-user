@@ -93,8 +93,8 @@ type Server struct {
 	proMerchantClient         *refundmerchant.Client
 	proMergeV2Login           func(context.Context, string) (map[string]any, error)
 	proDeleteHooks            *proDeactivationHooks
-	proDeleteMu               sync.Mutex
-	proDeleteJobs             map[*proAutomaticDeleteJob]struct{}
+	proFinalStepMu            sync.Mutex
+	proFinalStepJobs          map[*proAutomaticFinalStepJob]struct{}
 	proMergeMu                sync.Mutex
 	proMergeWG                sync.WaitGroup
 	proMergeJobs              map[string]context.CancelFunc
@@ -369,7 +369,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events", s.listProAccountEvents)
 	mux.HandleFunc("GET /api/pro-accounts/{email}/events/export", s.exportProAccountEvents)
 	mux.HandleFunc("GET /api/pro-settings", s.getProSettings)
-	mux.HandleFunc("PUT /api/pro-settings/auto-delete-control", s.setProAutoDeleteControl)
+	mux.HandleFunc("PUT /api/pro-settings/auto-delete-control", s.setProAutoFinalStepControl)
+	mux.HandleFunc("PUT /api/pro-settings/auto-final-step-control", s.setProAutoFinalStepControl)
 	mux.HandleFunc("GET /api/pro-quality/settings", s.getProQualitySettings)
 	mux.HandleFunc("PUT /api/pro-quality/settings", s.saveProQualitySettings)
 	mux.HandleFunc("POST /api/pro-quality/run", s.triggerProQuality)

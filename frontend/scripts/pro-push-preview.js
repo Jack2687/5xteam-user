@@ -35,7 +35,7 @@ window.fetch = async (path, options = {}) => {
     }
     return reply(fixture.saved)
   }
-  if (url.pathname === '/api/pro-settings/auto-delete-control' && method === 'PUT') {
+  if (url.pathname === '/api/pro-settings/auto-final-step-control' && method === 'PUT') {
     fixture.saved.auto_delete_paused = body.paused
     sessionStorage.setItem(key, JSON.stringify(fixture.saved))
     return reply({ auto_delete_paused: body.paused })
