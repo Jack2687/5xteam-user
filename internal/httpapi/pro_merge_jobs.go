@@ -48,9 +48,15 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	if p.ManagementScope != "pro" {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
-	manual := action == "manual_deactivate" || action == "manual_merge" || action == "manual_merchant"
+	manual := action == "manual_deactivate" || action == "manual_merge" || action == "manual_merchant" || action == "manual_merge_v2"
 	if !manual && (p.ProAuto.StopRequested || p.ProAuto.Status == "stopped") {
 		return p, errors.New("用户已停止该账号流程，请手动续跑")
+	}
+	if action == "manual_merge_v2" {
+		action = "merge_v2"
+	}
+	if p.MergeV2Started() && !p.MergeV2Completed() && action != "merge_v2" && action != "automatic" {
+		return p, errors.New("合并空间2.0尚未结束，请先核对该流程")
 	}
 	if action == "manual_merchant" {
 		action = "merchant"
@@ -77,12 +83,18 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 		if p.MerchantStarted() {
 			action = "merchant"
 		}
+		if p.MergeV2Started() {
+			action = "merge_v2"
+		}
 	}
 	if action == "merchant" && p.MerchantCompleted() && p.ProMerchant.RetiredAt != nil && !p.ProPostMergeGroupsPending() && !p.ProVM2CleanupPending() {
 		return p, errors.New("API 商户已处理成功，无需重复执行")
 	}
 	if action == "deactivate" && p.DeletionConfirmed() && !resumeDeletion {
 		return p, errors.New("删除已确认完成，后续分组调整请手动续跑")
+	}
+	if action == "merge_v2" && p.MergeV2Completed() {
+		return p, errors.New("合并空间2.0已完成，无需重复执行")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	var finishDeletion func()
@@ -132,6 +144,9 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	s.proMergeJobs[email] = cancel
 	s.proMergeWG.Add(1)
 	label := "空间合并"
+	if action == "merge_v2" {
+		label = "合并空间2.0"
+	}
 	if action == "deactivate" {
 		label = "删除账户"
 	}
@@ -161,7 +176,9 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 			unlock, runErr = lockProMutex(ctx, value.(*sync.Mutex))
 		}
 		if runErr == nil {
-			if action == "merchant" {
+			if action == "merge_v2" {
+				_, runErr = s.performProMergeV2(ctx, email)
+			} else if action == "merchant" {
 				_, runErr = s.performProMerchant(ctx, email)
 			} else if action == "deactivate" {
 				_, runErr = s.performProDeactivation(ctx, email)
@@ -177,7 +194,7 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 		// Also clear the queued flag if preparation or lock acquisition failed.
 		_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			p.ProWorkflowRunning = false
-			if runErr == nil && p.DailyMergeMatches() && (action != "deactivate" || p.DeletionAccepted()) && (action != "merchant" || p.MerchantCompleted()) {
+			if runErr == nil && p.DailyMergeMatches() && (action != "deactivate" || p.DeletionAccepted()) && (action != "merchant" || p.MerchantCompleted()) && (action != "merge_v2" || p.MergeV2Completed()) {
 				p.ProDailyMerge.Completed = true
 			}
 			if runErr != nil && !errors.Is(runErr, errProAutoDeletePaused) {

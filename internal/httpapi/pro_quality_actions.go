@@ -369,6 +369,10 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 				message = p.ProMerchant.Message
 			}
 		}
+		if p.MergeV2Started() {
+			status = p.ProMergeV2.Status
+			message = "降智触发合并空间2.0：" + p.ProMergeV2.Message
+		}
 		s.auditProEvent(p, "quality_action", status, "sub2", message, nil)
 	}
 }

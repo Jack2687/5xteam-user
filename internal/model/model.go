@@ -83,6 +83,7 @@ type MailAccountProfile struct {
 	UserCostDownstreamSnapshot float64                     `json:"user_cost_downstream_snapshot"`
 	CostCheckedAt              *time.Time                  `json:"cost_checked_at,omitempty"`
 	SpaceMergedOnce            bool                        `json:"space_merged_once"`
+	ProMergeV2                 *ProMergeV2                 `json:"pro_merge_v2,omitempty"`
 	ProMerchant                *ProMerchant                `json:"pro_merchant,omitempty"`
 	ProDeactivation            *ProDeactivation            `json:"pro_deactivation,omitempty"`
 	SpaceMergedAt              *time.Time                  `json:"space_merged_at,omitempty"`

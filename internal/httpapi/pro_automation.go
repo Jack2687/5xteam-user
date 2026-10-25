@@ -92,10 +92,11 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 		PaymentRetryHint      string                 `json:"payment_retry_hint"`
 		RestockRetryAvailable bool                   `json:"restock_retry_available"`
 		QuotaResumeAvailable  bool                   `json:"quota_resume_available"`
+		MergeV2               *model.ProMergeV2      `json:"pro_merge_v2,omitempty"`
 		Merchant              *model.ProMerchant     `json:"pro_merchant,omitempty"`
 		Deactivation          *model.ProDeactivation `json:"pro_deactivation,omitempty"`
 		WorkflowRunning       bool                   `json:"pro_workflow_running"`
-	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success", p.ProMerchant, p.ProDeactivation, p.ProWorkflowRunning}, "")
+	}{state, progress, paymentStatus, paymentRetryBlocked, paymentRetryHint, restockRetryAvailable, p.CanResumeProQuota() && paymentStatus == "success", p.ProMergeV2, p.ProMerchant, p.ProDeactivation, p.ProWorkflowRunning}, "")
 }
 
 func (s *Server) autoProUpdate(email, stage, status, message string) error {
@@ -160,6 +161,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	p, _, err := s.store.MailAccountCredential(email)
 	if err != nil || p.ManagementScope != "pro" {
 		writeAPI(w, 404, nil, "Pro 账号不存在")
+		return
+	}
+	if p.MergeV2Started() {
+		writeAPI(w, 409, nil, "该账号已进入合并空间2.0，请从该流程续跑")
 		return
 	}
 	automatic := r.Context().Value(proRestockContextKey{}) != nil || r.Context().Value(proScheduledContextKey{}) == true
@@ -258,7 +263,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	if pro.Disposition() == "merge" && pro.TargetAdminID == "" {
+	if (pro.Disposition() == "merge" || pro.Disposition() == "merge_v2") && pro.TargetAdminID == "" {
 		writeAPI(w, 400, nil, "请先在 Pro 全自动配置中选择目标母号")
 		return
 	}
@@ -927,6 +932,10 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	if p.DeletionConfirmed() || p.ProAuto.Status == "completed" {
 		return nil
 	}
+	if p.MergeV2Started() {
+		_, err = s.performProMergeV2(ctx, email)
+		return err
+	}
 	if p.MerchantStarted() {
 		_, err = s.performProMerchant(ctx, email)
 		return err
@@ -1057,7 +1066,9 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	}
 	action := forceSettings.Disposition()
 	merge = s.performProMerge
-	if action == "merchant" {
+	if action == "merge_v2" {
+		merge = s.performProMergeV2
+	} else if action == "merchant" {
 		merge = s.performProMerchant
 	} else if action == "deactivate" {
 		merge = s.performProAutomaticDeactivation
@@ -1091,7 +1102,7 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 		}
 		return err
 	}
-	if action == "deactivate" || action == "merchant" {
+	if action == "deactivate" || action == "merchant" || action == "merge_v2" {
 		return nil
 	}
 	if err = s.autoProUpdate(email, "merge", "completed", "空间四步流程完成"); err != nil {

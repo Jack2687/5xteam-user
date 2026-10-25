@@ -30,8 +30,14 @@ func (s ProSettings) ValidateDisposition() error {
 	if s.DeletionCheckIntervalSeconds < 0 || s.DeletionCheckIntervalSeconds > 86400 {
 		return errors.New("删除结果核验间隔须为 1～86400 秒")
 	}
-	if (s.AutoDeleteEnabled && s.AutoMergeEnabled) || (s.AutoMerchantEnabled && (s.AutoDeleteEnabled || s.AutoMergeEnabled)) {
-		return errors.New("自动合并、自动删除与 API 商户只能开启一个")
+	enabled := 0
+	for _, on := range []bool{s.AutoMergeEnabled, s.AutoDeleteEnabled, s.AutoMerchantEnabled, s.AutoMergeV2Enabled} {
+		if on {
+			enabled++
+		}
+	}
+	if enabled > 1 {
+		return errors.New("空间合并、删除账户、API 商户与合并空间2.0只能开启一个")
 	}
 	return nil
 }
@@ -50,6 +56,9 @@ func (p MailAccountProfile) DeletionNeedsContinuation() bool {
 	return p.DeletionSubmitted() && !p.DeletionConfirmed()
 }
 func (s ProSettings) Disposition() string {
+	if s.AutoMergeV2Enabled {
+		return "merge_v2"
+	}
 	if s.AutoMerchantEnabled {
 		return "merchant"
 	}
@@ -59,6 +68,9 @@ func (s ProSettings) Disposition() string {
 	return "merge"
 }
 func (s ProSettings) DispositionLabel() string {
+	if s.AutoMergeV2Enabled {
+		return "合并空间2.0"
+	}
 	if s.AutoMerchantEnabled {
 		return "API 商户"
 	}

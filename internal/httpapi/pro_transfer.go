@@ -170,6 +170,16 @@ func (s *Server) resumeImportedPro(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取 Pro 配置失败")
 		return
 	}
+	if p.MergeV2Started() || cfg.AutoMergeV2Enabled && (p.InviteStatus == "completed" || p.AcceptStatus == "completed" || p.TransferStatus == "completed" || p.SpaceMergedOnce) {
+		p, err = s.startProEndJob(email, lock.Unlock, nil, "manual_merge_v2")
+		if err != nil {
+			writeAPI(w, 409, nil, err.Error())
+			return
+		}
+		locked = false
+		writeAPI(w, 202, p, "")
+		return
+	}
 	if p.MerchantStarted() || cfg.AutoMerchantEnabled && (p.InviteStatus == "completed" || p.AcceptStatus == "completed" || p.TransferStatus == "completed" || p.SpaceMergedOnce) {
 		p, err = s.startProEndJob(email, lock.Unlock, nil, "manual_merchant")
 		if err != nil {

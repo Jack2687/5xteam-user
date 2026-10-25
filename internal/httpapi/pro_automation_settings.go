@@ -28,6 +28,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	input.Automation.MergeConcurrency = current.MergeConcurrency
 	input.Automation.AutoDeleteEnabled = current.AutoDeleteEnabled
 	input.Automation.AutoMerchantEnabled = current.AutoMerchantEnabled
+	input.Automation.AutoMergeV2Enabled = current.AutoMergeV2Enabled
 	input.Automation.MerchantSuccessFeeUSD = current.MerchantSuccessFeeUSD
 	input.Automation.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.Automation.PurchaseScheduleEnabled, input.Automation.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
@@ -56,7 +57,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	if v.ScheduledEnabled && (v.MaxUnmerged < 1 || v.MaxUnmerged > 10000 || v.ScheduleIntervalSeconds < 10 || v.ScheduleIntervalSeconds > 86400 || (v.Disposition() == "merge" && strings.TrimSpace(v.TargetAdminID) == "")) {
+	if v.ScheduledEnabled && (v.MaxUnmerged < 1 || v.MaxUnmerged > 10000 || v.ScheduleIntervalSeconds < 10 || v.ScheduleIntervalSeconds > 86400 || ((v.Disposition() == "merge" || v.Disposition() == "merge_v2") && strings.TrimSpace(v.TargetAdminID) == "")) {
 		writeAPI(w, 400, nil, "定时开通需设置目标母号、最大未合并数（1～10000）和检查间隔（10～86400 秒）")
 		return
 	}
@@ -72,7 +73,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		writeAPI(w, 400, nil, "请选择普通或 5x 空间席位")
 		return
 	}
-	if v.AutoMergeEnabled && strings.TrimSpace(v.TargetAdminID) == "" {
+	if (v.AutoMergeEnabled || v.AutoMergeV2Enabled) && strings.TrimSpace(v.TargetAdminID) == "" {
 		writeAPI(w, 400, nil, "开启自动合并前请选择目标母号")
 		return
 	}

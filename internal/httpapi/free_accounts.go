@@ -1205,6 +1205,18 @@ func (s *Server) executeOpenAILoginContext(parent context.Context, email, creden
 			if err := parent.Err(); err != nil {
 				return nil, err
 			}
+			if _, isMergeV2 := parent.Value(mergeV2LoginKey{}).(*mergeV2LoginOptions); isMergeV2 {
+				latest, _, readErr := s.store.MailAccountCredential(email)
+				if readErr != nil {
+					return nil, readErr
+				}
+				if latest.ProMergeV2 != nil && latest.ProMergeV2.SubmittedAt != nil {
+					if latest.MergeV2Accepted() {
+						return map[string]any{"success": true}, nil
+					}
+					return nil, errMergeV2Unknown
+				}
+			}
 			lastResult, lastErr = result, runErr
 			if runErr == nil && result != nil && result["success"] == true {
 				return result, nil
@@ -1349,6 +1361,9 @@ func (s *Server) executeOpenAILoginWithProxy(parent context.Context, email, prox
 	if credentialMode == "chatgpt_at" {
 		payload["allow_sms"] = false
 	}
+	if opts, ok := parent.Value(mergeV2LoginKey{}).(*mergeV2LoginOptions); ok {
+		payload["merge_v2"] = map[string]any{"team_id": opts.TeamID}
+	}
 	login.apply(payload)
 	python := workflow.FindPython()
 	if python == "" {
@@ -1362,7 +1377,16 @@ func (s *Server) executeOpenAILoginWithProxy(parent context.Context, email, prox
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1", "PYTHONPATH="+filepath.Join(cmd.Dir, "internal", "codex_runtime"))
 	localRPC := &oauthProtocolRPC{server: s, ctx: ctx, email: email}
 	defer localRPC.close()
-	result, err := runOAuthChild(ctx, cmd, payload, localRPC.call, func(rawLine string) {
+	call := localRPC.call
+	if opts, ok := parent.Value(mergeV2LoginKey{}).(*mergeV2LoginOptions); ok {
+		call = func(method string, args map[string]any) (any, error) {
+			if strings.HasPrefix(method, "merge_v2_") {
+				return opts.Call(method, args)
+			}
+			return localRPC.call(method, args)
+		}
+	}
+	result, err := runOAuthChild(ctx, cmd, payload, call, func(rawLine string) {
 		rawLine = strings.TrimSpace(rawLine)
 		if event, ok := parseProtocolOAuthDiagnostic(rawLine); ok {
 			emitDiagnostic(event)

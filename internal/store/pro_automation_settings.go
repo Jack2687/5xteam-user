@@ -52,6 +52,7 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	v.QuotaEnabled, v.AutoMergeEnabled = input.QuotaEnabled, input.AutoMergeEnabled
 	v.AutoDeleteEnabled = input.AutoDeleteEnabled
 	v.AutoMerchantEnabled = input.AutoMerchantEnabled
+	v.AutoMergeV2Enabled = input.AutoMergeV2Enabled
 	v.MerchantSuccessFeeUSD = input.MerchantSuccessFeeUSD
 	var merchantSecret string
 	if err = tx.QueryRow("SELECT encrypted_key FROM pro_merchant_secret WHERE id=1").Scan(&merchantSecret); err != nil && !errors.Is(err, sql.ErrNoRows) {

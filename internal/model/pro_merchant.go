@@ -35,7 +35,7 @@ func (p MailAccountProfile) MerchantAccepted() bool {
 	return p.ProMerchant != nil && p.ProMerchant.AcceptedAt != nil
 }
 func (p MailAccountProfile) DispositionStarted() bool {
-	return p.DeletionSubmitted() || p.MerchantStarted()
+	return p.DeletionSubmitted() || p.MerchantStarted() || p.MergeV2Started()
 }
 func (p MailAccountProfile) MerchantNeedsContinuation() bool {
 	return p.MerchantStarted() && !p.MerchantCompleted() && p.ProMerchant.Status != "failed"

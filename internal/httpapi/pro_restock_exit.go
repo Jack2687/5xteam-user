@@ -16,7 +16,7 @@ func applyRestockExitPolicy(a *restock.Account, p model.MailAccountProfile, sett
 		t := p.ProAuto.QuotaUsedThreshold
 		a.QuotaMergeThreshold = &t
 	}
-	if settings.QuotaEnabled && (settings.AutoMergeEnabled || settings.AutoDeleteEnabled || settings.AutoMerchantEnabled) && !p.SpaceMergedOnce && settings.QuotaUsedThreshold > 0 && settings.QuotaUsedThreshold <= 100 {
+	if settings.QuotaEnabled && (settings.AutoMergeEnabled || settings.AutoMergeV2Enabled || settings.AutoDeleteEnabled || settings.AutoMerchantEnabled) && !p.SpaceMergedOnce && settings.QuotaUsedThreshold > 0 && settings.QuotaUsedThreshold <= 100 {
 		if a.QuotaMergeThreshold == nil || settings.QuotaUsedThreshold < *a.QuotaMergeThreshold {
 			t := settings.QuotaUsedThreshold
 			a.QuotaMergeThreshold = &t

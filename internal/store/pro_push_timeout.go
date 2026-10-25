@@ -43,7 +43,7 @@ func syncProPushTimeoutTx(tx *sql.Tx, next model.ProSettings) error {
 		}
 		// Unknown historical policies and work already entering disposition
 		// retain their original state; saving settings never restarts a workflow.
-		if p.ProPushTimeoutEnabled == nil || p.SpaceMergedOnce || p.ProWorkflowRunning || p.ProDeactivation != nil || p.MerchantStarted() ||
+		if p.ProPushTimeoutEnabled == nil || p.SpaceMergedOnce || p.ProWorkflowRunning || p.ProDeactivation != nil || p.MerchantStarted() || p.MergeV2Started() ||
 			p.ProAuto.Status == "completed" || p.ProAuto.Stage == "merge" || p.ProAuto.Stage == "deactivate" || p.ProMergeTrigger != "" {
 			continue
 		}

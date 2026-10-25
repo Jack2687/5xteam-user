@@ -70,6 +70,11 @@ type ProQualityState struct {
 }
 
 func (p *MailAccountProfile) ReconcileProQualityMerge() {
+	if p.ProQuality.Action == "merge" && p.MergeV2Started() {
+		p.ProQuality.ActionStatus, p.ProQuality.ActionError = p.ProMergeV2.Status, p.ProMergeV2.Error
+		p.ProQuality.NextMergeAt = nil
+		return
+	}
 	if p.ProQuality.Action == "merge" && p.MerchantStarted() {
 		p.ProQuality.ActionStatus, p.ProQuality.ActionError = "pending", p.ProMerchant.Error
 		if p.MerchantCompleted() {

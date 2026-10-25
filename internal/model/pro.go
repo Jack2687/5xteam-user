@@ -82,6 +82,7 @@ type ProSettings struct {
 	QuotaUsedThreshold           float64             `json:"quota_used_threshold"`
 	QuotaCheckIntervalSeconds    int                 `json:"quota_check_interval_seconds"`
 	AutoMergeEnabled             bool                `json:"auto_merge_enabled"`
+	AutoMergeV2Enabled           bool                `json:"auto_merge_v2_enabled"`
 	AutoMerchantEnabled          bool                `json:"auto_merchant_enabled"`
 	MerchantKeyPresent           bool                `json:"merchant_key_present"`
 	AutoDeleteEnabled            bool                `json:"auto_delete_enabled"`

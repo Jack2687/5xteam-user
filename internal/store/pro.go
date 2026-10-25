@@ -258,6 +258,7 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	wasConfirmed := p.TransferStatus == "completed" && p.ProMergeConfirmedSource != ""
 	wasRemoved := p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed"
 	wasDeleted := p.DeletionAccepted()
+	wasMergeV2Completed, wasMergeV2Accepted := p.MergeV2Completed(), p.MergeV2Accepted()
 	wasMerchantCompleted := p.MerchantCompleted()
 	wasMerchantAccepted := p.MerchantAccepted()
 	previousProvider, previousSub2ID := p.PushProvider, p.Sub2AccountID
@@ -283,7 +284,9 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 		}
 	}
 	p.UpdatedAt = time.Now()
-	if p.MerchantStarted() {
+	if p.MergeV2Started() {
+		p.ReconcileProMergeV2(p.UpdatedAt)
+	} else if p.MerchantStarted() {
 		p.ReconcileProMerchant(p.UpdatedAt)
 	} else if p.DeletionSubmitted() {
 		p.ReconcileProAutoDeletion(p.UpdatedAt)
@@ -316,7 +319,7 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	if err = s.recordNexovccRevenueTx(tx, p); err != nil {
 		return p, err
 	}
-	if (!wasRemoved && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed")) || (!wasDeleted && p.DeletionAccepted()) || (!wasMerchantCompleted && p.MerchantCompleted()) {
+	if (!wasRemoved && (p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed")) || (!wasDeleted && p.DeletionAccepted()) || (!wasMerchantCompleted && p.MerchantCompleted()) || (!wasMergeV2Completed && p.MergeV2Completed()) {
 		if err = releaseProCardOrdersTx(tx, email, formatTime(p.UpdatedAt)); err != nil {
 			return p, err
 		}
@@ -327,6 +330,11 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 			at = *p.SpaceMergedAt
 		}
 		if err = ejhMarkRequestedTx(tx, p.Email, p.ProAuto.OrderID, p.ProMergeConfirmedSource, at); err != nil {
+			return p, err
+		}
+	}
+	if !wasMergeV2Accepted && p.MergeV2Accepted() {
+		if err = ejhMarkRequestedTx(tx, p.Email, p.ProAuto.OrderID, "merge_v2_accepted", *p.ProMergeV2.AcceptedAt); err != nil {
 			return p, err
 		}
 	}
@@ -384,6 +392,9 @@ func (s *Store) RecoverProWorkflows() error {
 		}
 		deletionNeedsRecovery := p.ProDeactivation != nil && (deletionReconciled || p.ProDeactivation.Status == "running" || p.DeletionNeedsContinuation() && p.ProDeactivation.NextCheckAt == nil)
 		merchantReconciled := p.ReconcileProMerchant(time.Now())
+		if p.MergeV2Started() {
+			merchantReconciled = p.ReconcileProMergeV2(time.Now()) || merchantReconciled
+		}
 		if p.MerchantNeedsContinuation() && p.ProMerchant.NextCheckAt == nil && !p.ProAuto.StopRequested {
 			next := time.Now().Add(15 * time.Second)
 			p.ProMerchant.NextCheckAt = &next
@@ -397,6 +408,15 @@ func (s *Store) RecoverProWorkflows() error {
 			p.TransferStatus = "unknown"
 		}
 		p.ProWorkflowRunning = false
+		if m := p.ProMergeV2; m != nil && m.Status == "running" {
+			m.Status = "interrupted"
+			if m.SubmittedAt != nil && m.AcceptedAt == nil {
+				m.Status = "unknown"
+			}
+			m.Steps[m.Stage] = m.Status
+			m.Error = "服务重启，请从保存进度续跑；已受理请求不会重复提交"
+			m.UpdatedAt = time.Now()
+		}
 		if d := p.ProDeactivation; d != nil && d.Status == "running" {
 			d.Status = "interrupted"
 			if d.SubmittedAt != nil {
@@ -434,6 +454,7 @@ func (s *Store) RecoverProWorkflows() error {
 			p.ProLastError = p.ProDeactivation.Error
 		}
 		p.ReconcileProMerchant(time.Now())
+		p.ReconcileProMergeV2(time.Now())
 		p.ReconcileProStop()
 		p.UpdatedAt = time.Now()
 		updates = append(updates, item{email: email, profile: p})

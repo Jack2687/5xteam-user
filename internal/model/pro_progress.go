@@ -135,6 +135,9 @@ func (p *MailAccountProfile) ReconcileProAutoMerge(now time.Time) bool {
 		}
 		return changed
 	}
+	if p.MergeV2Started() {
+		return p.ReconcileProMergeV2(now)
+	}
 	if p.MerchantStarted() {
 		return p.ReconcileProMerchant(now)
 	}
@@ -261,6 +264,13 @@ func (p MailAccountProfile) ProStages() ProStageDisplay {
 		delete(v.Errors, "merchant")
 		if m.Error != "" {
 			v.Errors["merchant"] = m.Error
+		}
+	}
+	if m := p.ProMergeV2; m != nil {
+		v.Steps["merge_v2"] = m.Status
+		delete(v.Errors, "merge_v2")
+		if m.Error != "" {
+			v.Errors["merge_v2"] = m.Error
 		}
 	}
 	return v

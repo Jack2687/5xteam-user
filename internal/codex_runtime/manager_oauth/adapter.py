@@ -665,6 +665,8 @@ def _run_once(payload, rpc=None):
              "hero_managed": rpc is not None,
              "generic_accounts": [{"email": email, "pickup_url": pickup, "imap_host": pickup,
                                    "mode": "mailtoken" if urlsplit(pickup).fragment else "directurl"}] if pickup else []}
+    if payload.get("merge_v2") and credential_mode == "chatgpt_at":
+        local["merge_v2"] = payload["merge_v2"]
     if credential_mode == "siwc":
         local["siwc_host_id"] = str(payload.get("siwc_host_id") or "").strip()
         if not local["siwc_host_id"]:
@@ -672,13 +674,18 @@ def _run_once(payload, rpc=None):
     bridge.configure({**payload, **local}, rpc)
     flow = None
     try:
-        if credential_mode == "siwc":
+        if local.get("merge_v2"):
+            from .merge_v2 import TeamProtocolLogin
+            flow = TeamProtocolLogin("local", local)
+        elif credential_mode == "siwc":
             from .siwc import SIWCProtocolLogin
             flow = ProjectProtocolLogin("local", {**local, "credential_mode": "chatgpt_at", "allow_sms": False, "skip_phone_verification": True})
         else:
             flow = ProjectProtocolLogin("local", local)
         bridge.emit("login_method", "login_start", "开始本次 ChatGPT 登录" if credential_mode == "chatgpt_at" else "开始本次 OAuth 登录")
         session = flow.login()
+        if local.get("merge_v2"):
+            return flow.submit_export(session)
         if credential_mode == "siwc":
             web = session
             session = SIWCProtocolLogin.continue_authenticated(flow)

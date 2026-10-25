@@ -13,6 +13,7 @@ const proScheduleCandidateSQL = `SELECT m.email FROM mail_accounts m WHERE json_
 	AND coalesce(json_extract(m.profile,'$.pro_restock_task_id'),'')='' AND coalesce(json_extract(m.profile,'$.pro_auto.id'),'')='' AND json_type(m.profile,'$.pro_migration') IS NULL
 	AND coalesce(json_extract(m.profile,'$.pro_auto.stop_requested'),0)=0
  AND json_extract(m.profile,'$.pro_deactivation') IS NULL
+ AND json_extract(m.profile,'$.pro_merge_v2') IS NULL
  AND json_extract(m.profile,'$.pro_merchant') IS NULL
 	AND coalesce(json_extract(m.profile,'$.chatgpt_status'),'') NOT IN ('dead','disabled','invalid')
 	AND coalesce(json_extract(m.profile,'$.push_status'),'') NOT IN ('completed','running')

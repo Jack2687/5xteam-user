@@ -733,6 +733,7 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.AutoDeleteEnabled, input.AutoMergeEnabled = current.AutoDeleteEnabled, current.AutoMergeEnabled
+	input.AutoMergeV2Enabled = current.AutoMergeV2Enabled
 	input.AutoMerchantEnabled, input.MerchantKeyPresent = current.AutoMerchantEnabled, current.MerchantKeyPresent
 	input.MerchantSuccessFeeUSD = current.MerchantSuccessFeeUSD
 	input.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
@@ -1206,7 +1207,7 @@ func (s *Server) performProQuota(ctx context.Context, email string, auto bool) (
 	if err == nil && !applied {
 		return profile, errors.New("额度查询期间下游账号已变化，已丢弃旧响应，请重新查询")
 	}
-	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoMerchantEnabled || currentSettings.AutoDeleteEnabled && !currentSettings.AutoDeletePaused) && !profile.SpaceMergedOnce && !profile.DispositionStarted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
+	if err == nil && auto && (currentSettings.AutoMergeEnabled || currentSettings.AutoMergeV2Enabled || currentSettings.AutoMerchantEnabled || currentSettings.AutoDeleteEnabled && !currentSettings.AutoDeletePaused) && !profile.SpaceMergedOnce && !profile.DispositionStarted() && s.proQuotaExitReached(profile, currentSettings, currentSettings.QuotaUsedThreshold) && !proTransferNeedsConfirmation(profile) {
 		profile, err = s.startProDispositionJob(email, nil, nil)
 		if errors.Is(err, errProAutoDeletePaused) {
 			err = nil
@@ -1554,7 +1555,7 @@ func (s *Server) monitorProAccounts(ctx context.Context) {
 			emails := []string{}
 			for _, p := range s.store.MailAccountsByManagementScope("pro") {
 				// The new full workflow owns its own quota threshold and due time.
-				if p.ProAuto.ID != "" || p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) {
+				if p.MergeV2Started() || p.ProAuto.ID != "" || p.ProAuto.StopRequested || p.ProAuto.Status == "stopped" || (p.ProMigration != nil && p.ProMigration.Paused) {
 					continue
 				}
 				needsQuota := !p.SpaceMergedOnce && !p.DispositionStarted()
