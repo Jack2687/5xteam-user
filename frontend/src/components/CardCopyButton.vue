@@ -16,9 +16,10 @@ async function copyCard() {
   copied.value = false
   clearTimeout(timer)
   try {
-    const secret = props.secret || await api(`/api/${props.issuer}/cards/${encodeURIComponent(props.cardId)}/private`, { method: 'POST', body: {}, cache: 'no-store' })
+    const includeHolder = props.issuer === 'nexovcc'
+    const secret = props.secret || await api(`/api/${props.issuer}/cards/${encodeURIComponent(props.cardId)}/private${includeHolder ? '?include_holder=true' : ''}`, { method: 'POST', body: {}, cache: 'no-store' })
     if (disposed) return
-    await copyText(cardCopyText(secret))
+    await copyText(cardCopyText(secret, includeHolder))
     if (disposed) return
     copied.value = true
     timer = setTimeout(() => { copied.value = false }, 2000)
@@ -31,7 +32,7 @@ async function copyCard() {
 </script>
 
 <template>
-  <button type="button" class="btn ghost compact card-copy-button" :disabled="copying" title="复制卡号----MM/YY----CVV" @click.stop="copyCard">
+  <button type="button" class="btn ghost compact card-copy-button" :disabled="copying" :title="issuer === 'nexovcc' ? '复制卡密、持卡人及地址' : '复制卡号----MM/YY----CVV'" @click.stop="copyCard">
     <Check v-if="copied" :size="14"/><Copy v-else :size="14"/>
     {{ copying ? '复制中…' : copied ? '已复制' : '复制卡密' }}
   </button>

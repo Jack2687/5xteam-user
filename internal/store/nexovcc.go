@@ -199,6 +199,10 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 			return c, e
 		}
 		c.Imported = old.Imported
+		// List and balance responses omit the holder; keep the last detail snapshot.
+		if c.Holder == nil {
+			c.Holder = old.Holder
+		}
 		c.NormalPending, c.NormalPendingAt = old.NormalPending, old.NormalPendingAt
 		c.Control, c.ControlAt = old.Control, old.ControlAt
 		// A transition back to ACTIVE after observing a non-active snapshot
@@ -307,6 +311,26 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 	}
 	return c, tx.Commit()
 }
+
+// Save only holder fields so a manual copy cannot overwrite concurrent balance,
+// category or lifecycle changes with its earlier card snapshot.
+func (s *Store) SaveNexovccCardHolder(id string, holder *nexovcc.CardHolder) error {
+	if holder == nil {
+		return fmt.Errorf("环球未返回持卡人信息")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, err := s.db.Exec(`UPDATE nexovcc_cards SET profile=json_set(profile,'$.holder',json(?)) WHERE id=?`, mustJSON(holder), id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err == nil && count == 0 {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
 func (s *Store) nexovccIssuer(q proCapacityQuery, key string) (*gptpay.Card, error) {
 	var raw string
 	var pending bool

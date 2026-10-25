@@ -1086,7 +1086,17 @@ func (s *Server) nexovccPrivate(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, "请先同步完整卡信息")
 		return
 	}
-	writeAPI(w, 200, secret, "")
+	if r.URL.Query().Get("include_holder") == "true" && card.Holder == nil && card.Status != "4" {
+		card.Holder, e = s.nexovccCardHolder(r.Context(), card.ID)
+		if e != nil {
+			writeAPI(w, 400, nil, e.Error())
+			return
+		}
+	}
+	writeAPI(w, 200, struct {
+		gptpay.CardSecret
+		Holder *nexovcc.CardHolder `json:"holder"`
+	}{secret, card.Holder}, "")
 }
 func (s *Server) nexovccCaseState(w http.ResponseWriter, r *http.Request) {
 	var in struct {

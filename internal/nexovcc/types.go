@@ -65,24 +65,35 @@ type Balance struct {
 	At     time.Time `json:"at"`
 }
 type Card struct {
-	ID              string     `json:"id"`
-	Serial          string     `json:"serial_no"`
-	Status          string     `json:"status"`
-	Last4           string     `json:"last4"`
-	BIN             string     `json:"bin"`
-	ProductID       string     `json:"product_id"`
-	Remark          string     `json:"remark"`
-	Balance         string     `json:"balance"`
-	BalanceAt       time.Time  `json:"balance_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	SyncedAt        time.Time  `json:"synced_at"`
-	Imported        bool       `json:"imported"`
-	Error           string     `json:"error"`
-	Control         string     `json:"control,omitempty"`
-	ControlAt       time.Time  `json:"control_at,omitempty"`
-	NormalPending   bool       `json:"normal_pending,omitempty"`
-	NormalPendingAt *time.Time `json:"normal_pending_at,omitempty"`
-	ClosedAt        time.Time  `json:"closed_at,omitempty"`
+	Holder          *CardHolder `json:"holder,omitempty"`
+	ID              string      `json:"id"`
+	Serial          string      `json:"serial_no"`
+	Status          string      `json:"status"`
+	Last4           string      `json:"last4"`
+	BIN             string      `json:"bin"`
+	ProductID       string      `json:"product_id"`
+	Remark          string      `json:"remark"`
+	Balance         string      `json:"balance"`
+	BalanceAt       time.Time   `json:"balance_at"`
+	CreatedAt       time.Time   `json:"created_at"`
+	SyncedAt        time.Time   `json:"synced_at"`
+	Imported        bool        `json:"imported"`
+	Error           string      `json:"error"`
+	Control         string      `json:"control,omitempty"`
+	ControlAt       time.Time   `json:"control_at,omitempty"`
+	NormalPending   bool        `json:"normal_pending,omitempty"`
+	NormalPendingAt *time.Time  `json:"normal_pending_at,omitempty"`
+	ClosedAt        time.Time   `json:"closed_at,omitempty"`
+}
+type CardHolder struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Country   string `json:"country"`
+	State     string `json:"state"`
+	City      string `json:"city"`
+	Street    string `json:"street"`
+	Address   string `json:"address"`
+	ZipCode   string `json:"zip_code"`
 }
 type PrivateCard struct {
 	Number      string

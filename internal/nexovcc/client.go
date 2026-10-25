@@ -560,6 +560,7 @@ func CardFrom(m map[string]any) (Card, error) {
 		last = number[len(number)-4:]
 	}
 	c := Card{Serial: serial, Status: text(m["status"]), Last4: last, BIN: text(m["card_range"]), ProductID: text(m["pid"]), Remark: text(m["remark"]), SyncedAt: time.Now()}
+	c.Holder = CardHolderFrom(m)
 	if c.ProductID == "" {
 		c.ProductID = text(m["product_id"])
 	}
@@ -588,6 +589,24 @@ func CardFrom(m map[string]any) (Card, error) {
 	}
 	return c, nil
 }
+func CardHolderFrom(m map[string]any) *CardHolder {
+	userHolder, _ := m["user_card_holder"].(map[string]any)
+	holder, ok := userHolder["card_holder"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &CardHolder{
+		FirstName: strings.TrimSpace(text(holder["first_name"])),
+		LastName:  strings.TrimSpace(text(holder["last_name"])),
+		Country:   strings.TrimSpace(text(holder["country"])),
+		State:     strings.TrimSpace(text(holder["state"])),
+		City:      strings.TrimSpace(text(holder["city"])),
+		Street:    strings.TrimSpace(text(holder["street"])),
+		Address:   strings.TrimSpace(text(holder["address"])),
+		ZipCode:   strings.TrimSpace(text(holder["zip_code"])),
+	}
+}
+
 func PrivateFrom(m map[string]any) (PrivateCard, error) {
 	p := PrivateCard{Number: strings.ReplaceAll(text(m["card_no"]), " ", ""), CVV: text(m["cvv"])}
 	exp := text(m["expire_at_str"])
