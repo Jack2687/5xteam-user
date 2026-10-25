@@ -108,6 +108,24 @@ func (s *Store) SetEJHCaseState(id string, in EJHCaseStateInput) (ejh.Case, erro
 	if state != "" {
 		out.State = state
 	}
+	// Only an explicit correction reopens the accounting rate. A temporarily
+	// unconfirmed supplier refresh must not erase a previously locked fee.
+	if out.State != "returned" {
+		if _, err = tx.Exec(`DELETE FROM ejh_reversal_fee_rates WHERE order_id=?`, id); err != nil {
+			return out, err
+		}
+	}
+	if err = s.snapshotEJHReversalFeesTx(tx); err != nil {
+		return out, err
+	}
+	rates, err := ejhReversalFeeRates(tx)
+	if err != nil {
+		return out, err
+	}
+	out.ReversalFee = rates[out.ID]
+	for i := range out.Returns {
+		out.Returns[i].ReversalFee = out.ReversalFee
+	}
 	return out, tx.Commit()
 }
 

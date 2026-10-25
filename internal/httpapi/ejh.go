@@ -166,6 +166,7 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, e.Error())
 		return
 	}
+	ejh.ApplyReversalFeeRates(trades, cases)
 	type row struct {
 		ejh.CardRecord
 		Local  *gptpay.Card `json:"local,omitempty"`

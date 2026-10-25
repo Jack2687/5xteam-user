@@ -36,7 +36,7 @@ const costs = computed(() => [
   { label: '清算退款手续费', amount: value.value.refundFees.amount, note: '按核对登记，已计入总成本' },
   { label: '开卡费', amount: value.value.openingFee, note: `${value.value.openingCount} 张 × 0.50 USD` },
   { label: '充值手续费', amount: value.value.depositFee, note: '充值总额 × 1%' },
-  { label: '授权撤销费', amount: value.value.reversal.usd.amount ?? (value.value.reversal.count ? null : '0.00'), note: `按 ${data.value?.reversal_fee_percent ?? 6}% 估算` },
+  { label: '授权撤销费', amount: value.value.reversal.usd.amount ?? (value.value.reversal.count ? null : '0.00'), note: '逐笔估算，已回款费率锁定' },
   { label: '清算成本', amount: value.value.platformClearingUSD, note: `清算净额 ${value.value.rawClearingUSD??'—'} USD − 平台外转出 ${value.value.externalTransfer??'—'} USD` },
 ])
 watch(pageSize, () => page.value = 1)

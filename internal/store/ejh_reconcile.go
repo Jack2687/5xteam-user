@@ -105,5 +105,8 @@ func (s *Store) ejhReconcileLocked() error {
 			return err
 		}
 	}
+	if err = s.snapshotEJHReversalFeesTx(tx); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

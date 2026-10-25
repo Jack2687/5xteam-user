@@ -21,6 +21,7 @@ func (s *Store) initializeEJH() error {
  CREATE TABLE IF NOT EXISTS ejh_cases(id TEXT PRIMARY KEY,email TEXT NOT NULL,card_id TEXT NOT NULL,profile TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS ejh_cases_email ON ejh_cases(email);
  CREATE INDEX IF NOT EXISTS ejh_cases_card ON ejh_cases(card_id);
+ CREATE TABLE IF NOT EXISTS ejh_reversal_fee_rates(order_id TEXT PRIMARY KEY,percent REAL NOT NULL,locked_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS ejh_case_states(order_id TEXT PRIMARY KEY,state TEXT NOT NULL,reason TEXT NOT NULL,updated_at TEXT NOT NULL,revision INTEGER NOT NULL);`)
 	if err == nil {
 		_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS ejh_return_links(trade_id TEXT PRIMARY KEY,order_id TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ejh_return_links_order ON ejh_return_links(order_id);
@@ -87,8 +88,21 @@ func (s *Store) SaveEJHSettings(v ejh.Settings, secret string) (ejh.Settings, er
 		return v, fmt.Errorf("启用前请填写 AppKey 和 AppSecret")
 	}
 	v.SecretPresent = sealed != ""
-	_, e = s.db.Exec(`INSERT INTO ejh_settings VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET profile=excluded.profile,secret=excluded.secret`, mustJSON(v), sealed)
-	return v, e
+	tx, e := s.db.Begin()
+	if e != nil {
+		return v, e
+	}
+	defer tx.Rollback()
+	if e = lockProCardAdmission(tx); e != nil {
+		return v, e
+	}
+	if e = s.snapshotEJHReversalFeesTx(tx); e != nil {
+		return v, e
+	}
+	if _, e = tx.Exec(`INSERT INTO ejh_settings VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET profile=excluded.profile,secret=excluded.secret`, mustJSON(v), sealed); e != nil {
+		return v, e
+	}
+	return v, tx.Commit()
 }
 func (s *Store) EJHPut(kind, id string, value any) error {
 	s.mu.Lock()
@@ -526,6 +540,10 @@ type ejhCaseQuery interface {
 }
 
 func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, error) {
+	rates, err := ejhReversalFeeRates(q)
+	if err != nil {
+		return nil, err
+	}
 	merchantFees, err := proMerchantFeesByOrder(q)
 	if err != nil {
 		return nil, err
@@ -662,6 +680,13 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		if v.StateOverride != nil && ejh.ValidCaseState(v.StateOverride.State) {
 			v.State = v.StateOverride.State
 		}
+		v.ReversalFee = nil
+		if v.CardType == "ejh" && v.State == "returned" {
+			v.ReversalFee = rates[v.ID]
+		}
+		for i := range v.Returns {
+			v.Returns[i].ReversalFee = v.ReversalFee
+		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -775,6 +800,9 @@ func (s *Store) EJHMatchTrade(id, orderID, originalID, amount, currency, evidenc
 	if _, e = tx.Exec(`UPDATE ejh_cases SET profile=? WHERE id=?`, mustJSON(c), c.ID); e != nil {
 		return e
 	}
+	if e = s.snapshotEJHReversalFeesTx(tx); e != nil {
+		return e
+	}
 	return tx.Commit()
 }
 func (s *Store) EJHUnmatch(id, reason string) error {
@@ -813,6 +841,9 @@ func (s *Store) EJHUnmatch(id, reason string) error {
 		return e
 	}
 	if _, e = tx.Exec(`DELETE FROM ejh_return_links WHERE trade_id=?`, id); e != nil {
+		return e
+	}
+	if e = s.snapshotEJHReversalFeesTx(tx); e != nil {
 		return e
 	}
 	return tx.Commit()

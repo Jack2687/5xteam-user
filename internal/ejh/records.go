@@ -43,18 +43,19 @@ type CardRecord struct {
 	Error            string     `json:"error"`
 }
 type TradeRecord struct {
-	ID              string     `json:"id"`
-	CardID          string     `json:"card_id"`
-	Trade           Trade      `json:"trade"`
-	OrderID         string     `json:"payment_order_id"`
-	OriginalTradeID string     `json:"original_trade_id"`
-	Confirmed       bool       `json:"confirmed"`
-	Amount          string     `json:"confirmed_amount"`
-	Currency        string     `json:"confirmed_currency"`
-	Evidence        string     `json:"evidence"`
-	Source          string     `json:"source"`
-	SyncedAt        time.Time  `json:"synced_at"`
-	ConfirmedAt     *time.Time `json:"confirmed_at,omitempty"`
+	ReversalFee     *ReversalFeeRate `json:"reversal_fee,omitempty"`
+	ID              string           `json:"id"`
+	CardID          string           `json:"card_id"`
+	Trade           Trade            `json:"trade"`
+	OrderID         string           `json:"payment_order_id"`
+	OriginalTradeID string           `json:"original_trade_id"`
+	Confirmed       bool             `json:"confirmed"`
+	Amount          string           `json:"confirmed_amount"`
+	Currency        string           `json:"confirmed_currency"`
+	Evidence        string           `json:"evidence"`
+	Source          string           `json:"source"`
+	SyncedAt        time.Time        `json:"synced_at"`
+	ConfirmedAt     *time.Time       `json:"confirmed_at,omitempty"`
 }
 type CaseStateOverride struct {
 	State     string    `json:"state"`
@@ -68,7 +69,8 @@ func ValidCaseState(state string) bool {
 }
 
 type Case struct {
-	MerchantFeeUSD string `json:"merchant_fee_usd"`
+	ReversalFee    *ReversalFeeRate `json:"reversal_fee,omitempty"`
+	MerchantFeeUSD string           `json:"merchant_fee_usd"`
 	// Removal only affects the unopened return record in the EJH dashboard.
 	// Keep the underlying case for payment reconciliation and card occupancy.
 	RemovedAt *time.Time `json:"removed_at,omitempty"`

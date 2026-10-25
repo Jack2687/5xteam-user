@@ -156,7 +156,7 @@ export function financeEvents(data,history={}) {
     const fee=summarizeReversalFees([record],data.reversal_fee_percent??6,false,cards,operations,true),t=record.trade
     events.push({id:'reversal:'+key,kind:'reversal',at:financeTime(t.tradeTime)||financeTime(t.createdAt),card:cards.find(c=>c.id===record.card_id)?.local?.name||t.orderNo,reference:t.tradeNo,
       email:(data.cases||[]).find(c=>c.id===record.payment_order_id)?.email||'',amount:fee.rows[0]?.amount??null,currency:fee.rows[0]?.currency||t.cardCurrency||'',usd:money(cents(fee.usd.amount)),usd_precise:fee.usd.amount,
-      incomplete:!!(fee.missing||fee.pending||fee.usd.missing),note:fee.pending?'待确认，未计入':`按 ${data.reversal_fee_percent??6}% 估算`})
+      incomplete:!!(fee.missing||fee.pending||fee.usd.missing),note:fee.pending?'待确认，未计入':`按 ${fee.percent}% 估算${record.reversal_fee?'（已回款锁定）':'（当前设置）'}`})
   }
   for(const event of history.recharges||[]){
     const after=feeCents(event.after||'0'),before=feeCents(event.before||'0')

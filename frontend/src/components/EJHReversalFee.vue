@@ -21,7 +21,7 @@ const result = computed(() => {
    <strong v-if="fee.usd.amount!==null && (fee.usd.estimated || fee.rows.some(row=>row.currency!=='USD'))" class="reversal-fee-usd" title="按各卡初始开卡的 USD 结算比例估算">{{fee.usd.estimated?'≈ ':''}}{{fee.usd.amount}} USD{{fee.usd.missing?'（部分）':''}}</strong>
    <strong v-if="showProfit || fee.count || fee.missing || fee.pending" class="reversal-fee-r" title="授权撤销费 USD × 6.7">折合 {{result.estimated?'≈ ':''}}{{result.amount??'—'}} R{{result.incomplete&&result.amount!==null?'（部分）':''}}</strong>
    <small v-if="fee.usd.missing">{{fee.usd.missing}} 笔缺少 USD 折算依据，未计入</small>
-   <small v-if="fee.count">按 {{fee.percent}}% 计算</small>
+   <small v-if="fee.count">{{fee.percent===null?'按各笔费率分别计算':'按 '+fee.percent+'% 计算'}}{{records.some(r=>r.reversal_fee)?' · 已回款费率已锁定':''}}</small>
    <small v-if="fee.missing">{{fee.missing}} 笔金额或比例待核实</small>
    <small v-if="fee.pending">{{fee.pending}} 笔待确认，未计入</small>
   </div>

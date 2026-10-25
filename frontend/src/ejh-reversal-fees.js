@@ -18,7 +18,7 @@ function rateUnits(value) {
 const formatCents = cents => `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`
 
 export function summarizeReversalFees(records = [], percent = 6, confirmedOnly = false, cards = [], operations = [], preciseUSD = false) {
-  const rate = rateUnits(percent), unique = new Map(), totals = new Map(), conversions = []
+  const currentRate = rateUnits(percent), rates = new Set(), unique = new Map(), totals = new Map(), conversions = []
   let count = 0, missing = 0, pending = 0
   for (const record of records) {
     const trade = record.trade || {}
@@ -32,15 +32,17 @@ export function summarizeReversalFees(records = [], percent = 6, confirmedOnly =
   for (const record of unique.values()) {
     const trade = record.trade
     if (!['1', '2'].includes(String(trade.tradeStatus)) || confirmedOnly && !record.confirmed) { pending++; continue }
+    const rate = record.reversal_fee ? rateUnits(record.reversal_fee.percent) : currentRate
     const base = amountUnits(trade.cardAmount), currency = trade.cardCurrency
     if (rate === null || base === null || !/^[A-Z]{3}$/.test(currency || '')) { missing++; continue }
     const cents = (base * rate + 50000000n) / 100000000n
     totals.set(currency, (totals.get(currency) || 0n) + cents)
     conversions.push({ card_id: record.card_id, order_no: trade.orderNo, amount: formatCents(cents), currency })
+    rates.add(String(Number(rate) / 100))
     count++
   }
   const rows = [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([currency, cents]) => ({ currency, amount: formatCents(cents) }))
-  return { rows, count, missing, pending, percent: rate === null ? null : String(Number(rate) / 100), usd: summarizeCardAmountsUSD(conversions, cards, operations, preciseUSD) }
+  return { rows, count, missing, pending, percent: rates.size > 1 ? null : rates.size ? [...rates][0] : currentRate === null ? null : String(Number(currentRate) / 100), usd: summarizeCardAmountsUSD(conversions, cards, operations, preciseUSD) }
 }
 
 // Match the displayed USD amount exactly. R uses four decimal places, just

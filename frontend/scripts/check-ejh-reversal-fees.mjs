@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { summarizeReversalFees, reversalProfit } from '../src/ejh-reversal-fees.js'
+import { financeOverview, financeEvents, financeReport } from '../src/ejh-finance.js'
 import { cardAmounts } from '../src/ejh-account-amounts.js'
 
 const reversal = (id, amount = '5780.48', currency = 'PHP', extra = {}) => ({ id, card_id: 'card', confirmed: true, trade: { tradeNo: id, tradeType: '2', tradeStatus: '1', cardAmount: amount, cardCurrency: currency, authCode: 'shared', ...extra } })
@@ -64,3 +65,27 @@ assert.equal(reversalProfit(converted([{...row,confirmed:false}]),100.18).profit
 assert.equal(reversalProfit(summarizeReversalFees([row],0,true),100.18).profit,'100.1800')
 assert.equal(reversalProfit({...sampleFee,usd:{...sampleFee.usd,amount:'0.01'}},0.067).profit,'0.0000','exact decimal cancellation')
 console.log('Passed: USD x 6.7, consumption minus reversal cost, four decimals, negative profit, true zero, missing FX/consumption and pending evidence')
+
+// Historical completed returns retain their own rate while unreturned records
+// follow the latest setting, including a deliberately configured zero.
+const locked = { ...reversal('locked', '100', 'USD'), reversal_fee: { percent: 6, locked_at: '2026-10-25T01:00:00Z' } }
+const current = { ...reversal('current', '100', 'USD'), confirmed: false }
+assert.equal(fee([locked], 3).rows[0].amount, '6.00')
+assert.equal(fee([locked], 3).percent, '6')
+assert.equal(fee([current], 3).rows[0].amount, '3.00')
+assert.equal(fee([locked, current], 3).rows[0].amount, '9.00')
+assert.equal(fee([locked, current], 3).percent, null, 'mixed history must not claim one common rate')
+assert.equal(fee([locked, current], 0).rows[0].amount, '6.00')
+assert.equal(fee([{ ...locked, reversal_fee: { percent: 0 } }], 6).rows[0].amount, '0.00')
+assert.equal(fee([{ ...locked, reversal_fee: { percent: 3.25 } }], 6).rows[0].amount, '3.25')
+assert.equal(fee([{ ...locked, reversal_fee: { percent: 'invalid' } }], 6).missing, 1, 'bad snapshot cannot silently reprice history')
+console.log('Passed: locked historic rates, pending current rates, mixed rates, zero and fractional snapshots')
+
+const mixedData={reversal_fee_percent:3,trades:[locked,current],cards:[],cases:[],operations:[]}
+assert.equal(financeOverview(mixedData).reversal.usd.amount,'9.00')
+const mixedEvents=financeEvents(mixedData).filter(e=>e.kind==='reversal')
+assert.equal(mixedEvents.find(e=>e.reference==='locked').usd,'6.00')
+assert.match(mixedEvents.find(e=>e.reference==='locked').note,/6%.*已回款锁定/)
+assert.equal(mixedEvents.find(e=>e.reference==='current').usd,'3.00')
+assert.equal(financeReport(mixedData,{},'all').summary.reversalUSD,'9.00')
+console.log('Passed: dashboard totals, financial events and reports agree with account fee snapshots')
