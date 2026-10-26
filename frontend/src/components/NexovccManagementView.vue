@@ -147,7 +147,7 @@ async function controlInterfaces(){
 async function recoverProgress(){if(disposed)return;try{const j=await loadJob();if(j.status==='running')pollTimer=setTimeout(poll,1200)}catch{pollTimer=setTimeout(poll,3000)}}
 async function watchUpdates(){
  if(disposed)return
- try{if(!running.value){const previous=job.value;const current=await loadJob();if(current.status==='running')poll();else if(current.id!==previous.id||current.status!==previous.status)await load()}}catch{}
+ try{if(!running.value){const previous=job.value;const current=await loadJob();if(current.status==='running')poll();else if(current.id!==previous.id||current.status!==previous.status||data.operations.some(op=>op.action==='open'&&op.status==='import_pending'&&!data.cards.some(row=>row.card.id===op.card_id&&(row.card.normal_pending||row.card.status==='4'))))await load()}}catch{}
  if(!disposed)updateTimer=setTimeout(watchUpdates,5000)
 }
 async function run(input){

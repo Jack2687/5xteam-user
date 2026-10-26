@@ -374,6 +374,7 @@ func (s *Server) startNexovccMonitor() {
 	s.nexovcc.wg.Add(1)
 	s.nexovcc.jobMu.Unlock()
 	s.startNexovccWithdrawMonitor(ctx)
+	s.startNexovccImportMonitor(ctx)
 	go func() {
 		defer s.nexovcc.wg.Done()
 		ticker := time.NewTicker(30 * time.Second)

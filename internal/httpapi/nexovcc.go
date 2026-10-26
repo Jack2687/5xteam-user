@@ -428,6 +428,16 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 			_, e = s.refreshNexovccBalanceLocked(ctx, in.CardID)
 		case "open":
 			op, e = s.openNexovccLocked(ctx, in.RequestID, in.TemplateID, false)
+			if e == nil && op.Status == "import_pending" && op.Serial != "" {
+				s.nexovccProgress("卡片已开出，正在补齐资料…", 0, 1)
+				var waitErr error
+				op, waitErr = s.waitNexovccImportLocked(ctx, op, 45*time.Second, 3*time.Second)
+				// A slow issuer is still a successful issuance. The independent
+				// import worker resumes the saved card after this bounded wait.
+				if ctx.Err() != nil {
+					e = waitErr
+				}
+			}
 		case "resolve":
 			op, e = s.resolveNexovccLocked(ctx, in)
 		default:
@@ -711,7 +721,7 @@ func (s *Server) refreshNexovccDetailsLocked(ctx context.Context, id, serial str
 		return s.store.SaveNexovccCard(card, nil)
 	}
 	if pe != nil {
-		card.Error = "卡密未完整导入，请重新同步"
+		card.Error = "卡片资料暂未齐全，等待补查"
 		_, _ = s.store.SaveNexovccCard(card, nil)
 		return card, pe
 	}

@@ -456,6 +456,23 @@ func (s *Store) NexovccOperation(id string) (nexovcc.Operation, error) {
 	return v, e
 }
 
+// At most one open can be active. Avoid scanning the historical audit/operation
+// ledger on the short import-recovery clock.
+func (s *Store) NexovccPendingImport() (nexovcc.Operation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var op nexovcc.Operation
+	var raw string
+	err := s.db.QueryRow(`SELECT profile FROM nexovcc_operations WHERE scope='open' AND status='import_pending' LIMIT 1`).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return op, nil
+	}
+	if err == nil {
+		err = json.Unmarshal([]byte(raw), &op)
+	}
+	return op, err
+}
+
 // NexovccOpenAdmission is supplied by the server after validating the manual
 // choice. A claimed restock task always retains its own issuer and ownership.
 type NexovccOpenAdmission struct {
