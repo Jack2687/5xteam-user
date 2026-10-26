@@ -15,6 +15,14 @@ PROMPT = "请查询退款；最后一行输入已成功或已失败"
 ANSWER = "该订阅退款已发起，预计 5–10 个工作日。\n已成功"
 
 
+def help_page(email=EMAIL):
+    table = [{"_1": 2}, "loaderData", {"_3": 4}, "root",
+             {"_5": 6, "_11": 12, "_13": 14}, "user", {"_7": 8, "_9": 10},
+             "email", email, "accessToken", "help-only-token",
+             "sessionIdToken", "signed-help-session", "helpCenterSessionId", "help-session-id"]
+    return '<script>window.__reactRouterContext.streamController.enqueue(' + json.dumps(json.dumps(table) + '\n') + ');</script>'
+
+
 def response(status=200, body=None, headers=None, text=""):
     r = Mock(status_code=status, headers=headers or {}, text=text, url="")
     r.json.return_value = body or {}
@@ -71,12 +79,17 @@ class HelpTests(unittest.TestCase):
                 return response(body={"continue_url": callback}, text=json.dumps({"continue_url": callback}))
             if url == callback: return response(302, headers={"location": help.HELP + "/auth/login-success?returnTo=%2Fen%2Fcollections%2F3742473-chatgpt"})
             if "/auth/login-success?" in url: return response(302, headers={"location": help.PAGE})
-            if url == help.PAGE: return response()
-            if url.endswith("/me"): return response(body={"email": EMAIL})
+            if url == help.PAGE: return response(text=help_page())
+            if url.endswith("/me"):
+                self.assertEqual(kw["headers"]["Authorization"], "Bearer help-only-token")
+                self.assertEqual(kw["headers"]["x-session-id"], "signed-help-session")
+                return response(body={"email": EMAIL})
             if url == help.CHAT:
                 self.assertIn("help_sending", [n for n, _ in self.calls])
                 self.assertEqual(kw["json"]["type"], "threads.create")
                 self.assertEqual(kw["headers"]["x-chatkit-version"], "rc2")
+                self.assertEqual(kw["headers"]["Authorization"], "Bearer help-only-token")
+                self.assertEqual(kw["headers"]["x-help-center-session-id"], "help-session-id")
                 self.assertTrue(kw["stream"])
                 return self.stream({"type": "thread.item.done", "item": item("assistant_message", "answer-1", ANSWER)})
             self.fail("unexpected URL " + url)
@@ -86,6 +99,8 @@ class HelpTests(unittest.TestCase):
         self.assertEqual(sum(url == help.CHAT for _, url, _ in seen), 1)
         saved = next(v["session"] for n, v in self.calls if n == "help_session")
         self.assertEqual(saved["proxy"], self.flow.proxy_url)
+        self.assertEqual(saved["access_token"], "help-only-token")
+        self.assertEqual(saved["session_id_token"], "signed-help-session")
         self.assertEqual([v["answer"] for n, v in self.calls if n == "help_reply"], [ANSWER])
 
     def test_user_prompt_deltas_and_wrong_thread_cannot_confirm(self):
@@ -119,11 +134,13 @@ class HelpTests(unittest.TestCase):
         with patch.object(self.flow.web_session, "request", side_effect=TimeoutError("lost")) as req:
             with self.assertRaises(TimeoutError): self.inquiry.send()
         req.assert_called_once()
-        saved = {"email": EMAIL, "proxy": self.flow.proxy_url, "cookies": [{"name": "session", "value": "private", "domain": ".openai.com"}]}
+        saved = {"email": EMAIL, "proxy": self.flow.proxy_url, "access_token": "saved-help-token", "session_id_token": "saved-signed-session", "cookies": [{"name": "session", "value": "private", "domain": ".openai.com"}]}
         f = help.HelpInquiry(self.flow, {"session": saved, "sent_at": "2026-10-26T10:00:00Z", "request_id": "original", "prompt": PROMPT})
         queries = []
         def request(method, url, **kw):
-            if url.endswith("/me"): return response(body={"email": EMAIL})
+            if url.endswith("/me"):
+                self.assertEqual(kw["headers"]["Authorization"], "Bearer saved-help-token")
+                return response(body={"email": EMAIL})
             typ = kw["json"]["type"]; queries.append(typ)
             if typ == "threads.list": return response(body={"data": [{"id": "thread-1"}]})
             self.assertEqual(typ, "threads.get_by_id")
@@ -158,6 +175,20 @@ class HelpTests(unittest.TestCase):
         self.assertFalse(self.inquiry.restore())
         self.inquiry.config["session"] = {"email": EMAIL, "proxy": self.flow.proxy_url, "cookies": [{"name": "s", "value": "expired", "domain": ".openai.com"}]}
         with patch.object(self.flow.web_session, "request", return_value=response(401)): self.assertFalse(self.inquiry.restore())
+
+    def test_loader_requires_root_identity_and_never_executes_scripts(self):
+        self.assertEqual(help.help_page_identity(help_page())["access_token"], "help-only-token")
+        for html in ['<script>throw new Error("execute")</script>', help_page().replace('loaderData', 'untrustedData'), help_page().replace('accessToken', 'unusedToken')]:
+            with self.assertRaises(help.HelpError): help.help_page_identity(html)
+        with self.assertRaisesRegex(help.HelpError, "账号"):
+            self.inquiry.load_identity(help_page("other@example.com"))
+        self.assertEqual(self.inquiry.access_token, "")
+
+    def test_unauthenticated_help_landing_never_sends(self):
+        with patch.object(self.flow.web_session, "request", return_value=response(text='<html>Login</html>')) as req:
+            with self.assertRaisesRegex(help.HelpError, "授权凭据"): self.inquiry.run()
+        self.assertNotIn("help_sending", [n for n, _ in self.calls])
+        self.assertFalse(any("/chatkit" in c.args[1] for c in req.call_args_list))
 
 
 if __name__ == "__main__": unittest.main()

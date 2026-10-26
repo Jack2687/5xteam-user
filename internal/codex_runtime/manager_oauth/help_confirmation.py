@@ -56,6 +56,40 @@ def message_text(item):
                      if c.get("type") in {"output_text", "input_text"} and isinstance(c.get("text"), str))
 
 
+def help_page_identity(html):
+    """Read the Help root loader's JSON reference table; never execute page JS.
+
+    HAR exports omit Authorization headers. Help's client obtains its Bearer
+    token and signed X-Session-Id from this loader, not from ChatGPT cookies.
+    """
+    if len(html) > 4 << 20: raise HelpError("Help 登录页面超出限制")
+    marker = "window.__reactRouterContext.streamController.enqueue("
+    for match in re.finditer(re.escape(marker), html):
+        try:
+            encoded, _ = json.JSONDecoder().raw_decode(html[match.end():].lstrip())
+            table = json.loads(encoded)
+            if not isinstance(table, list): continue
+            def value(index):
+                if type(index) is not int or not 0 <= index < len(table): return None
+                return table[index]
+            def field(obj, key):
+                if not isinstance(obj, dict): return None
+                for ref, index in obj.items():
+                    if isinstance(ref, str) and re.fullmatch(r"_\d+", ref) and value(int(ref[1:])) == key:
+                        return value(index)
+                return None
+            root = field(field(table[0], "loaderData"), "root")
+            user = field(root, "user")
+            result = {"email": field(user, "email"), "access_token": field(user, "accessToken"),
+                      "session_id_token": field(root, "sessionIdToken"),
+                      "session_id": field(root, "helpCenterSessionId")}
+            if all(isinstance(v, str) and v and len(v) <= 32768 and not any(c in v for c in "\r\n") for v in result.values()):
+                return result
+        except (ValueError, TypeError, IndexError, RecursionError):
+            continue
+    raise HelpError("Help 登录页面未返回支持系统授权凭据")
+
+
 class HelpInquiry:
     def __init__(self, flow, config):
         self.flow, self.config = flow, config
@@ -67,6 +101,8 @@ class HelpInquiry:
         self.sent_at = parse_time(config.get("sent_at"))
         self.prompt = str(config.get("prompt") or "")
         self.verified = False
+        self.access_token = ""
+        self.session_id_token = ""
 
     def checkpoint(self, name, **values):
         return bridge.call("help_" + name, **values)
@@ -80,6 +116,8 @@ class HelpInquiry:
              "x-help-center-session-id": self.session_id, "x-session-id": self.session_id,
              "chatkit-frame-instance-id": self.frame_id, "x-current-page": PAGE}
         if json_request: h["Content-Type"] = "application/json"
+        if self.access_token: h["Authorization"] = "Bearer " + self.access_token
+        if self.session_id_token: h["x-session-id"] = self.session_id_token
         return h
 
     def request(self, url, **kwargs):
@@ -104,6 +142,10 @@ class HelpInquiry:
         saved = self.config.get("session") or {}
         if saved.get("email", "").lower() != self.email or saved.get("proxy") != self.flow.proxy_url:
             return False
+        self.access_token = str(saved.get("access_token") or "")
+        self.session_id_token = str(saved.get("session_id_token") or "")
+        bridge.protect_code(self.access_token); bridge.protect_code(self.session_id_token)
+        if not self.access_token or not self.session_id_token: return False
         for cookie in saved.get("cookies", []):
             domain = str(cookie.get("domain", "")).lstrip(".")
             if domain not in ALLOWED and domain not in {"openai.com", "chatgpt.com"}: continue
@@ -120,12 +162,21 @@ class HelpInquiry:
                 bridge.protect_code(c.value)
                 cookies.append({"name": c.name, "value": c.value, "domain": c.domain, "path": c.path})
         self.checkpoint("session", session={"email": self.email, "proxy": self.flow.proxy_url,
-            "cookies": cookies, "session_id": self.session_id, "device_id": self.flow.device_id})
+            "cookies": cookies, "session_id": self.session_id, "device_id": self.flow.device_id,
+            "access_token": self.access_token, "session_id_token": self.session_id_token})
+
+    def load_identity(self, html):
+        identity = help_page_identity(html)
+        if identity["email"].strip().lower() != self.email:
+            raise HelpError("Help 登录账号与当前账号不一致", "help_identity_mismatch")
+        self.access_token = identity["access_token"]
+        self.session_id_token = identity["session_id_token"]
+        self.session_id = identity["session_id"]
+        bridge.protect_code(self.access_token); bridge.protect_code(self.session_id_token)
 
     def authorize(self):
         self.stage("authorize", "running")
-        # login-success establishes the support session after the OAuth callback.
-        # Going straight to the collection page leaves /api/v1/me unauthorized.
+        # Follow the same callback/landing path as Help's own login UI.
         landing = "/auth/login-success?" + urlencode({"returnTo": urlsplit(PAGE).path})
         current = HELP + "/auth/login?" + urlencode({"redirectTo": landing})
         expected_state = ""
@@ -163,6 +214,7 @@ class HelpInquiry:
                     raise HelpError("Help 账号选择未返回有效回调")
                 current = urljoin(current, next_url); continue
             if r.status_code == 200 and p.hostname == "help.openai.com":
+                self.load_identity(r.text)
                 self.identity(); self.save_session(); self.stage("authorize", "completed"); return
             raise HelpError(f"Help 授权未完成：HTTP {r.status_code}")
         raise HelpError("Help 授权跳转次数超限")
