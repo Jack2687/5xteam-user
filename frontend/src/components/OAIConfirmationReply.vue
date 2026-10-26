@@ -1,6 +1,7 @@
 <script setup>
 import { onBeforeUnmount, ref } from 'vue'
 import { formatTime } from '../utils'
+import { copyText } from '../clipboard'
 const props=defineProps({record:Object})
 const anchor=ref(null),opened=ref(false),pinned=ref(false),position=ref({}),copied=ref(false)
 let timer
@@ -8,7 +9,7 @@ function keep(){clearTimeout(timer)}
 function show(pin=false){clearTimeout(timer);if(pin)pinned.value=true;const r=anchor.value?.getBoundingClientRect();if(!r)return;const width=Math.min(480,innerWidth-24);position.value={left:Math.max(12,Math.min(r.left,innerWidth-width-12))+'px',width:width+'px',maxHeight:Math.max(160,Math.min(420,innerHeight-40))+'px',...(r.top>innerHeight/2?{bottom:innerHeight-r.top+8+'px'}:{top:Math.min(r.bottom+8,innerHeight-200)+'px'})};opened.value=true}
 function leave(){clearTimeout(timer);if(!pinned.value)timer=setTimeout(()=>opened.value=false,160)}
 function close(){clearTimeout(timer);opened.value=false;pinned.value=false}
-async function copy(){try{await navigator.clipboard.writeText(props.record?.answer||'');copied.value=true}catch{copied.value=false}}
+async function copy(){try{await copyText(props.record?.answer||'');copied.value=true}catch{copied.value=false}}
 onBeforeUnmount(()=>clearTimeout(timer))
 </script>
 <template>

@@ -60,7 +60,7 @@ class HelpTests(unittest.TestCase):
             if "/auth/login?" in url: return response(302, headers={"location": auth})
             if url == auth: return response(302, headers={"location": help.AUTH + "/choose-an-account"})
             if url.endswith("/choose-an-account"):
-                return response(text='<script>us_wrong</script><button name="session_id" value="us_other">other@example.com</button><button name="session_id" value="us_child"><span>'+EMAIL+'</span></button>')
+                return response(text='<script>us_wrong</script><button name="session_id" value="us_other">other@example.com</button><button name="session_id" value="us_child"><div>Example Name</div><span>'+EMAIL+'</span></button>')
             if url.endswith("/api/accounts/session/select"):
                 self.assertEqual(json.loads(kw["data"]), {"session_id": "us_child"})
                 self.assertEqual(kw["headers"]["openai-sentinel-token"], "fixture-sentinel")

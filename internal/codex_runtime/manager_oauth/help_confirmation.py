@@ -35,7 +35,9 @@ class AccountButtons(HTMLParser):
         if tag == "button" and attrs.get("name") == "session_id":
             self.current = [attrs.get("value", ""), ""]
     def handle_data(self, data):
-        if self.current is not None: self.current[1] += data
+        # Names and email live in adjacent elements with no HTML whitespace.
+        # Preserve a boundary so "Name" + "child@example.com" is not one email.
+        if self.current is not None: self.current[1] += " " + data
     def handle_endtag(self, tag):
         if tag == "button" and self.current is not None:
             self.buttons.append(self.current); self.current = None
