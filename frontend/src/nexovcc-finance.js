@@ -1,3 +1,4 @@
+import { paymentOnlySummary, isPaymentOnly } from './payment-only.js'
 export const usdRate = 6.7
 export const tradeStates = {PENDING:'已授权',COMPLETE:'已清算',REVERSED:'已撤销',REFUNDED:'已退款',DECLINED:'已拒绝',EXPIRED:'已过期'}
 export const fundNames = {'api-merchant':'API 收费',1000:'账户充值',1001:'账户提现',3001:'开卡入金',3002:'销卡退回',3003:'开卡费',3004:'卡服务费（月）',3005:'卡服务费（年）',4001:'卡片充值',4002:'卡片提现',4004:'消费退款',2003:'授权撤销费',2007:'交易手续费',2008:'结算手续费',2009:'小额交易费',4005:'跨境费',4006:'卡片充值费',8888:'退款手续费',5000:'充值费返还',5001:'开卡费返还',5003:'退款费返还',5004:'撤销费返还',5008:'交易费返还',5009:'结算费返还',5010:'小额交易费返还'}
@@ -22,7 +23,7 @@ export function balanceCostAdjustments(data, serial='') {
  const result=[]
  for(const row of data.cards||[]){
   const card=row.card
-  if(!card||serial&&card.serial_no!==serial||card.error)continue
+  if(!card||serial&&card.serial_no!==serial||card.error||isPaymentOnly(data,card.id))continue
   const s=card.serial_no,closed=card.status==='4'
   const balanceAt=time(card.balance_at),ledgerAt=time(f.card_at?f.card_at[s]:f.at)
   const funds=(f.funds||[]).filter(r=>r.serial_no===s),groups=(data.groups||[]).filter(g=>g.serial_no===s)
@@ -58,7 +59,7 @@ export function balanceCostAdjustments(data, serial='') {
    if(balance<0)continue
    if(pending.length){
     const cases=(data.cases||[]).filter(c=>c.card_id===card.id&&c.payment_status==='success')
-    if(pending.some(g=>!cases.some(c=>c.match?.group?.id===g.id&&c.state==='waiting'&&!c.removed_at&&Number.isFinite(time(c.requested_at))&&time(c.requested_at)<=balanceAt)))continue
+    if(pending.some(g=>!cases.some(c=>c.match?.group?.id===g.id&&(c.original_state||c.state)==='waiting'&&!c.removed_at&&Number.isFinite(time(c.requested_at))&&time(c.requested_at)<=balanceAt)))continue
     const outstanding=sum(pending,g=>Math.max(0,cents(g.payment)-cents(g.returned)))
     // The ordinary unreturned authorization stays in transit. Only an excess
     // over its ledger balance enables this explicitly provisional estimate.
@@ -76,10 +77,11 @@ export function caseAmounts(row) {
  const shared=row.shared_fees
  const opening=shared?.ready?cents(shared.opening):null,monthly=shared?.ready?cents(shared.monthly):null
  const merchant=cents(row.merchant_fee_usd)
- const cost=known&&(!shared||shared.ready)?cents(g.cost)+(opening||0)+(monthly||0)+merchant:null, revenue=row.revenue_r==null?null:cents(row.revenue_r)
+ const cost=known&&(!shared||shared.ready)?cents(g.cost)-(row.payment_only&&(g.fully_returned||g.settled)?Math.max(0,cents(g.difference)):0)+(opening||0)+(monthly||0)+merchant:null, revenue=row.revenue_r==null?null:cents(row.revenue_r)
  return {opening,monthly,merchant,sharedCount:shared?.count||0,sharedApplied:shared?.applied,paid:known?cents(g.payment):null,returned:known?cents(g.returned):null,difference:known?cents(g.difference):null,fees:known?cents(g.fees):null,cost,revenue,profit:cost===null||revenue===null?null:revenue-rCents(cost),closed:!!(g?.fully_returned||g?.settled)}
 }
 export function financeTotals(data,serial='') {
+ const paymentOnly=paymentOnlySummary(data,'nexovcc',serial)
  const f=data.finance||{}, ready=!!f.at&&!f.at.startsWith('0001')
  const groups=(data.groups||[]).filter(g=>!serial||g.serial_no===serial)
  const funds=(f.funds||[]).filter(r=>!serial||r.serial_no===serial)
@@ -95,11 +97,11 @@ export function financeTotals(data,serial='') {
  const manualFees=sum(manualOtherFees(data,serial),r=>cents(r.amount))
  const adjustments=balanceCostAdjustments(data,serial),balanceDifference=sum(adjustments,r=>r.extra),balanceRecoveredPending=sum(adjustments,r=>r.pendingAdjustment)
  const merchantFee=sum((data.merchant_fees||[]).filter(r=>!serial||cardIDs.has(r.card_id)),r=>cents(r.amount))
- const cost=merchantFee+sum(funds.filter(r=>feeKinds.includes(r.kind)&&r.currency==='USD'),r=>-cents(r.amount))+cardLoss+settlement+rechargeFee+manualFees+balanceDifference
+ const cost=merchantFee+sum(funds.filter(r=>feeKinds.includes(r.kind)&&r.currency==='USD'),r=>-cents(r.amount))+cardLoss+settlement+rechargeFee+manualFees+balanceDifference-paymentOnly.costExcluded
  const linked=new Set(cases.map(c=>c.match?.group?.id).filter(Boolean))
- return {ready,gross,merchantFee,received:serial?0:sum(recharges,r=>cents(r.received)),rechargeFee,opening:fees[3003]+fees[5001],service:fees[3004]+fees[3005],reversal:fees[2003]+fees[5004],transaction:fees[2007]+fees[5008],otherFees:Object.entries(fees).filter(([k])=>![3003,3004,3005,5001,2003,5004,2007,5008].includes(Number(k))).reduce((s,[,v])=>s+v,0)+manualFees,manualFees,cardLoss,settlement,balanceDifference,balanceRecoveredPending,cost,revenue,profit:revenue-rCents(cost),
-  paid:sum(valid,g=>cents(g.payment)),returned:sum(valid,g=>cents(g.returned)),pending:sum(valid.filter(g=>!g.fully_returned&&!g.settled),g=>Math.max(0,cents(g.difference))),
-  unknownRevenue:cases.filter(c=>c.revenue_r==null).length,unmatchedCases:cases.filter(c=>!c.match).length,unmatched:groups.filter(g=>!g.non_pro&&!g.other_expense?.applied&&cents(g.payment)>0&&!linked.has(g.id)&&!linked.has(g.related_group_id)).length,unverified:groups.filter(g=>!g.valid&&!g.other_expense?.applied).length,
+ return {paymentOnly,ready,gross,merchantFee,received:serial?0:sum(recharges,r=>cents(r.received)),rechargeFee,opening:fees[3003]+fees[5001],service:fees[3004]+fees[3005],reversal:fees[2003]+fees[5004],transaction:fees[2007]+fees[5008],otherFees:Object.entries(fees).filter(([k])=>![3003,3004,3005,5001,2003,5004,2007,5008].includes(Number(k))).reduce((s,[,v])=>s+v,0)+manualFees,manualFees,cardLoss,settlement,balanceDifference,balanceRecoveredPending,cost,revenue,profit:paymentOnly.missing?null:revenue-rCents(cost),
+  paid:sum(valid,g=>cents(g.payment)),returned:sum(valid,g=>cents(g.returned)),pending:Math.max(0,sum(valid.filter(g=>!g.fully_returned&&!g.settled),g=>Math.max(0,cents(g.difference)))-paymentOnly.pending),
+  unknownRevenue:cases.filter(c=>c.revenue_r==null).length,unmatchedCases:cases.filter(c=>!c.match).length,unmatched:groups.filter(g=>!paymentOnly.rows.some(p=>p.serial===g.serial_no)&&!g.non_pro&&!g.other_expense?.applied&&cents(g.payment)>0&&!linked.has(g.id)&&!linked.has(g.related_group_id)).length,unverified:groups.filter(g=>!g.valid&&!g.other_expense?.applied).length,
   staleReviews:(data.trade_reviews||[]).filter(r=>!r.voided&&!r.applied&&(!serial||(data.review_groups||[]).some(g=>g.id===r.group_id&&g.serial_no===serial))).length,
   foreign:funds.filter(r=>r.currency!=='USD').length+(serial?0:(f.recharges||[]).filter(r=>r.status==='1'&&r.currency!=='USD').length),
   unknownFunds:funds.filter(r=>!fundNames[r.kind]).length}

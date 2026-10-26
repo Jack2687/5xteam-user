@@ -14,7 +14,8 @@ const feeRows=computed(()=>[
  {label:'退款手续费',amount:value.value.refundFee,kind:'8888'},
  {label:'其他费用',amount:value.value.otherFees,kind:'case-other'},
  {label:'卡内损耗',amount:value.value.cardLoss},
- {label:'清算成本',amount:value.value.settlement},
+ {label:'清算成本（原始）',amount:value.value.settlement},
+ ...(props.row.payment_only?[{label:'只付款本金扣除',amount:-(value.value.cardLoss+value.value.settlement)}]:[]),
 ])
 const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(v):'—'
 </script>
@@ -23,7 +24,7 @@ const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(
   <div class="amount-grid">
    <div><span>付款{{value.provisional?'（授权占用）':''}}</span><strong>{{money(value.paid)}} USD</strong><small v-for="m in value.merchantPaid.filter(m=>m.currency!=='USD')" :key="m.currency">{{money(m.amount)}} {{m.currency}}</small><small>{{rmb(value.paid)}} R</small></div>
    <div><span>已确认回款</span><strong>{{money(value.returned)}} USD</strong><small v-for="m in value.merchantReturned.filter(m=>m.currency!=='USD')" :key="m.currency">{{money(m.amount)}} {{m.currency}}</small><small>{{rmb(value.returned)}} R</small></div>
-   <div><span>差额（付款 − 回款）</span><strong>{{money(value.difference)}} USD</strong><small>{{rmb(value.difference)}} R</small><small>{{!row.match?'待匹配流水':value.refundCompleted?'退款已完成，差额计入卡内损耗':value.closed?'已结算差额':'待回款，不计成本'}}</small></div>
+   <div><span>差额（付款 − 回款）</span><strong>{{money(value.difference)}} USD</strong><small>{{rmb(value.difference)}} R</small><small>{{row.payment_only?'只付款本金单列，不计业务成本':!row.match?'待匹配流水':value.refundCompleted?'退款已完成，差额计入卡内损耗':value.closed?'已结算差额':'待回款，不计成本'}}</small></div>
    <div><span>消费收益</span><strong>{{money(value.revenue)}} R</strong><small>{{value.revenue===null?'消费尚未同步':'Sub2 实际消费'}}</small></div>
   </div>
   <p v-if="['opened','waiting'].includes(row.state)||value.pending>0" class="return-note">尚待回款：<b>{{money(value.pending)}} USD</b>（已扣清算）</p>

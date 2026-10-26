@@ -1,4 +1,5 @@
 <script setup>
+import { paymentOnlySummary, paymentMoney } from '../payment-only'
 import { computed } from 'vue'
 import { accountAmounts } from '../ejh-account-amounts'
 import { accountConsumption, consumptionText } from '../ejh-consumption'
@@ -10,7 +11,13 @@ import EJHClearingCost from './EJHClearingCost.vue'
 import EJHReversalFee from './EJHReversalFee.vue'
 const props=defineProps({row:{type:Object,required:true},cards:{type:Array,default:()=>[]},operations:{type:Array,default:()=>[]},trades:{type:Array,default:()=>[]},feePercent:{type:Number,default:6}})
 const amounts=computed(()=>accountAmounts(props.row,props.trades))
-const clearing = computed(() => summarizeClearingCosts(casePaymentTrades(props.row,props.trades),props.cards,props.operations))
+const clearing = computed(() => {
+ const raw=summarizeClearingCosts(casePaymentTrades(props.row,props.trades),props.cards,props.operations)
+ if(!props.row.payment_only)return raw
+ const id=props.row.ejh_card_id||props.row.card_id
+ const summary=paymentOnlySummary({payment_policies:[{card_id:id,mode:'payment_only'}],cards:props.cards,cases:[props.row],operations:props.operations,trades:casePaymentTrades(props.row,props.trades)},'ejh')
+ return {...raw,usd:{...raw.usd,amount:raw.usd.amount===null?null:paymentMoney(Math.round(Number(raw.usd.amount)*100)-summary.costExcluded)},missing:raw.missing+summary.missing}
+})
 </script>
 <template><div class="account-money"><div class="account-money-grid">
 <div><small>付款{{amounts.authorization?'（授权占用）':''}}</small><strong>{{amounts.paid===null?'待核实':amounts.paid+' '+amounts.currency}}</strong><small v-if="amounts.paid!==null&&!amounts.posted">待入账</small></div>

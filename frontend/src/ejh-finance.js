@@ -1,3 +1,4 @@
+import { applyPaymentPolicies, paymentOnlySummary, paymentMoney } from './payment-only.js'
 import { summarizeReversalFees } from './ejh-reversal-fees.js'
 import { financeProfit, usdToR } from './ejh-profit.js'
 import { summarizeCardBalancesUSD } from './ejh-card-funding.js'
@@ -59,6 +60,8 @@ export function openingEntries(data) {
   return [...unique.values()]
 }
 export function financeOverview(data={}) {
+  data=applyPaymentPolicies(data)
+  const paymentOnly=paymentOnlySummary(data,'ejh')
   const cards=data.cards||[],operations=data.operations||[],cases=data.cases||[]
   const reversal=summarizeReversalFees(data.trades||[],data.reversal_fee_percent??6,false,cards,operations)
   const opening=openingEntries(data),consumption=consumptionSummary(cases,data.consumption_history||[])
@@ -67,7 +70,7 @@ export function financeOverview(data={}) {
   const clearing=summarizeClearingCosts(data.trades||[],cards,operations)
   const externalTransfer=cents(data.recharge_ledger?.external_transfer_amount||'0')
   const rawClearingUSD=clearing.usd.amount
-  const platformClearingUSD=externalTransfer===null||cents(rawClearingUSD)===null?null:money(cents(rawClearingUSD)-externalTransfer)
+  const platformClearingUSD=externalTransfer===null||cents(rawClearingUSD)===null?null:money(cents(rawClearingUSD)-externalTransfer-BigInt(paymentOnly.costExcluded))
   const merchantFee=money((data.merchant_fees||[]).reduce((sum,row)=>sum+(cents(row.amount)||0n),0n))
   const refundFees=refundFeeSummary(data.refund_fees||[])
   const reasons=[];let account=0n
@@ -84,19 +87,20 @@ export function financeOverview(data={}) {
     }
   }
   if(net===null)reasons.push('充值总账未填写')
+  if(paymentOnly.missing)reasons.push('只付款支出金额待核实')
   if(externalTransfer===null)reasons.push('平台外转出金额待核实')
   if(cardUSD.missing)reasons.push(`${cardUSD.missing} 张卡余额或折算依据缺失`)
   if(inFlight.paymentUSD.missing)reasons.push(`${inFlight.paymentUSD.missing} 笔在途付款待核实`)
-  const loss=reasons.length?null:net-externalTransfer-account-(cents(cardUSD.amount)||0n)-(cents(inFlight.paymentUSD.amount)||0n)
+  const loss=reasons.length?null:net-externalTransfer-BigInt(paymentOnly.amount)-account-(cents(cardUSD.amount)||0n)-(cents(inFlight.paymentUSD.amount)||0n)
   const openingFee=money(BigInt(opening.length)*50n)
   const earnings=financeProfit({openingUSD:openingFee,reversalUSD:reversal.usd.amount??(!reversal.count?'0.00':null),rechargeUSD:money(deposit),clearingUSD:platformClearingUSD,refundUSD:refundFees.amount,merchantUSD:merchantFee,consumption:consumption.total,
-    costMissing:reversal.missing+reversal.pending+reversal.usd.missing+clearing.missing+clearing.pending+refundFees.missing,consumptionMissing:consumption.missing,estimated:!!reversal.count||clearing.estimated||refundFees.estimated})
-  const reconciliation=authorizationDiscrepancies(cases,data.trades||[],cards,operations,inFlight.authorizationKeys)
+    costMissing:paymentOnly.missing+reversal.missing+reversal.pending+reversal.usd.missing+clearing.missing+clearing.pending+refundFees.missing,consumptionMissing:consumption.missing,estimated:!!reversal.count||clearing.estimated||refundFees.estimated})
+  const reconciliation=authorizationDiscrepancies(cases,(data.trades||[]).filter(t=>!paymentOnly.rows.some(p=>p.card_id===t.card_id)),cards,operations,inFlight.authorizationKeys)
   const gap=loss===null||earnings.costUSD===null?null:money(loss-(cents(earnings.costUSD)-deposit-(cents(merchantFee)||0n)))
   const closurePending=reconciliation.unaccountedUSD.missing?null:reconciliation.unaccountedUSD.amount??'0.00'
   const unexplained=gap===null||closurePending===null?null:money(cents(gap)-cents(closurePending))
   const assets=reasons.length?null:money(account+(cents(cardUSD.amount)||0n)+(cents(inFlight.paymentUSD.amount)||0n))
-  return {reversal,earnings,merchantFee,openingCount:opening.length,openingFee,consumption,netR:usdToR(money(net)),lossR:usdToR(money(loss)),
+  return {paymentOnly,reversal,earnings,merchantFee,openingCount:opening.length,openingFee,consumption,netR:usdToR(money(net)),lossR:usdToR(money(loss)),
     reconciliation,gap,clearing,rawClearingUSD,platformClearingUSD,externalTransfer:money(externalTransfer),refundFees,closurePending,unexplained,assets,
     gross:money(gross),depositFee:money(deposit),net:money(net),loss:money(loss),lossReasons:[...new Set(reasons)],
     estimated:!!(cardUSD.estimated||inFlight.paymentUSD.estimated),stale:cards.filter(c=>c.remote?.status!=='2'&&c.balance_error).length,
@@ -118,6 +122,7 @@ export function periodRange(mode,date=beijingDay()) {
   return {start,end,label}
 }
 export function financeEvents(data,history={}) {
+  const paymentOnly=paymentOnlySummary(data,'ejh')
   const events=openingEntries(data),seen=new Map(),cards=data.cards||[],operations=data.operations||[]
   for(const fee of data.merchant_fees||[])events.push({id:'merchant:'+fee.request_id,kind:'merchant',at:financeTime(fee.at),email:fee.email,card:fee.card_id,reference:fee.request_id,amount:fee.amount,currency:'USD',usd:fee.amount,note:'API 商户最终成功 · 外部收费'})
   for(const fee of refundFeeEntries(data.refund_fees||[])) {
@@ -128,6 +133,17 @@ export function financeEvents(data,history={}) {
   for(const e of summarizeClearingCosts(data.trades||[],cards,operations).entries){
     const t=e.record.trade
     events.push({id:'clearing:'+e.record.card_id+':'+(t.tradeNo||e.record.id),kind:'clearing',at:financeTime(t.createdAt)||financeTime(t.tradeTime),card:cards.find(c=>c.id===e.record.card_id)?.local?.name||t.orderNo,reference:t.tradeNo,amount:e.amount,currency:e.currency,usd:e.usd,usd_precise:e.usd,incomplete:e.incomplete,note:e.pending?'清算待入账，未计成本':e.refund?'清算退款冲减成本':e.estimated?'清算成本 · USD 估算':'清算成本 · 已入账'})
+  }
+  for(const row of paymentOnly.rows){
+    if(row.missing){events.push({id:'payment-only-missing:'+row.card_id,kind:'clearing',at:null,usd:null,incomplete:true,note:'只付款支出待核实'});continue}
+    const net=row.entries.reduce((s,e)=>s+(cents(e.usd)||0n),0n)
+    // Full source evidence can be reclassified on its original date. A partial
+    // manual fallback stays explicitly undated instead of inventing dates.
+    if(net===BigInt(row.costExcluded))for(const e of row.entries){
+      const t=e.record.trade,n=cents(e.usd)
+      if(n===null||e.incomplete)continue
+      events.push({id:'payment-only:'+row.card_id+':'+(t.tradeNo||e.record.id),kind:'clearing',at:financeTime(t.createdAt)||financeTime(t.tradeTime),card:row.last4,reference:t.tradeNo,usd:money(-n),amount:money(-n),currency:'USD',note:'只付款本金单列，冲减业务清算成本'})
+    }else if(row.costExcluded)events.push({id:'payment-only:'+row.card_id,kind:'clearing',at:null,card:row.last4,usd:paymentMoney(-row.costExcluded),amount:paymentMoney(-row.costExcluded),currency:'USD',paymentOnlyUndated:true,note:'只付款本金单列 · 历史日期待核实'})
   }
   // A separate signed exclusion preserves issuer trades. The first cumulative
   // amount has no known spend date; later edits are dated accounting changes.
@@ -208,6 +224,7 @@ export function financeReport(data,history={},mode='day',date=beijingDay()) {
   const range=periodRange(mode,date),all=financeEvents(data,history),overview=financeOverview({...data,consumption_history:history.consumption||data.consumption_history})
   const events=all.filter(e=>mode==='all'||e.month&&mode==='month'&&e.month===date.slice(0,7)||e.at!==null&&e.at>=range.start&&e.at<range.end)
   const summary=summarizeEvents(events)
+  if(mode!=='all'&&all.some(e=>e.paymentOnlyUndated)){summary.earnings.profitR=null;summary.earnings.incomplete=true}
   if(mode==='all'){
     summary.r=overview.consumption.total
     summary.rechargeUSD=overview.depositFee
@@ -228,7 +245,7 @@ export function financeReport(data,history={},mode='day',date=beijingDay()) {
   // period entries are still useful but cannot establish a complete profit.
   for(const row of [summary,...rows]){
     if(overview.depositFee===null){row.missing++;row.earnings={...row.earnings,costR:null,costIncomplete:true,profitR:null,incomplete:true}}
-    if(overview.consumption.missing)row.earnings={...row.earnings,profitR:null,incomplete:true}
+    if(overview.consumption.missing||overview.paymentOnly.missing||mode!=='all'&&all.some(e=>e.paymentOnlyUndated))row.earnings={...row.earnings,profitR:null,incomplete:true}
   }
   const baseline=all.filter(e=>e.kind==='consumption'&&e.at===null).reduce((n,r)=>n+Number(r.amount),0)
   const dailyPending=(history.consumption||[]).filter(r=>!r.daily_checked_at||r.daily_error||r.source_at&&financeTime(r.source_at)>financeTime(r.daily_source_at)).length
@@ -240,7 +257,8 @@ export function financeReport(data,history={},mode='day',date=beijingDay()) {
   const snapshots=(history.snapshots||[]).filter(s=>{const at=financeTime(s.at);return at!==null&&at>=range.start&&at<range.end}).sort((a,b)=>financeTime(a.at)-financeTime(b.at))
   const first=snapshots[0],last=snapshots.at(-1)
   const firstLoss=first?financeOverview({...first,operations:data.operations||[]}).loss:null,lastLoss=last?financeOverview({...last,operations:data.operations||[]}).loss:null
-  const lossChange=first&&last&&financeTime(first.at)!==financeTime(last.at)&&firstLoss!==null&&lastLoss!==null?money(cents(lastLoss)-cents(firstLoss)):null
+  const samePolicies=JSON.stringify(first?.payment_policies||[])===JSON.stringify(last?.payment_policies||[])
+  const lossChange=samePolicies&&first&&last&&financeTime(first.at)!==financeTime(last.at)&&firstLoss!==null&&lastLoss!==null?money(cents(lastLoss)-cents(firstLoss)):null
   return {range,summary,events,rows,overview,baseline,dailyPending,dailyErrors,periodIncomplete,monthlyUndated,undatedTransfers,undated:all.filter(e=>e.at===null&&!e.month&&e.kind!=='consumption').length,lossChange,firstAt:first?.at,lastAt:last?.at,
     coverage:(history.usage_days||[]).map(r=>r.day).sort()[0]||null}
 }

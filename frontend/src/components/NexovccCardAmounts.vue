@@ -14,7 +14,8 @@ const fees=computed(()=>[
  {label:'交易手续费',value:props.totals.transaction,kind:'2007'},
  {label:'其他费用',value:props.totals.otherFees,kind:'card-other'},
  {label:'卡内损耗',value:props.totals.cardLoss},
- {label:'清算成本',value:props.totals.settlement},
+ {label:'清算成本（原始）',value:props.totals.settlement},
+ ...(props.totals.paymentOnly?.costExcluded?[{label:'只付款本金扣除',value:-props.totals.paymentOnly.costExcluded}]:[]),
  {label:'余额差额（暂估）',value:props.totals.balanceDifference,kind:'balance-difference'},
 ])
 </script>
@@ -22,7 +23,7 @@ const fees=computed(()=>[
  <div class="card-money">
   <div class="money-row"><span>消费收益</span><button @click="$emit('details',{type:'accounts'})"><strong>{{totals.unknownRevenue?'—':money(totals.revenue)}} R</strong></button></div>
   <div class="money-row"><span>卡片成本{{totals.balanceDifference?'（含暂估）':''}}</span><button @click="$emit('details',{type:'funds',feesOnly:true})"><strong>{{r(totals.cost)}} R</strong><small>{{usd(totals.cost)}} USD</small></button></div>
-  <div class="cost-note"><span>API 收费 {{r(totals.merchantFee)}} R</span><span>开卡 {{r(totals.opening)}} R</span><span>撤销 {{r(totals.reversal)}} R</span><span>交易及其他 {{r(totals.transaction+totals.otherFees)}} R</span><span>损耗及清算 {{r(totals.cardLoss+totals.settlement)}} R</span></div>
+  <div class="cost-note"><span>API 收费 {{r(totals.merchantFee)}} R</span><span>开卡 {{r(totals.opening)}} R</span><span>撤销 {{r(totals.reversal)}} R</span><span>交易及其他 {{r(totals.transaction+totals.otherFees)}} R</span><span>损耗及清算 {{r(totals.cardLoss+totals.settlement-(totals.paymentOnly?.costExcluded||0))}} R</span></div>
   <div v-if="totals.balanceDifference" class="money-row"><span>余额差额（暂估）</span><button @click="$emit('details',{type:'funds',kind:'balance-difference'})"><strong>{{r(totals.balanceDifference)}} R</strong><small>{{usd(totals.balanceDifference)}} USD · 已计成本</small></button></div>
   <div v-if="totals.service" class="money-row"><span>卡服务费</span><button @click="$emit('details',{type:'funds',kind:'card-service'})"><strong>{{r(totals.service)}} R</strong><small>{{usd(totals.service)}} USD</small></button></div>
   <div class="money-row profit"><span>卡片结余{{totals.pending||totals.balanceDifference?'（暂计）':''}}</span><strong :class="{negative:!incomplete&&totals.profit<0}">{{incomplete?'—':money(totals.profit)}} R</strong></div>

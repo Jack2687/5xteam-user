@@ -1,6 +1,6 @@
 import { isClosedCard } from './card-status.js'
 
-export const returnStates = { unopened: '未开通', opened: '已开通', waiting: '已申请待回款', returned: '已回款' }
+export const returnStates = { no_return:'只付款 · 无需回款', unopened: '未开通', opened: '已开通', waiting: '已申请待回款', returned: '已回款' }
 export const tradeKinds = { '1': '授权', '2': '授权撤销', '3': '授权失败', '4': '清算', '5': '退款', '16': '清算退款', '17': '销卡退回', '19': '销卡后清算' }
 export const operationStates = { submitting: '已提交待确认', processing: '销卡处理中', unknown: '结果未知，需核实', import_pending: '已开卡待导入', completed: '已完成', resolved: '人工核实完成', failed: '未执行/失败' }
 export const returnTypes = new Set(['2', '5', '16'])
@@ -14,7 +14,7 @@ export function cancelCardReason(card, operations = [], cases = []) {
   if (String(card.remote?.status) === '8') return '销卡处理中'
   if (card.local?.issuer_cancel_status) return '已有销卡申请，正在等待卡台处理结果'
   if (card.error || !['1','3','4','5','6','7'].includes(String(card.remote?.status))) return '卡片资料或状态待核实'
-  if (cases.some(row => cardHasCase(card,row) && !['returned','unopened'].includes(row.state))) return '有关联账号已开通或已申请待回款'
+  if (cases.some(row => cardHasCase(card,row) && !(row.payment_only&&row.requested_at) && !['returned','unopened'].includes(row.original_state||row.state))) return '有关联账号已开通或已申请待回款'
   if (operations.some(op => (op.card_id === card.id || op.order_no && op.order_no === card.remote?.orderNo) && ['submitting','processing','unknown','import_pending'].includes(op.status))) return '有待核实操作'
   return ''
 }

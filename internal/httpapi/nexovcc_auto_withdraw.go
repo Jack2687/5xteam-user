@@ -143,7 +143,7 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 		if local.IssuerLocked || local.PendingAccounts > 0 || local.AccountLimit < 1 || local.OpenedAccounts < local.AccountLimit {
 			continue
 		}
-		if local.ActiveAccounts > 0 || !nexovccRecycleCandidate(card, cases, groups) {
+		if local.ActiveAccounts > 0 || !s.nexovccAccountingRecycleCandidate(card, cases, groups) {
 			evidence, err := s.store.NexovccBalanceWithdrawal(card.ID)
 			if err != nil {
 				return err

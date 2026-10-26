@@ -29,12 +29,12 @@ async function save() {
 }
 </script>
 <template>
- <span class="case-state"><ReturnStatusBadge :state="row.state" show-requested-at :requested-at="requestTime.at" :request-label="requestTime.label"/><small v-if="manual" class="manual-state" :title="row.state_override.reason+' · '+formatTime(row.state_override.updated_at)">人工设置</small><button v-if="editable" type="button" class="btn ghost compact" :disabled="disabled||busy" :aria-label="'调整 '+row.email+' 的回款状态'" @click.stop="open">调整状态</button></span>
+ <span class="case-state"><ReturnStatusBadge :state="row.state" show-requested-at :requested-at="requestTime.at" :request-label="requestTime.label"/><small v-if="manual" class="manual-state" :title="row.state_override.reason+' · '+formatTime(row.state_override.updated_at)">人工设置</small><button v-if="editable&&!row.payment_only" type="button" class="btn ghost compact" :disabled="disabled||busy" :aria-label="'调整 '+row.email+' 的回款状态'" @click.stop="open">调整状态</button></span>
  <Teleport to="body"><div v-if="opened" class="modal-backdrop case-state-overlay" @click.self="!busy&&(opened=false)" @keydown.esc.stop="!busy&&(opened=false)"><form class="modal case-state-dialog" role="dialog" aria-modal="true" aria-label="调整账号回款状态" @submit.prevent="save">
  <h2>调整账号回款状态</h2><p><strong>{{original.email}}</strong><br/>卡片 {{original.card_name||'EJH'}} · 尾号 {{original.last4||'—'}}<br/><small>开通订单 {{original.id}}</small></p>
  <p>当前状态：{{returnStates[original.state]}}<br/>自动判断：{{returnStates[original.automatic_state]||returnStates[original.state]}}</p>
  <p v-if="original.state_override?.state" class="muted">上次人工设置：{{formatTime(original.state_override.updated_at)}}<br/>{{original.state_override.reason}}</p>
- <label class="field"><span>回款状态</span><select ref="select" v-model="state" :disabled="busy||restoring" @change="confirmed=false"><option v-for="(label,value) in returnStates" :key="value" :value="value">{{label}}</option></select></label>
+ <label class="field"><span>回款状态</span><select ref="select" v-model="state" :disabled="busy||restoring" @change="confirmed=false"><option v-for="(label,value) in Object.fromEntries(Object.entries(returnStates).filter(([k])=>k!=='no_return'))" :key="value" :value="value">{{label}}</option></select></label>
  <label v-if="original.state_override?.state" class="state-confirm"><input v-model="restoring" type="checkbox" :disabled="busy" @change="confirmed=false"/>恢复自动判断</label>
  <p class="state-effect">{{release?'将解除这笔订单的占用；卡片仍须启用、状态正常且有剩余名额，才可再次使用。':'这笔订单将保持占用，不能作为空闲卡再次分配，也不能销卡。'}}{{effective==='unopened'?'设为未开通后，可在账号回款的“未开通”分类中查看和调整。':''}}</p>
  <p class="muted">仅修改本地回款状态，不发起付款、退款或销卡。累计开通次数与真实流水金额保留。{{restoring?'取消人工覆盖后，按订单和流水重新判断。':'人工状态会持续生效，自动同步不会覆盖；可随时恢复自动判断。'}}</p>

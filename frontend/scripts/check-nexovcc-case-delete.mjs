@@ -1,3 +1,4 @@
+import { applyPaymentPolicies } from '../src/payment-only.js'
 import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -16,7 +17,7 @@ function harness(){
  let accept=true,failDelete=false,failLoad=false,release=null,block=false
  let rows=fixture()
  const requests=[],confirmations=[]
- const context=vm.createContext({cardOrigin,ref,reactive,computed,watch,sortReturnCases,
+ const context=vm.createContext({applyPaymentPolicies,cardOrigin,ref,reactive,computed,watch,sortReturnCases,
   defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},
   window:{confirm(text){confirmations.push(text);return accept}},
   async api(url,options={}){

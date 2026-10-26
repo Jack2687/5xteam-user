@@ -374,6 +374,7 @@ func (s *Store) nexovccIssuer(q proCapacityQuery, key string) (*gptpay.Card, err
 
 const nexovccOccupiedSQL = `(CASE
  WHEN u.status NOT IN ('success','failed') THEN 1
+ WHEN u.status='success' AND ` + paymentOnlyReleasedSQL + ` THEN 0
  WHEN EXISTS(SELECT 1 FROM nexovcc_case_states s WHERE s.order_id=u.order_id AND s.state IN ('opened','waiting')) THEN 1
  WHEN EXISTS(SELECT 1 FROM nexovcc_case_states s WHERE s.order_id=u.order_id AND s.state IN ('returned','unopened')) THEN 0
  ELSE u.status='success' AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)
@@ -539,7 +540,7 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...Nexovcc
 		}
 		if op.CapacityRecycle || op.AutoWithdraw {
 			var unpaid int
-			if e = tx.QueryRow(`SELECT count(*) FROM pro_card_usage u WHERE u.card_key=? AND u.status='success' AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)`, key.String).Scan(&unpaid); e != nil {
+			if e = tx.QueryRow(`SELECT count(*) FROM pro_card_usage u WHERE u.card_key=? AND u.status='success' AND NOT (`+paymentOnlyReleasedSQL+`) AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)`, key.String).Scan(&unpaid); e != nil {
 				return e
 			}
 			if op.AutoWithdraw && unpaid > 0 {

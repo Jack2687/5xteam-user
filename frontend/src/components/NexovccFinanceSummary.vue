@@ -1,4 +1,5 @@
 <script setup>
+import PaymentOnlySummary from './PaymentOnlySummary.vue'
 import { computed } from 'vue'
 import { financeTotals, money, rmb } from '../nexovcc-finance'
 const props=defineProps({data:{type:Object,required:true},serial:{type:String,default:''},masked:Boolean})
@@ -9,10 +10,10 @@ const usd=v=>props.masked?'---':t.value.ready?money(v):'—'
 const r=v=>props.masked?'---':t.value.ready?rmb(v):'—'
 </script>
 <template>
- <section class="finance-summary">
+ <section class="finance-summary"><PaymentOnlySummary v-if="!serial" issuer="nexovcc" :data="data" :masked="masked"/>
   <div class="profit-row"><button @click="$emit('details',{type:'accounts'})"><span>消费收益</span><strong>{{masked?'---':money(t.revenue)}} <em>R</em></strong><small>{{!masked&&t.unknownRevenue?`${t.unknownRevenue} 个账号待同步收益`:'Sub2 实际消费'}}</small></button>
    <button @click="$emit('details',{type:'funds',feesOnly:true})"><span>{{serial?'本卡成本':'总成本'}}{{t.balanceDifference?'（含暂估）':''}}</span><strong>{{r(t.cost)}} <em>R</em></strong><small>{{usd(t.cost)}} USD{{serial?' · 不含账户充值费':''}}</small></button>
-   <button class="profit" :class="{negative:t.profit<0}" @click="$emit('details',{type:'accounts'})"><span>{{partial?'已知收益净额':t.balanceDifference||t.balanceRecoveredPending?'净利润（暂计）':'净利润'}}</span><strong>{{masked?'---':t.ready?money(t.profit):'—'}} <em>R</em></strong><small>收益 − 成本 · 1 USD = 6.7 R</small></button>
+   <button class="profit" :class="{negative:t.profit<0}" @click="$emit('details',{type:'accounts'})"><span>{{partial?'已知收益净额':t.balanceDifference||t.balanceRecoveredPending?'净利润（暂计）':'净利润'}}</span><strong>{{masked?'---':t.ready?money(t.profit):'—'}} <em>R</em></strong><small>收益 − 成本 · 1 USD = 6.7 R</small><small v-if="t.paymentOnly.missing">只付款金额待核实，暂不计算净利润</small></button>
   </div>
   <div class="cost-row"><button @click="$emit('details',{type:'funds',kind:'api-merchant'})"><span>API 收费</span><b>{{usd(t.merchantFee)}} USD</b><small>{{r(t.merchantFee)}} R · 外部商户最终成功后记账</small></button>
    <button v-if="!serial" @click="$emit('details',{type:'recharges'})"><span>成功充值 / 实际到账</span><b>{{usd(t.gross)}} / {{usd(t.received)}} USD</b><small>充值费 {{usd(t.rechargeFee)}} USD / {{r(t.rechargeFee)}} R · 1%</small></button>
@@ -20,7 +21,7 @@ const r=v=>props.masked?'---':t.value.ready?rmb(v):'—'
    <button @click="$emit('details',{type:'funds',kind:'card-service'})"><span>卡服务费</span><b>{{usd(t.service)}} USD</b><small>{{r(t.service)}} R</small></button>
    <button @click="$emit('details',{type:'funds',kind:'2003'})"><span>授权撤销费</span><b>{{usd(t.reversal)}} USD</b><small>{{r(t.reversal)}} R</small></button>
    <button @click="$emit('details',{type:'funds',kind:'2007'})"><span>交易手续费</span><b>{{usd(t.transaction)}} USD</b><small>{{r(t.transaction)}} R</small></button><button @click="$emit('details',{type:'funds',kind:'card-other'})"><span>其他费用</span><b>{{usd(t.otherFees)}} USD</b><small>{{r(t.otherFees)}} R · 含人工核实费用</small></button>
-   <button @click="$emit('details',{type:'trades'})"><span>卡内损耗 / 清算支出</span><b>{{usd(t.cardLoss)}} / {{usd(t.settlement)}} USD</b><small>{{r(t.cardLoss+t.settlement)}} R · 已结算</small></button>
+   <button @click="$emit('details',{type:'trades'})"><span>卡内损耗 / 清算支出</span><b>{{usd(t.cardLoss)}} / {{usd(t.settlement)}} USD</b><small>{{r(t.cardLoss+t.settlement)}} R · 原始已结算；成本已扣只付款本金 {{usd(t.paymentOnly.costExcluded)}} USD</small></button>
    <button v-if="t.balanceDifference" @click="$emit('details',{type:'funds',kind:'balance-difference'})"><span>余额差额（暂估）</span><b>{{usd(t.balanceDifference)}} USD</b><small>{{r(t.balanceDifference)}} R · 已计成本，流水补齐不重复计费</small></button>
    <button @click="$emit('details',{type:'trades'})"><span>付款 / 回款</span><b>{{usd(t.paid)}} / {{usd(t.returned)}} USD</b><small>待回款 {{usd(t.pending)}} USD · 不计成本</small></button>
   </div>

@@ -111,6 +111,7 @@ type nexovccInput struct {
 }
 
 func (s *Server) nexovccRoutes(m *http.ServeMux) {
+	m.HandleFunc("PUT /api/nexovcc/cards/{id}/payment-policy", s.saveCardPaymentPolicy("nexovcc"))
 	m.HandleFunc("GET /api/nexovcc/settings", s.getNexovccSettings)
 	m.HandleFunc("PUT /api/nexovcc/settings", s.saveNexovccSettings)
 	m.HandleFunc("GET /api/nexovcc/dashboard", s.nexovccDashboard)
@@ -277,7 +278,12 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取 API 收费失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"merchant_fees": merchantFees, "cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState, "withdraw": withdrawState, "control": control}, "")
+	policies, policyErr := s.store.CardPaymentPolicies("nexovcc")
+	if policyErr != nil {
+		writeAPI(w, 500, nil, "读取卡片回款方式失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"payment_policies": policies, "merchant_fees": merchantFees, "cards": rows, "operations": ops, "cases": cases, "balance": balance, "products": products, "finance": finance, "groups": groups, "review_groups": reviewGroups, "trade_reviews": reviews, "finance_error": financeError, "sync": syncState, "withdraw": withdrawState, "control": control}, "")
 }
 func (s *Server) nexovccProgress(message string, done, total int) {
 	s.nexovcc.jobMu.Lock()

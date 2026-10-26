@@ -46,6 +46,7 @@ func (s *Server) ejhConfig() (ejh.Settings, string, error) {
 	return c, k, nil
 }
 func (s *Server) ejhRoutes(m *http.ServeMux) {
+	m.HandleFunc("PUT /api/ejh/cards/{id}/payment-policy", s.saveCardPaymentPolicy("ejh"))
 	m.HandleFunc("PUT /api/ejh/cards/{id}/category", s.ejhCardCategory)
 	m.HandleFunc("PUT /api/ejh/refund-fees/{id}", s.saveEJHRefundFee)
 	m.HandleFunc("PUT /api/ejh/recharge-ledger", s.saveEJHRechargeLedger)
@@ -296,7 +297,12 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取 API 收费失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"merchant_fees": merchantFees, "cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "refund_fees": refundFees, "reversal_fee_percent": settings.ReversalFeePercent, "page_refresh_seconds": settings.PageRefreshSeconds, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
+	policies, policyErr := s.store.CardPaymentPolicies("ejh")
+	if policyErr != nil {
+		writeAPI(w, 500, nil, "读取卡片回款方式失败")
+		return
+	}
+	writeAPI(w, 200, map[string]any{"payment_policies": policies, "merchant_fees": merchantFees, "cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "refund_fees": refundFees, "reversal_fee_percent": settings.ReversalFeePercent, "page_refresh_seconds": settings.PageRefreshSeconds, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {
 	if len(n) > 4 {

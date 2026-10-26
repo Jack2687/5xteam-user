@@ -194,7 +194,7 @@ assert.equal(frozenBalanceDisplay(laterReversal).historical,0,'a later reversal 
 assert.equal(frozenBalanceDisplay(laterSettlement).historical,0,'a later settlement is not a pending authorization')
 assert.equal(frozenBalanceDisplay({finance:{at},balance:{frozen:'0.00'}}).current,0)
 assert.equal(frozenBalanceDisplay({balance:{frozen:''}}).current,null)
-assert.deepEqual(cardReturnCounts([{state:'unopened'},{state:'opened'},{state:'waiting'},{state:'waiting'},{state:'returned'},{state:'invalid'}]),{unopened:1,opened:1,waiting:2,returned:1})
+assert.deepEqual(cardReturnCounts([{state:'unopened'},{state:'opened'},{state:'waiting'},{state:'waiting'},{state:'returned'},{state:'invalid'}]),{unopened:1,opened:1,waiting:2,returned:1,no_return:0})
 
 // Informational balance/ledger mismatch must never fabricate refunds, clear
 // occupancy, change costs, or rely on a filtered page of account records.

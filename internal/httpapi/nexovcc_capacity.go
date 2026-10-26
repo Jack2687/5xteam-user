@@ -40,6 +40,30 @@ func nexovccRecycleCandidate(card nexovcc.Card, cases []store.NexovccCase, group
 	return true
 }
 
+func (s *Server) nexovccAccountingRecycleCandidate(card nexovcc.Card, cases []store.NexovccCase, groups []nexovcc.TradeGroup) bool {
+	only, err := s.store.CardPaymentOnly("nexovcc", card.ID)
+	if err != nil {
+		return false
+	}
+	if !only {
+		return nexovccRecycleCandidate(card, cases, groups)
+	}
+	if !cardplatform.IsOAI(card.Platform) || card.Status == "4" || !card.Imported || card.Error != "" {
+		return false
+	}
+	for _, c := range cases {
+		if c.CardID == card.ID && c.PaymentStatus != "success" && c.PaymentStatus != "failed" {
+			return false
+		}
+	}
+	for _, g := range groups {
+		if g.Serial == card.Serial && !g.Valid {
+			return false
+		}
+	}
+	return true
+}
+
 // The monitor only retires used cards. A fresh, unused card may be waiting for
 // Pro admission and must not be recycled just because its issuance hit a limit.
 func nexovccCardUsed(card nexovcc.Card, cases []store.NexovccCase, groups []nexovcc.TradeGroup) bool {
@@ -95,7 +119,7 @@ func (s *Server) oldestNexovccRecycleCandidateLocked(cards []nexovcc.Card, usedO
 	})
 	for i := range cards {
 		card := cards[i]
-		if !nexovccRecycleCandidate(card, cases, groups) || (usedOnly && !nexovccCardUsed(card, cases, groups)) {
+		if !s.nexovccAccountingRecycleCandidate(card, cases, groups) || (usedOnly && !nexovccCardUsed(card, cases, groups)) {
 			continue
 		}
 		local, _, e := s.store.GPTPayCard(card.ID)
@@ -244,7 +268,7 @@ func (s *Server) ensureNexovccOnlineSlotLocked(ctx context.Context, openingID st
 		if err != nil {
 			return err
 		}
-		if !nexovccRecycleCandidate(*candidate, cases, groups) {
+		if !s.nexovccAccountingRecycleCandidate(*candidate, cases, groups) {
 			return &nexovccCapacityWaitError{"原卡仍有未回款交易，等待回款后继续补卡"}
 		}
 		for _, check := range checks {

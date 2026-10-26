@@ -1,3 +1,4 @@
+import { applyPaymentPolicies } from '../src/payment-only.js'
 import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
 import './check-nexovcc-refund-descriptors.mjs'
@@ -94,7 +95,7 @@ assert.equal(caseDetails(withAux,extraFee).cost,185)
 assert.deepEqual(caseDetails(withAux,extraFee).merchantPaid,caseDetails(row,finance).merchantPaid)
 
 const code=readFileSync(new URL('../src/components/NexovccManagementView.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
-const context=vm.createContext({cardOrigin,...nexovcc,...financeHelpers,sortReturnCases,sortClosedCards,ref,reactive,computed,watch,defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},formatTime:v=>v})
+const context=vm.createContext({applyPaymentPolicies,cardOrigin,...nexovcc,...financeHelpers,sortReturnCases,sortClosedCards,ref,reactive,computed,watch,defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},formatTime:v=>v})
 vm.runInContext(code+';globalThis.view={data,tab,filter,returnCategory,returnFilter,filtered,inspect,detailCases,caseTrades,ledger};',context)
 const view=context.view
 view.data.cards=[{card:{id:'card1',serial_no:'fixture-card-1'}}]
@@ -123,7 +124,7 @@ view.data.cards=closedCards;view.data.operations=[closedOperation];view.tab.valu
 assert.deepEqual([...view.filtered.value].map(r=>r.card.id),['closed-operation','closed-new','closed-old'])
 const ledgerCode=readFileSync(new URL('../src/components/NexovccLedgerDialog.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const ledgerData={finance:{funds:[{id:'month',kind:3004,serial_no:'fixture-card-1'},{id:'year',kind:3005,serial_no:'fixture-card-1'},{id:'other',kind:3004,serial_no:'other-card'},{id:'open',kind:3003,serial_no:'fixture-card-1'}]}}
-const ledgerContext=vm.createContext({cardOrigin,...financeHelpers,ref,computed,watch,defineProps:()=>({data:ledgerData,options:{type:'funds',kind:'card-service',serial:'fixture-card-1'},pageSize:10}),defineEmits:()=>()=>{},formatTime:v=>v})
+const ledgerContext=vm.createContext({applyPaymentPolicies,cardOrigin,...financeHelpers,ref,computed,watch,defineProps:()=>({data:ledgerData,options:{type:'funds',kind:'card-service',serial:'fixture-card-1'},pageSize:10}),defineEmits:()=>()=>{},formatTime:v=>v})
 vm.runInContext(ledgerCode+';globalThis.rows=filtered;',ledgerContext)
 assert.deepEqual([...ledgerContext.rows.value].map(r=>r.id),['month','year'])
 console.log('Passed: per-order original currency, fee breakdown/refunds, missing data, pending vs settled costs, manual status dates, default/filter/sort and linked ledger navigation')

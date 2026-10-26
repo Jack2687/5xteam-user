@@ -49,12 +49,13 @@ type EJHConsumptionDay struct {
 	Source string    `json:"source,omitempty"`
 }
 type EJHFinancialSnapshot struct {
-	At      time.Time         `json:"at"`
-	Trades  []ejh.TradeRecord `json:"trades"`
-	Ledger  EJHRechargeLedger `json:"recharge_ledger"`
-	Balance json.RawMessage   `json:"balance"`
-	Cards   []ejh.CardRecord  `json:"cards"`
-	Cases   []ejh.Case        `json:"cases"`
+	PaymentPolicies []CardPaymentPolicy `json:"payment_policies"`
+	At              time.Time           `json:"at"`
+	Trades          []ejh.TradeRecord   `json:"trades"`
+	Ledger          EJHRechargeLedger   `json:"recharge_ledger"`
+	Balance         json.RawMessage     `json:"balance"`
+	Cards           []ejh.CardRecord    `json:"cards"`
+	Cases           []ejh.Case          `json:"cases"`
 }
 
 func (s *Store) ejhGetTx(tx *sql.Tx, kind, id string, out any) error {
@@ -144,6 +145,14 @@ func (s *Store) recordEJHConsumptionTx(tx *sql.Tx, p model.MailAccountProfile, n
 // Retain first and last saved balance observations per Beijing date. No issuer
 // calls, and no credentials/card secrets are copied into these snapshots.
 func (s *Store) CaptureEJHFinance(now time.Time) error {
+	policies, err := s.CardPaymentPolicies("ejh")
+	if err != nil {
+		return err
+	}
+	paymentOnlyCards := map[string]bool{}
+	for _, p := range policies {
+		paymentOnlyCards[p.CardID] = p.Mode == "payment_only"
+	}
 	cards, err := EJHRecords[ejh.CardRecord](s, "card")
 	if err != nil {
 		return err
@@ -191,7 +200,7 @@ func (s *Store) CaptureEJHFinance(now time.Time) error {
 			return err
 		}
 	}
-	snap := EJHFinancialSnapshot{At: now, Cards: []ejh.CardRecord{}, Cases: []ejh.Case{}}
+	snap := EJHFinancialSnapshot{PaymentPolicies: policies, At: now, Cards: []ejh.CardRecord{}, Cases: []ejh.Case{}}
 	if err = s.ejhGetTx(tx, "recharge_ledger", "manual-usd", &snap.Ledger); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -199,7 +208,7 @@ func (s *Store) CaptureEJHFinance(now time.Time) error {
 		return err
 	}
 	for _, c := range cards {
-		if c.Remote.Status == "2" {
+		if c.Remote.Status == "2" && !paymentOnlyCards[c.ID] {
 			continue
 		}
 		var visible bool

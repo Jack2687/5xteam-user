@@ -1,3 +1,4 @@
+import { applyPaymentPolicies } from '../src/payment-only.js'
 import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -10,7 +11,7 @@ import * as nexovcc from '../src/nexovcc.js'
 const code=readFileSync(new URL('../src/components/NexovccManagementView.vue',import.meta.url),'utf8')
  .split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const requests=[]
-const context=vm.createContext({cardOrigin,...nexovcc,ref,reactive,computed,watch,
+const context=vm.createContext({applyPaymentPolicies,cardOrigin,...nexovcc,ref,reactive,computed,watch,
  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},
  clearTimeout(){},setTimeout(){},formatTime:value=>value,
  async api(url,options={}){
@@ -66,7 +67,7 @@ assert.deepEqual(nexovcc.templateProductIDs({product_id:'267',product_ids:[]}),[
 const picker=readFileSync(new URL('../src/components/NexovccProductPicker.vue',import.meta.url),'utf8')
  .split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const pickerProps=reactive({modelValue:['267'],products:[],disabled:false})
-const pickerContext=vm.createContext({cardOrigin,ref,computed,moveProduct:nexovcc.moveProduct,
+const pickerContext=vm.createContext({applyPaymentPolicies,cardOrigin,ref,computed,moveProduct:nexovcc.moveProduct,
  defineProps:()=>pickerProps,defineEmits:()=>(event,value)=>{assert.equal(event,'update:modelValue');pickerProps.modelValue=value},
 })
 vm.runInContext(picker+';globalThis.picker={toggle,start,drop,move,label};',pickerContext)

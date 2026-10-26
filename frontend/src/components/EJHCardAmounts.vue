@@ -1,4 +1,5 @@
 <script setup>
+import { paymentOnlySummary, paymentMoney } from '../payment-only'
 import { computed } from 'vue'
 import { cardAmounts, summarizeInFlightPayments } from '../ejh-account-amounts'
 import { cardConsumption } from '../ejh-consumption'
@@ -14,10 +15,11 @@ const consumption=computed(()=>cardConsumption(props.cases))
 const reversalTrades=computed(()=>props.trades.filter(t=>t.card_id===props.card.id))
 const fee=computed(()=>summarizeReversalFees(reversalTrades.value,props.feePercent,false,[props.card],props.operations))
 const clearing=computed(()=>summarizeClearingCosts(reversalTrades.value,[props.card],props.operations))
+const paymentOnly=computed(()=>paymentOnlySummary({payment_policies:props.card.payment_policy?[props.card.payment_policy]:[],cards:[props.card],cases:props.cases,trades:props.trades,operations:props.operations},'ejh'))
 const inFlight=computed(()=>summarizeInFlightPayments(props.cases,[props.card],props.operations,props.trades))
 const merchantFee=computed(()=>money(props.cases.reduce((sum,row)=>sum+(cents(row.merchant_fee_usd||'0')||0n),0n)))
-const earnings=computed(()=>financeProfit({openingUSD:props.card.issuer_linked!==false&&props.card.remote?.orderNo?'0.50':'0.00',reversalUSD:fee.value.usd.amount??(!fee.value.count?'0.00':null),rechargeUSD:'0.00',clearingUSD:clearing.value.usd.amount,
- merchantUSD:merchantFee.value,consumption:consumption.value.total,consumptionMissing:consumption.value.missing,costMissing:fee.value.missing+fee.value.pending+fee.value.usd.missing+clearing.value.missing+clearing.value.pending,estimated:!!fee.value.count||clearing.value.estimated}))
+const earnings=computed(()=>financeProfit({openingUSD:props.card.issuer_linked!==false&&props.card.remote?.orderNo?'0.50':'0.00',reversalUSD:fee.value.usd.amount??(!fee.value.count?'0.00':null),rechargeUSD:'0.00',clearingUSD:clearing.value.usd.amount===null?null:paymentMoney(Math.round(Number(clearing.value.usd.amount)*100)-paymentOnly.value.costExcluded),
+ merchantUSD:merchantFee.value,consumption:consumption.value.total,consumptionMissing:consumption.value.missing,costMissing:paymentOnly.value.missing+fee.value.missing+fee.value.pending+fee.value.usd.missing+clearing.value.missing+clearing.value.pending,estimated:!!fee.value.count||clearing.value.estimated}))
 </script>
 <template>
  <div class="card-money">
@@ -26,7 +28,7 @@ const earnings=computed(()=>financeProfit({openingUSD:props.card.issuer_linked!=
   <small>开卡 {{earnings.openingR}} R + 撤销 {{earnings.reversalR??'—'}} R + 清算 {{earnings.clearingR??'—'}} R</small><small>{{earnings.costUSD??'—'}} USD</small>
   <div class="money-fee"><span>API 收费</span><strong>{{earnings.merchantR}} R<small>{{merchantFee}} USD</small></strong></div>
   <div class="money-fee card-profit"><span>卡片结余{{earnings.estimated?'（估算）':''}}</span><strong :class="{negative:earnings.profitR?.startsWith('-')}">{{earnings.profitR??'—'}} R</strong></div>
-  <small>充值手续费在总账扣除</small>
+  <small>充值手续费在总账扣除</small><small v-if="card.payment_policy?.mode==='payment_only'">只付款本金 {{paymentOnly.missing?'待核实':paymentMoney(paymentOnly.amount)+' USD'}} · 单列支出</small>
   <small v-if="earnings.incomplete" class="warning">{{consumption.missing?'消费未查询完整':'部分费用待核实'}}，暂不计算结余</small>
   <details class="money-details"><summary>付款、回款与费用明细</summary>
    <div class="money-head"><span>付款</span><span>回款</span><span>差额</span></div>

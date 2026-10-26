@@ -15,7 +15,8 @@ import (
 )
 
 func (s *Store) initializeEJH() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS ejh_settings(id INTEGER PRIMARY KEY CHECK(id=1),profile TEXT NOT NULL,secret TEXT NOT NULL);
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS card_payment_modes(provider TEXT NOT NULL,card_id TEXT NOT NULL,mode TEXT NOT NULL,PRIMARY KEY(provider,card_id));
+ CREATE TABLE IF NOT EXISTS ejh_settings(id INTEGER PRIMARY KEY CHECK(id=1),profile TEXT NOT NULL,secret TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS ejh_records(kind TEXT NOT NULL,id TEXT NOT NULL,sealed TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(kind,id));
  CREATE TABLE IF NOT EXISTS ejh_card_links(card_key TEXT PRIMARY KEY,card_id TEXT NOT NULL,order_no TEXT NOT NULL UNIQUE);
  CREATE TABLE IF NOT EXISTS ejh_cases(id TEXT PRIMARY KEY,email TEXT NOT NULL,card_id TEXT NOT NULL,profile TEXT NOT NULL);
@@ -181,6 +182,13 @@ func (s *Store) EJHBeginOperation(op ejh.Operation) error {
 			return err
 		}
 		for _, c := range cases {
+			var released bool
+			if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_card_usage u WHERE u.order_id=? AND u.status='success' AND `+paymentOnlyReleasedSQL+`)`, c.ID).Scan(&released); err != nil {
+				return err
+			}
+			if released {
+				continue
+			}
 			if (c.CardID == card.ID || c.EJHCardID == card.ID) && c.State != "returned" && c.State != "unopened" {
 				return fmt.Errorf("该卡有关联账号已开通或已申请待回款，不能销卡")
 			}

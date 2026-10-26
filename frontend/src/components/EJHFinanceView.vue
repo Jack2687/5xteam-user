@@ -1,4 +1,5 @@
 <script setup>
+import { applyPaymentPolicies } from '../payment-only'
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RefreshCw, ArrowUpRight, ChevronLeft, ChevronRight, Wallet, ChartNoAxesCombined, ReceiptText, X } from 'lucide-vue-next'
 import { api } from '../api'
@@ -34,7 +35,7 @@ watch(()=>filtered.value.length,()=>{page.value=Math.min(page.value,Math.max(1,M
 async function load(){
  if(busy.value)return
  busy.value=true;error.value=''
- try{const [a,b]=await Promise.all([api('/api/ejh/dashboard'),api('/api/ejh/finance')]);if(!disposed){data.value=a;history.value=b;updated.value=a.server_time||new Date().toISOString()}}
+ try{const [a,b]=await Promise.all([api('/api/ejh/dashboard'),api('/api/ejh/finance')]);if(!disposed){data.value=applyPaymentPolicies(a);history.value=b;updated.value=a.server_time||new Date().toISOString()}}
  catch(e){if(!disposed)error.value=e.message}
  finally{if(!disposed){busy.value=false;clearTimeout(timer);timer=setTimeout(load,refreshSeconds.value*1000)}}
 }

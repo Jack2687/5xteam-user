@@ -1,3 +1,4 @@
+import { isPaymentOnly } from './payment-only.js'
 import { cents, money, financeTotals, balanceCostAdjustments } from './nexovcc-finance.js'
 
 const hasAmount = v => v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(Number(v))
@@ -29,7 +30,7 @@ export function cardFunding(data, row) {
  const closureCredited = ready && closed && returned > 0 && !waiting && !totals.unverified && !totals.staleReviews &&
   Number.isFinite(returnedAt) && timestamp(data.balance?.at) >= returnedAt
  const closedAuthorization = closureCredited ? totals.pending : 0
- const pendingAssets = totals.pending - closedAuthorization
+ const pendingAssets = totals.pending + totals.paymentOnly.pending - closedAuthorization
  // Active/closing cards still belong to card assets. Only a closed card's
  // uncredited residual can explain a missing transfer, never a new expense.
  const closurePending = ready && closed && !totals.unverified && !totals.staleReviews ? Math.max(0, funded - withdrawn - returned - totals.cardLoss - totals.settlement - pendingAssets - totals.manualFees - totals.balanceDifference) : null
@@ -57,7 +58,7 @@ export function frozenBalanceDisplay(data) {
  const raw=data.balance?.frozen
  const platform=hasAmount(raw)&&cents(raw)>=0?cents(raw):null
  const cards=(data.cards||[]).map(row=>({row,totals:financeTotals(data,row.card.serial_no)}))
- const active=cards.filter(({row})=>row.card.status!=='4')
+ const active=cards.filter(({row})=>row.card.status!=='4'&&!isPaymentOnly(data,row.card.id))
  const rows=cards.filter(({row,totals})=>row.card.status==='4'&&totals.pending>0).map(({row,totals})=>({serial:row.card.serial_no,last4:row.card.last4,amount:totals.pending,returned:cardFunding(data,row).returned}))
  const activeByID=new Map(active.map(({row})=>[row.card.id,row]))
  const settledRefunds=new Map(),seenGroups=new Set()
@@ -100,7 +101,7 @@ export function frozenBalanceDisplay(data) {
 }
 
 export function cardReturnCounts(cases) {
- const counts = {unopened:0, opened:0, waiting:0, returned:0}
+ const counts = {unopened:0, opened:0, waiting:0, returned:0, no_return:0}
  for (const row of cases || []) if (Object.hasOwn(counts, row.state)) counts[row.state]++
  return counts
 }
@@ -116,11 +117,12 @@ export function reconciliation(data, now = Date.now(), freshnessSeconds = 120) {
  const summaries = cards.map(r => cardFunding(data, r))
  const closedSerials = new Set(cards.filter((r,i) => summaries[i].closedAuthorization > 0).map(r => r.card.serial_no))
  const closedAuthorization = sum((data.groups || []).filter(g => closedSerials.has(g.serial_no) && g.valid && !g.fully_returned && !g.settled), g => Math.max(0, cents(g.difference)))
- const pendingAssets = totals.pending - closedAuthorization - totals.balanceRecoveredPending
+ const pendingAssets = totals.pending - closedAuthorization - Math.max(0,totals.balanceRecoveredPending-totals.paymentOnly.pending)
  const assets = cents(data.balance?.amount) + cardBalance + pendingAssets
- const gap = totals.ready && !moneyMissing ? totals.gross - assets - (totals.cost - totals.merchantFee) - externalWithdrawn : null
+ const gap = totals.ready && !moneyMissing && !totals.paymentOnly.missing ? totals.gross - assets - (totals.cost - totals.merchantFee) - externalWithdrawn - totals.paymentOnly.amount : null
  const closurePending = sum(summaries, s => s.closurePending || 0)
  if (!totals.ready) reasons.push('财务流水尚未同步')
+ if (totals.paymentOnly.missing) reasons.push('只付款支出金额待核实')
  if (moneyMissing) reasons.push('账户或卡片余额缺失')
  if (data.finance_error) reasons.push('本次同步未完成，使用上次流水')
  if (totals.unverified || totals.foreign || totals.unknownFunds || allFunds.some(f => !hasAmount(f.amount))) reasons.push('部分流水金额、币种或类型待核实')
