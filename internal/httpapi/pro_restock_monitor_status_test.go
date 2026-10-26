@@ -110,3 +110,32 @@ func TestProRestockCadence(t *testing.T) {
 		}
 	}
 }
+
+func TestProRestockDisabledCadence(t *testing.T) {
+	s, st, _ := gptPayFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected supplier call") })
+	configureProAutoFixture(t, s)
+	s.proAutoCancel()
+	c := restock.DefaultConfig()
+	c.Enabled, c.GroupID = false, 1
+	if _, err := st.SaveProRestockConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	s.proRestock.monitor = func(context.Context, restock.Config, model.ProSettings, string) (restock.Snapshot, error) {
+		t.Fatal("disabled monitoring called upstream")
+		return restock.Snapshot{}, nil
+	}
+	started := time.Now()
+	if err := s.tickProRestock(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := s.proRestock.next
+	if deadline.Before(started.Add(time.Duration(c.CheckSeconds)*time.Second)) || s.proRestock.monitorState.Running {
+		t.Fatal("disabled monitoring did not retain the idle interval")
+	}
+	if err := s.tickProRestock(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if !s.proRestock.next.Equal(deadline) {
+		t.Fatal("idle polling drifted the next check")
+	}
+}

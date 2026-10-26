@@ -353,6 +353,9 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 		s.sampleRestockMoneyBetweenChecks(c, now)
 		return nil
 	}
+	// Inactive rounds and preparation errors still honor the configured cadence.
+	// Active collections replace this deadline with their measured completion.
+	s.proRestock.next = now.Add(time.Duration(c.CheckSeconds) * time.Second)
 	tasks, e := s.store.ProRestockTasks()
 	if e != nil {
 		return e
