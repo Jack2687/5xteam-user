@@ -513,6 +513,25 @@ class ProjectProtocolLogin(upstream.ChatGPTProtocolLogin):
             raise error
         return response
 
+    def web_request(self, method, url, **kwargs):
+        """Shared live browser transport, including Help's streaming requests.
+
+        The caller owns retries: streaming writes must never be replayed here.
+        """
+        if self.web_session is None:
+            raise RuntimeError("ChatGPT Web Session 未初始化")
+        final_headers = dict(kwargs.pop("headers", None) or {})
+        for header_name in (
+            "User-Agent", "sec-ch-ua", "sec-ch-ua-full-version-list", "sec-ch-ua-mobile",
+            "sec-ch-ua-platform", "sec-ch-ua-arch", "sec-ch-ua-bitness", "sec-ch-ua-model",
+            "sec-ch-ua-platform-version",
+        ):
+            final_headers.pop(header_name, None)
+        response = self.web_session.request(method, url, headers=final_headers,
+                                            default_headers=True, **kwargs)
+        self._sync_web_session_cookies()
+        return response
+
     def _web_session_request(self, url, **kwargs):
         if self.web_session is None:
             raise RuntimeError("ChatGPT Web Session 未初始化")
@@ -527,26 +546,18 @@ class ProjectProtocolLogin(upstream.ChatGPTProtocolLogin):
         elif form_data is not None:
             body = urlencode(form_data).encode("utf-8")
             final_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
-        for header_name in (
-            "User-Agent", "sec-ch-ua", "sec-ch-ua-full-version-list", "sec-ch-ua-mobile",
-            "sec-ch-ua-platform", "sec-ch-ua-arch", "sec-ch-ua-bitness", "sec-ch-ua-model",
-            "sec-ch-ua-platform-version",
-        ):
-            final_headers.pop(header_name, None)
         last_error = ""
         attempts = 3 if self.proxy_url else 2
         for attempt in range(attempts):
             try:
-                response = self.web_session.request(
+                response = self.web_request(
                     method,
                     url,
                     headers=final_headers,
                     data=body,
                     timeout=kwargs.get("timeout", 60),
                     allow_redirects=bool(kwargs.get("allow_redirects", False)),
-                    default_headers=True,
                 )
-                self._sync_web_session_cookies()
                 return upstream.ProtocolResponse(
                     int(response.status_code),
                     str(response.url or url),

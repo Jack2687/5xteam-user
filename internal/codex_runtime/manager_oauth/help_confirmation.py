@@ -124,12 +124,21 @@ class HelpInquiry:
         parsed = urlsplit(url)
         if parsed.scheme != "https" or parsed.hostname not in ALLOWED or parsed.port not in (None, 443) or parsed.username:
             raise HelpError("Help 跳转地址不受信任")
-        # Direct curl session: no automatic retries for support writes.
-        return self.flow.web_session.request(kwargs.pop("method", "GET"), url,
-            allow_redirects=False, timeout=kwargs.pop("timeout", 60), **kwargs)
+        # Retry only explicitly read-only calls on the same session/proxy.
+        # OAuth callbacks and support writes are never replayed here.
+        read_only = kwargs.pop("read_only", False)
+        method, timeout = kwargs.pop("method", "GET"), kwargs.pop("timeout", 60)
+        headers = self.flow.headers(url, kwargs.pop("headers", {}))
+        for attempt in range(3 if read_only else 1):
+            try:
+                return self.flow.web_request(method, url, headers=headers,
+                    allow_redirects=False, timeout=timeout, **kwargs)
+            except Exception:
+                if not read_only or attempt == 2: raise
+                time.sleep(attempt + 1)
 
     def identity(self, allow_expired=False):
-        r = self.request(SUPPORT + "/api/v1/me", headers=self.headers())
+        r = self.request(SUPPORT + "/api/v1/me", headers=self.headers(), read_only=True)
         if r.status_code in (401, 403) and allow_expired: return False
         if r.status_code != 200: raise HelpError(f"Help 身份校验失败：HTTP {r.status_code}")
         try: email = r.json().get("email", "").strip().lower()
@@ -176,6 +185,15 @@ class HelpInquiry:
 
     def authorize(self):
         self.stage("authorize", "running")
+        navigation = {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                      "Accept-Language": "en-US,en;q=0.9", "Referer": PAGE,
+                      "sec-fetch-dest": "document", "sec-fetch-mode": "navigate",
+                      "sec-fetch-user": "?1", "Upgrade-Insecure-Requests": "1"}
+        # The browser opens Help before clicking login. Establish Help's cookies
+        # using the original curl session and its fixed proxy, just like that UI.
+        warm = self.request(PAGE, headers={**navigation, "sec-fetch-site": "same-origin"}, read_only=True)
+        if warm.status_code != 200:
+            raise HelpError(f"Help 页面打开失败：HTTP {warm.status_code}")
         # Follow the same callback/landing path as Help's own login UI.
         landing = "/auth/login-success?" + urlencode({"returnTo": urlsplit(PAGE).path})
         current = HELP + "/auth/login?" + urlencode({"redirectTo": landing})
@@ -192,7 +210,8 @@ class HelpInquiry:
                 if not expected_state or q.get("state", [""])[0] != expected_state or not q.get("code"):
                     raise HelpError("Help OAuth 回调校验失败")
                 bridge.protect_code(q["code"][0])
-            r = self.request(current, headers={"Accept": "text/html,application/xhtml+xml", "Referer": PAGE})
+            r = self.request(current, headers={**navigation,
+                "sec-fetch-site": "same-origin" if p.hostname == "help.openai.com" else "same-site"})
             if r.status_code in (301, 302, 303, 307, 308):
                 location = r.headers.get("location", "")
                 if not location: raise HelpError("Help 授权跳转缺少地址")
@@ -215,12 +234,16 @@ class HelpInquiry:
                 current = urljoin(current, next_url); continue
             if r.status_code == 200 and p.hostname == "help.openai.com":
                 self.load_identity(r.text)
-                self.identity(); self.save_session(); self.stage("authorize", "completed"); return
-            raise HelpError(f"Help 授权未完成：HTTP {r.status_code}")
+                # Retain the encrypted candidate if the identity read has a
+                # transport failure. Every restore revalidates it before send.
+                self.save_session(); self.identity(); self.stage("authorize", "completed"); return
+            raise HelpError(f"Help 授权未完成：HTTP {r.status_code}（{p.hostname}{p.path}）")
         raise HelpError("Help 授权跳转次数超限")
 
     def query(self, kind, params):
-        r = self.request(CHAT, method="POST", json={"type": kind, "params": params}, headers=self.headers(True))
+        if kind not in {"threads.list", "threads.get_by_id", "items.list"}:
+            raise HelpError("Help 对话读取类型不支持")
+        r = self.request(CHAT, method="POST", json={"type": kind, "params": params}, headers=self.headers(True), read_only=True)
         if r.status_code != 200: raise HelpError(f"Help 对话读取失败：HTTP {r.status_code}")
         try: return r.json()
         except ValueError: raise HelpError("Help 对话返回格式异常")

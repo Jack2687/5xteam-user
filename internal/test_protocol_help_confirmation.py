@@ -65,6 +65,10 @@ class HelpTests(unittest.TestCase):
         def request(method, url, **kw):
             seen.append((method, url, kw))
             self.assertFalse(kw["allow_redirects"])
+            self.assertTrue(kw["default_headers"])
+            self.assertNotIn("User-Agent", kw["headers"])
+            self.assertNotIn("sec-ch-ua", kw["headers"])
+            self.assertEqual(len({k.lower() for k in kw["headers"]}), len(kw["headers"]))
             if "/auth/login?" in url:
                 landing = parse_qs(urlsplit(url).query)["redirectTo"][0]
                 self.assertEqual(urlsplit(landing).path, "/auth/login-success")
@@ -159,9 +163,9 @@ class HelpTests(unittest.TestCase):
             with self.assertRaises(help.HelpError): self.inquiry.request(url)
         with patch.object(self.flow.web_session, "request", return_value=response(body={"email": "other@example.com"})):
             with self.assertRaisesRegex(help.HelpError, "账号"): self.inquiry.identity()
-        with patch.object(self.flow.web_session, "request", return_value=response(302, headers={"location": help.HELP + "/auth/callback?code=x&state=wrong"})) as req:
+        with patch.object(self.flow.web_session, "request", side_effect=[response(), response(302, headers={"location": help.HELP + "/auth/callback?code=x&state=wrong"})]) as req:
             with self.assertRaisesRegex(help.HelpError, "回调校验"): self.inquiry.authorize()
-        req.assert_called_once()
+        self.assertEqual(req.call_count, 2)
 
     def test_deletion_prepare_failure_preserves_login_but_never_sends(self):
         self.inquiry.config["prepare_only"] = True
@@ -189,6 +193,17 @@ class HelpTests(unittest.TestCase):
             with self.assertRaisesRegex(help.HelpError, "授权凭据"): self.inquiry.run()
         self.assertNotIn("help_sending", [n for n, _ in self.calls])
         self.assertFalse(any("/chatkit" in c.args[1] for c in req.call_args_list))
+
+    def test_read_transport_retry_keeps_session_and_does_not_retry_writes(self):
+        with patch.object(help.time, "sleep"), patch.object(self.flow.web_session, "request", side_effect=[ConnectionError("proxy 504"), response(body={"email": EMAIL})]) as req:
+            self.assertTrue(self.inquiry.identity())
+            self.assertEqual(req.call_count, 2)
+        with patch.object(self.flow.web_session, "request", side_effect=ConnectionError("callback lost")) as req:
+            with self.assertRaises(ConnectionError): self.inquiry.request(help.HELP + '/auth/callback?code=fixture')
+            req.assert_called_once()
+        with patch.object(self.flow.web_session, "request") as req:
+            with self.assertRaises(help.HelpError): self.inquiry.query('threads.create', {})
+            req.assert_not_called()
 
 
 if __name__ == "__main__": unittest.main()
