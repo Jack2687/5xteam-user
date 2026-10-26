@@ -95,7 +95,7 @@ export function summarizeInFlightPayments(cases=[],cards=[],operations=[],trades
   if(remaining?.missing){missingPayment++;missingTransaction++;missingSettlement++;continue}
   if(remaining){
    if(units(remaining.amount)===0n)continue
-   charge={...charge,type:'1',status:'1',card_amount:remaining.amount,card_currency:remaining.currency,bill_amount:'0',trade_amount:'',trade_currency:''}
+   charge={...charge,type:remaining.refundPending?'4':'1',status:remaining.refundPending?'2':'1',card_amount:remaining.amount,card_currency:remaining.currency,bill_amount:remaining.settlementUSD??'0',bill_currency:'USD',trade_amount:'',trade_currency:'',refund_pending:remaining.refundPending}
   }
   const key=remaining?.key||(charge.trade_no?`${card}:trade:${charge.trade_no}`:charge.id?`id:${charge.id}`:row.id||row)
   const previous=payments.get(key)
@@ -108,7 +108,8 @@ export function summarizeInFlightPayments(cases=[],cards=[],operations=[],trades
  }
  const unrecognized=missingPayment
  for(const {charge,card_id} of payments.values()){
-  conversions.push({card_id,amount:units(charge.card_amount)===null?null:charge.card_amount,currency:charge.card_currency})
+  const actualRefundUSD=charge.refund_pending&&units(charge.bill_amount)>0n
+  conversions.push({card_id,amount:actualRefundUSD?charge.bill_amount:units(charge.card_amount)===null?null:charge.card_amount,currency:actualRefundUSD?'USD':charge.card_currency})
   if(charge.type==='1')authorizations++
   if(!add(payment,charge.card_amount,charge.card_currency))missingPayment++
   if(!add(transaction,charge.trade_amount,charge.trade_currency))missingTransaction++

@@ -12,7 +12,7 @@ import EJHReversalFee from './EJHReversalFee.vue'
 const props = defineProps({ row: { type: Object, required: true }, cards: { type: Array, default: () => [] }, operations: { type: Array, default: () => [] }, trades: { type: Array, default: () => [] }, feePercent: { type: Number, default: 6 } })
 const amounts = computed(() => accountAmounts(props.row,props.trades))
 const clearing = computed(() => {
- const raw=summarizeClearingCosts(casePaymentTrades(props.row,props.trades),props.cards,props.operations)
+ const raw=summarizeClearingCosts(casePaymentTrades(props.row,props.trades),props.cards,props.operations,[props.row])
  if(!props.row.payment_only)return raw
  const id=props.row.ejh_card_id||props.row.card_id
  const summary=paymentOnlySummary({payment_policies:[{card_id:id,mode:'payment_only'}],cards:props.cards,cases:[props.row],operations:props.operations,trades:casePaymentTrades(props.row,props.trades)},'ejh')

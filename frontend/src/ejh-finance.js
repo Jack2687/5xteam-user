@@ -6,6 +6,7 @@ import { summarizeInFlightPayments } from './ejh-account-amounts.js'
 import { authorizationDiscrepancies } from './ejh-reconciliation.js'
 import { summarizeClearingCosts } from './ejh-clearing.js'
 import { refundFeeSummary, refundFeeEntries } from './ejh-refund-fees.js'
+import { applyRefundFeeOverrides, summarizeRefundFees } from './ejh-refund-cost.js'
 
 // Decimal cents for all USD/USDT arithmetic; R remains the downstream counter.
 export function cents(value) {
@@ -60,19 +61,21 @@ export function openingEntries(data) {
   return [...unique.values()]
 }
 export function financeOverview(data={}) {
-  data=applyPaymentPolicies(data)
+  data=applyRefundFeeOverrides(applyPaymentPolicies(data))
   const paymentOnly=paymentOnlySummary(data,'ejh')
   const cards=data.cards||[],operations=data.operations||[],cases=data.cases||[]
   const reversal=summarizeReversalFees(data.trades||[],data.reversal_fee_percent??6,false,cards,operations)
   const opening=openingEntries(data),consumption=consumptionSummary(cases,data.consumption_history||[])
   const gross=cents(data.recharge_ledger?.amount),deposit=feeCents(data.recharge_ledger?.amount),net=gross===null?null:gross-deposit
   const cardUSD=summarizeCardBalancesUSD(cards,operations),inFlight=summarizeInFlightPayments(cases,cards,operations,data.trades||[])
-  const clearing=summarizeClearingCosts(data.trades||[],cards,operations)
+  const clearing=summarizeClearingCosts(data.trades||[],cards,operations,cases)
   const externalTransfer=cents(data.recharge_ledger?.external_transfer_amount||'0')
   const rawClearingUSD=clearing.usd.amount
   const platformClearingUSD=externalTransfer===null||cents(rawClearingUSD)===null?null:money(cents(rawClearingUSD)-externalTransfer-BigInt(paymentOnly.costExcluded))
   const merchantFee=money((data.merchant_fees||[]).reduce((sum,row)=>sum+(cents(row.amount)||0n),0n))
-  const refundFees=refundFeeSummary(data.refund_fees||[])
+  const registeredRefunds=refundFeeSummary(data.refund_fees||[])
+  const automaticRefunds=summarizeRefundFees((data.trades||[]).filter(r=>!r.refund_fee_override),data.reversal_fee_percent??6,false,cards,operations)
+  const refundFees={...registeredRefunds,amount:money((cents(registeredRefunds.amount)||0n)+(cents(automaticRefunds.usd.amount)||0n)),count:registeredRefunds.count+automaticRefunds.count,manualCount:registeredRefunds.count,automaticCount:automaticRefunds.count,missing:registeredRefunds.missing+automaticRefunds.missing+automaticRefunds.pending,estimated:registeredRefunds.estimated||automaticRefunds.estimated}
   const reasons=[];let account=0n
   const balances=data.balance?.data?.abroadList
   if(!Array.isArray(balances)||!balances.length)reasons.push('EJH 账户余额未查询')
@@ -122,6 +125,7 @@ export function periodRange(mode,date=beijingDay()) {
   return {start,end,label}
 }
 export function financeEvents(data,history={}) {
+  data=applyRefundFeeOverrides(applyPaymentPolicies(data))
   const paymentOnly=paymentOnlySummary(data,'ejh')
   const events=openingEntries(data),seen=new Map(),cards=data.cards||[],operations=data.operations||[]
   for(const fee of data.merchant_fees||[])events.push({id:'merchant:'+fee.request_id,kind:'merchant',at:financeTime(fee.at),email:fee.email,card:fee.card_id,reference:fee.request_id,amount:fee.amount,currency:'USD',usd:fee.amount,note:'API 商户最终成功 · 外部收费'})
@@ -130,9 +134,13 @@ export function financeEvents(data,history={}) {
     events.push({id:'refund-fee:'+fee.id,kind:'refund',at:financeTime(fee.at),reference:fee.id,amount:valid?fee.amount:null,currency:'USD',usd:valid?fee.amount:null,incomplete:!valid,estimated:fee.source==='balance_reconciliation',note:(fee.source==='balance_reconciliation'?'余额核对登记':'手动登记')+' · '+fee.note})
   }
   const historyMonth=/^20\d{2}-(0[1-9]|1[0-2])$/.test(data.recharge_ledger?.history_month||'')?data.recharge_ledger.history_month:null
-  for(const e of summarizeClearingCosts(data.trades||[],cards,operations).entries){
+  for(const e of summarizeClearingCosts(data.trades||[],cards,operations,data.cases||[]).entries){
     const t=e.record.trade
-    events.push({id:'clearing:'+e.record.card_id+':'+(t.tradeNo||e.record.id),kind:'clearing',at:financeTime(t.createdAt)||financeTime(t.tradeTime),card:cards.find(c=>c.id===e.record.card_id)?.local?.name||t.orderNo,reference:t.tradeNo,amount:e.amount,currency:e.currency,usd:e.usd,usd_precise:e.usd,incomplete:e.incomplete,note:e.pending?'清算待入账，未计成本':e.refund?'清算退款冲减成本':e.estimated?'清算成本 · USD 估算':'清算成本 · 已入账'})
+    events.push({id:'clearing:'+e.record.card_id+':'+(t.tradeNo||e.record.id),kind:'clearing',at:financeTime(t.createdAt)||financeTime(t.tradeTime),card:cards.find(c=>c.id===e.record.card_id)?.local?.name||t.orderNo,reference:t.tradeNo,amount:e.amount,currency:e.currency,usd:e.usd,usd_precise:e.usd,incomplete:e.incomplete,note:e.refundPending?'已申请退款的清算本金 · 计入在途，不计成本':e.pending?'清算待入账，未计成本':e.refund?'清算退款冲减成本':e.estimated?'清算成本 · USD 估算':'清算成本 · 已入账'})
+  }
+  for(const record of (data.trades||[]).filter(r=>['5','16'].includes(r.trade?.tradeType)&&!r.refund_fee_override)){
+    const fee=summarizeRefundFees([record],data.reversal_fee_percent??6,false,cards,operations),t=record.trade
+    events.push({id:'refund-estimate:'+record.id,kind:'refund',at:financeTime(t.createdAt)||financeTime(t.tradeTime),card:cards.find(c=>c.id===record.card_id)?.local?.name||t.orderNo,reference:t.tradeNo,amount:fee.usd.amount,currency:'USD',usd:fee.usd.amount,incomplete:!!(fee.missing||fee.pending),estimated:true,note:fee.pending?'退款尚未入账，手续费待确认':`退款手续费 · 按 ${record.reversal_fee?.percent??data.reversal_fee_percent??6}% ${record.reversal_fee?'已回款锁定费率':'当前配置'}计算`})
   }
   for(const row of paymentOnly.rows){
     if(row.missing){events.push({id:'payment-only-missing:'+row.card_id,kind:'clearing',at:null,usd:null,incomplete:true,note:'只付款支出待核实'});continue}

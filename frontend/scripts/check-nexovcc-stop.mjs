@@ -1,3 +1,4 @@
+import { sortCardsByReturnState } from '../src/card-workflow-sort.js'
 import { applyPaymentPolicies } from '../src/payment-only.js'
 import {cardOrigin} from '../src/card-platform.js'
 import assert from 'node:assert/strict'
@@ -11,7 +12,7 @@ const source=readFileSync(new URL('../src/components/NexovccManagementView.vue',
 const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const calls=[],timers=[]
 let paused=false
-const ctx=vm.createContext({applyPaymentPolicies,cardOrigin,...helpers,ref,reactive,computed,watch,crypto:webcrypto,
+const ctx=vm.createContext({sortCardsByReturnState,applyPaymentPolicies,cardOrigin,...helpers,ref,reactive,computed,watch,crypto:webcrypto,
  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},clearTimeout(){},setTimeout:fn=>timers.push(fn),formatTime:v=>v,
  async api(url,options={}){
   calls.push({url,body:options.body})

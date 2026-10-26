@@ -3,6 +3,7 @@ import { paymentOnlySummary, paymentMoney } from '../payment-only'
 import { computed } from 'vue'
 import { cardAmounts, summarizeInFlightPayments } from '../ejh-account-amounts'
 import { cardConsumption } from '../ejh-consumption'
+import { summarizeRefundFees } from '../ejh-refund-cost'
 import { summarizeReversalFees } from '../ejh-reversal-fees'
 import { cents, money } from '../ejh-finance'
 import { financeProfit } from '../ejh-profit'
@@ -14,18 +15,19 @@ const amounts=computed(()=>cardAmounts(props.card,props.trades))
 const consumption=computed(()=>cardConsumption(props.cases))
 const reversalTrades=computed(()=>props.trades.filter(t=>t.card_id===props.card.id))
 const fee=computed(()=>summarizeReversalFees(reversalTrades.value,props.feePercent,false,[props.card],props.operations))
-const clearing=computed(()=>summarizeClearingCosts(reversalTrades.value,[props.card],props.operations))
+const refund=computed(()=>summarizeRefundFees(reversalTrades.value,props.feePercent,false,[props.card],props.operations))
+const clearing=computed(()=>summarizeClearingCosts(reversalTrades.value,[props.card],props.operations,props.cases))
 const paymentOnly=computed(()=>paymentOnlySummary({payment_policies:props.card.payment_policy?[props.card.payment_policy]:[],cards:[props.card],cases:props.cases,trades:props.trades,operations:props.operations},'ejh'))
 const inFlight=computed(()=>summarizeInFlightPayments(props.cases,[props.card],props.operations,props.trades))
 const merchantFee=computed(()=>money(props.cases.reduce((sum,row)=>sum+(cents(row.merchant_fee_usd||'0')||0n),0n)))
 const earnings=computed(()=>financeProfit({openingUSD:props.card.issuer_linked!==false&&props.card.remote?.orderNo?'0.50':'0.00',reversalUSD:fee.value.usd.amount??(!fee.value.count?'0.00':null),rechargeUSD:'0.00',clearingUSD:clearing.value.usd.amount===null?null:paymentMoney(Math.round(Number(clearing.value.usd.amount)*100)-paymentOnly.value.costExcluded),
- merchantUSD:merchantFee.value,consumption:consumption.value.total,consumptionMissing:consumption.value.missing,costMissing:paymentOnly.value.missing+fee.value.missing+fee.value.pending+fee.value.usd.missing+clearing.value.missing+clearing.value.pending,estimated:!!fee.value.count||clearing.value.estimated}))
+ refundUSD:refund.value.usd.amount??'0.00',merchantUSD:merchantFee.value,consumption:consumption.value.total,consumptionMissing:consumption.value.missing,costMissing:refund.value.missing+refund.value.pending+paymentOnly.value.missing+fee.value.missing+fee.value.pending+fee.value.usd.missing+clearing.value.missing+clearing.value.pending,estimated:!!fee.value.count||clearing.value.estimated||refund.value.estimated}))
 </script>
 <template>
  <div class="card-money">
   <div class="money-fee"><span>消费收益</span><strong>{{earnings.consumptionR??'—'}} R</strong></div>
   <div class="money-fee"><span>卡片成本</span><strong>{{earnings.costR??'—'}} R</strong></div>
-  <small>开卡 {{earnings.openingR}} R + 撤销 {{earnings.reversalR??'—'}} R + 清算 {{earnings.clearingR??'—'}} R</small><small>{{earnings.costUSD??'—'}} USD</small>
+  <small>开卡 {{earnings.openingR}} R + 撤销 {{earnings.reversalR??'—'}} R + 退款手续费 {{earnings.refundR??'—'}} R + 清算 {{earnings.clearingR??'—'}} R</small><small>{{earnings.costUSD??'—'}} USD</small>
   <div class="money-fee"><span>API 收费</span><strong>{{earnings.merchantR}} R<small>{{merchantFee}} USD</small></strong></div>
   <div class="money-fee card-profit"><span>卡片结余{{earnings.estimated?'（估算）':''}}</span><strong :class="{negative:earnings.profitR?.startsWith('-')}">{{earnings.profitR??'—'}} R</strong></div>
   <small>充值手续费在总账扣除</small><small v-if="card.payment_policy?.mode==='payment_only'">只付款本金 {{paymentOnly.missing?'待核实':paymentMoney(paymentOnly.amount)+' USD'}} · 单列支出</small>

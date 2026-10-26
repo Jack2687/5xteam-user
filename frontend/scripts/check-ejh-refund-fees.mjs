@@ -32,5 +32,6 @@ assert.equal(refundFeeSummary([{...fee,amount:'garbage'}]).missing,1)
 assert.equal(financeOverview({...base,refund_fees:[{...fee,amount:'garbage'}]}).earnings.costUSD,null)
 assert.equal(financeEvents({...base,refund_fees:[voided,fee]}).filter(e=>e.kind==='refund').length,0)
 const refunds={...base,trades:[{id:'refund',card_id:'c',trade:{tradeType:'5',tradeStatus:'2',cardAmount:'92.13',cardCurrency:'USD',billAmount:'92.13',billCurrency:'USD'}}]}
-assert.equal(financeOverview(refunds).refundFees.amount,'0.00','supplier refund principal alone does not prove any fee')
+assert.equal(financeOverview(refunds).refundFees.amount,'5.53','posted refund uses the configured default rate as an explicit estimate')
+assert.equal(financeOverview(refunds).refundFees.estimated,true)
 console.log('Passed: refund fees, deduplication, revision/void, day/week/month and Beijing midnight, unchanged assets/principal, explicit provenance')

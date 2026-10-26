@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type EJHRefundFee struct {
 	Voided    bool      `json:"voided"`
 	Revision  int       `json:"revision"`
 	UpdatedAt time.Time `json:"updated_at"`
+	TradeIDs  []string  `json:"trade_ids,omitempty"`
 }
 
 var ejhRefundFeeID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
@@ -60,6 +62,41 @@ func (s *Store) SaveEJHRefundFee(in EJHRefundFee) (EJHRefundFee, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(in.TradeIDs) > 500 {
+		return in, fmt.Errorf("一次最多关联500笔退款流水")
+	}
+	sort.Strings(in.TradeIDs)
+	if !in.Voided && len(in.TradeIDs) > 0 {
+		trades, err := ejhRecordsLocked[ejh.TradeRecord](s, "trade")
+		if err != nil {
+			return in, err
+		}
+		valid := map[string]bool{}
+		for _, r := range trades {
+			valid[r.ID] = (r.Trade.Type == "5" || r.Trade.Type == "16") && r.Trade.Status == "2" && r.Trade.BillCurrency == "USD" && ejh.Positive(r.Trade.BillAmount) == nil
+		}
+		selected := map[string]bool{}
+		for _, id := range in.TradeIDs {
+			if selected[id] || !valid[id] {
+				return in, fmt.Errorf("关联退款流水无效或重复，须为已入账且有USD结算金额的退款")
+			}
+			selected[id] = true
+		}
+		fees, err := ejhRecordsLocked[EJHRefundFee](s, "finance_refund_fee")
+		if err != nil {
+			return in, err
+		}
+		for _, fee := range fees {
+			if fee.ID == in.ID || fee.Voided {
+				continue
+			}
+			for _, id := range fee.TradeIDs {
+				if selected[id] {
+					return in, fmt.Errorf("退款流水已关联其他手续费记录，请先调整原记录")
+				}
+			}
+		}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return in, err
@@ -70,7 +107,7 @@ func (s *Store) SaveEJHRefundFee(in EJHRefundFee) (EJHRefundFee, error) {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return in, err
 	}
-	if err == nil && old.Amount == in.Amount && old.At.Equal(in.At) && old.Source == in.Source && old.Note == in.Note && old.Voided == in.Voided {
+	if err == nil && old.Amount == in.Amount && old.At.Equal(in.At) && old.Source == in.Source && old.Note == in.Note && old.Voided == in.Voided && slices.Equal(old.TradeIDs, in.TradeIDs) {
 		return old, nil
 	}
 	if old.Revision != in.Revision || old.Revision == 0 && in.Voided {

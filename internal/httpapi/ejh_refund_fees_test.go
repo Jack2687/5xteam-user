@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"chatgpt-space-merge/internal/ejh"
 	"chatgpt-space-merge/internal/store"
 	"encoding/json"
 	"net/http"
@@ -16,11 +17,14 @@ func TestEJHRefundFeeAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	if err = st.EJHPut("trade", "refund-1", ejh.TradeRecord{ID: "refund-1", Trade: ejh.Trade{Type: "5", Status: "2", BillCurrency: "USD", BillAmount: "100"}}); err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{store: st, sessions: map[string]time.Time{"refund-test": time.Now().Add(time.Hour)}}
 	mux := http.NewServeMux()
 	s.ejhRoutes(mux)
 	h := s.authMiddleware(mux)
-	good := `{"amount":"24.84","at":"2026-01-01T12:24:46+08:00","source":"balance_reconciliation","note":"4笔清算退款的余额核对"}`
+	good := `{"amount":"24.84","at":"2026-01-01T12:24:46+08:00","source":"balance_reconciliation","note":"4笔清算退款的余额核对","trade_ids":["refund-1"]}`
 	for _, test := range []struct {
 		body   string
 		auth   bool
@@ -51,6 +55,9 @@ func TestEJHRefundFeeAPI(t *testing.T) {
 	}
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil || len(out.Data.Fees) != 1 || out.Data.Fees[0].Amount != "24.84" {
 		t.Fatal(w.Code, w.Body.String())
+	}
+	if ids := out.Data.Fees[0].TradeIDs; len(ids) != 1 || ids[0] != "refund-1" {
+		t.Fatal("linked refunds lost in dashboard", ids)
 	}
 	if s.ejh.client != nil {
 		t.Fatal("recording expense called supplier")

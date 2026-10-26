@@ -1,4 +1,5 @@
 <script setup>
+import { sortCardsByReturnState } from '../card-workflow-sort'
 import CardPaymentPolicy from './CardPaymentPolicy.vue'
 import { applyPaymentPolicies } from '../payment-only'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
@@ -70,7 +71,7 @@ const frozenBalance=computed(()=>frozenBalanceDisplay(data))
 function cardCategory(row){return row.card.status==='4'?'closed':row.card.normal_pending?'normal_pending':'normal'}
 const filtered=computed(()=>{
  const rows=tab.value==='cards'?data.cards.filter(r=>targetCardID.value?r.card.id===targetCardID.value:cardCategory(r)===filter.value&&origin(r).platform===platformFilter.value):tab.value==='returns'?sortReturnCases(returnCases.value.filter(c=>returnCategory.value==='unopened'?c.state==='unopened':c.state!=='unopened'&&(!returnFilter.value||c.state===returnFilter.value))):(withdrawAttentionOnly.value?withdrawAttention.value:data.operations)
- const ordered=tab.value==='cards'&&filter.value==='closed'?sortClosedCards(rows,data.operations):rows
+ const ordered=tab.value==='cards'?(filter.value==='closed'?sortClosedCards(rows,data.operations):sortCardsByReturnState(rows,returnCases.value)):rows
  const q=search.value.trim().toLowerCase();return ordered.filter(r=>!q||[r.card?.serial_no,r.card?.last4,r.card?.remark,r.email,r.id,r.last4,r.serial_no,r.card_name].some(v=>String(v||'').toLowerCase().includes(q)))
 })
 const visible=computed(()=>filtered.value.slice((page.value-1)*pageSize.value,page.value*pageSize.value))

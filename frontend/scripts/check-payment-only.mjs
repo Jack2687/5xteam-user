@@ -6,7 +6,7 @@ import { reconciliation } from '../src/nexovcc-reconciliation.js'
 
 const at='2026-10-26T10:00:00+08:00'
 const policy={card_id:'c',mode:'payment_only',note:'只付款测试',updated_at:at,revision:1}
-const ejh={recharge_ledger:{amount:'1000'},balance:{data:{abroadList:[{currency:'USD',balance:'789.50'}]}},
+const ejh={reversal_fee_percent:0,recharge_ledger:{amount:'1000'},balance:{data:{abroadList:[{currency:'USD',balance:'789.50'}]}},
  cards:[{id:'c',issuer_linked:true,balance:'0',balance_at:at,remote:{orderNo:'c',status:'1',cardCurrency:'USD',startTime:at}}],
  cases:[{id:'order',card_id:'c',email:'fixture@example.com',state:'waiting',consumption_total:1000,charge:{trade_no:'a',type:'1',status:'1',card_amount:'200',card_currency:'USD'}}],
  trades:[{id:'a',card_id:'c',trade:{tradeNo:'a',authCode:'auth',tradeType:'1',tradeStatus:'1',cardAmount:'200',cardCurrency:'USD',billCurrency:'USD',billAmount:'200',createdAt:at}},
