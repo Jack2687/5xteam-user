@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// RetryableHTTPStatus excludes local cooldowns and JSON business error codes.
+// RetryableHTTPStatus excludes JSON business error codes.
 func RetryableHTTPStatus(err error) int {
 	var remote *Error
 	if errors.As(err, &remote) && remote.Unknown && (remote.Code == 500 || remote.Code == 522) {
@@ -27,7 +27,7 @@ func (c *Client) SetHTTP522Retry(count int, interval time.Duration, progress fun
 type no522RetriesKey struct{}
 
 // WithOutcomeProbe bounds reconciliation at the operation layer, without
-// multiplying each probe into another retry loop or waiting for old cooldowns.
+// multiplying each probe into another retry loop.
 func WithOutcomeProbe(ctx context.Context) context.Context {
 	return context.WithValue(WithImmediateRequests(ctx), no522RetriesKey{}, true)
 }

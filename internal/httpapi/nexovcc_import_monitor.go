@@ -96,9 +96,6 @@ func (s *Server) retryNexovccImport(parent context.Context, now time.Time) error
 	if closed || ctx.Err() != nil {
 		return nil
 	}
-	if s.nexovcc.client != nil && time.Now().Before(s.nexovcc.client.RetryAt()) {
-		return nil
-	}
 	if card.Imported {
 		op.Status, op.Error = "succeeded", ""
 	} else {

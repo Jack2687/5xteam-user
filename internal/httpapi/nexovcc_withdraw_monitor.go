@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -53,10 +54,15 @@ func (s *Server) nexovccWithdrawState(cfg nexovcc.Settings, snapshot ...[]nexovc
 	if seconds == 0 {
 		seconds = 60
 	}
-	state.NextCheck = state.LastSuccess.Add(time.Duration(seconds) * time.Second)
-	if !state.RetryAfter.IsZero() {
-		state.NextCheck = state.RetryAfter
+	state.RetryAfter = time.Time{}
+	if state.Error == context.Canceled.Error() {
+		state.Error = ""
 	}
+	last := state.LastSuccess
+	if state.LastAttempt.After(last) {
+		last = state.LastAttempt
+	}
+	state.NextCheck = last.Add(time.Duration(seconds) * time.Second)
 	return state, nil
 }
 
@@ -108,12 +114,9 @@ func (s *Server) runNexovccWithdrawCheck(ctx context.Context) (bool, error) {
 	if time.Now().Before(state.NextCheck) {
 		return false, nil
 	}
-	if s.nexovcc.client != nil && time.Now().Before(s.nexovcc.client.RetryAt()) {
-		return false, nil
-	}
 	state.LastAttempt = time.Now()
-	// A crash before finishing cannot spin up another batch immediately.
-	state.RetryAfter = time.Now().Add(time.Duration(max(cfg.AutoWithdrawIntervalSeconds, 30)) * time.Second)
+	// Persist the attempt so a restart still respects the configured interval.
+	state.RetryAfter = time.Time{}
 	if err = s.store.NexovccCache("withdraw_state", state); err != nil {
 		return false, err
 	}
@@ -140,13 +143,12 @@ func (s *Server) runNexovccWithdrawCheck(ctx context.Context) (bool, error) {
 	if err == nil {
 		state.LastSuccess = time.Now()
 		state.Error, state.Failures, state.RetryAfter = "", 0, time.Time{}
+	} else if errors.Is(workCtx.Err(), context.Canceled) && ctx.Err() != nil {
+		state.Error = ""
+		message, status = "本轮自动提现检查已停止", "completed"
 	} else {
 		state.Failures++
 		state.Error = err.Error()
-		state.RetryAfter = time.Now().Add(min(30*time.Second*time.Duration(1<<min(state.Failures-1, 4)), 5*time.Minute))
-		if s.nexovcc.client != nil && s.nexovcc.client.RetryAt().After(state.RetryAfter) {
-			state.RetryAfter = s.nexovcc.client.RetryAt()
-		}
 		message, status = "自动提现待重试："+state.Error, "failed"
 	}
 	if saveErr := s.store.NexovccCache("withdraw_state", state); saveErr != nil && err == nil {

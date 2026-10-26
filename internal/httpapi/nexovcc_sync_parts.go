@@ -70,10 +70,17 @@ func (s *Server) nexovccSyncParts(cfg nexovcc.Settings) (map[string]nexovccSyncP
 				part.LastSuccess = productsAt
 			}
 		}
-		part.NextRefresh = part.LastSuccess.Add(time.Duration(seconds) * time.Second)
-		if !part.RetryAfter.IsZero() {
-			part.NextRefresh = part.RetryAfter
+		// Ignore legacy exponential cooldowns. Both successful and failed reads
+		// use the configured category interval; explicit refreshes bypass it.
+		part.RetryAfter = time.Time{}
+		if part.Error == context.Canceled.Error() {
+			part.Error, part.LastAttempt = "", time.Time{}
 		}
+		last := part.LastSuccess
+		if part.LastAttempt.After(last) {
+			last = part.LastAttempt
+		}
+		part.NextRefresh = last.Add(time.Duration(seconds) * time.Second)
 		parts[key] = part
 	}
 	return parts, nil
@@ -92,9 +99,9 @@ func (s *Server) runNexovccSyncPartLocked(ctx context.Context, key string, force
 	if !force && time.Now().Before(part.NextRefresh) {
 		return nil
 	}
+	previousAttempt := part.LastAttempt
 	part.LastAttempt = time.Now()
-	// A restart during a read waits until the next local worker tick.
-	part.RetryAfter = time.Now().Add(30 * time.Second)
+	part.RetryAfter = time.Time{}
 	parts[key] = part
 	if err = s.store.NexovccCache("sync_parts", parts); err != nil {
 		return err
@@ -105,12 +112,12 @@ func (s *Server) runNexovccSyncPartLocked(ctx context.Context, key string, force
 	if err == nil {
 		part.LastSuccess = time.Now()
 		part.Error, part.Failures, part.RetryAfter = "", 0, time.Time{}
-	} else if errors.Is(err, errNexovccReadYielded) || ctx.Err() != nil {
-		part.RetryAfter = time.Now().Add(30 * time.Second)
+	} else if errors.Is(err, errNexovccReadYielded) || errors.Is(ctx.Err(), context.Canceled) {
+		// Yielding a read must not delay its next turn or become an outage.
+		part.LastAttempt, part.Error = previousAttempt, ""
 	} else {
 		part.Failures++
 		part.Error = err.Error()
-		part.RetryAfter = time.Now().Add(min(30*time.Second*time.Duration(1<<min(part.Failures-1, 4)), 5*time.Minute))
 	}
 	part.NextRefresh = time.Time{}
 	parts[key] = part

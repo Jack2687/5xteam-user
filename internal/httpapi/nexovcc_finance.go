@@ -85,10 +85,6 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if until := c.RetryAt(); time.Now().Before(until) && !nexovcc.ImmediateRequests(ctx) {
-			failures = append(failures, fmt.Errorf("环球接口冷却中，剩余卡片保留缓存"))
-			break
-		}
 		label := "同步正常卡交易明细"
 		if category == "normal_pending" {
 			label = "同步正常待定卡交易明细"

@@ -47,16 +47,17 @@ func TestNexovccWithdrawClockPersistsAndDoesNotConsumeBusySlot(t *testing.T) {
 	if ran, err = restarted.runNexovccWithdrawCheck(ctx); ran || err != nil {
 		t.Fatal("restart reset interval", ran, err)
 	}
-	// An independent failed attempt takes precedence over the normal interval.
+	// Failed attempts use the configured interval, ignoring old cooldowns.
 	state.LastSuccess = time.Now().Add(-time.Hour)
 	state.RetryAfter, state.Failures, state.Error = time.Now().Add(time.Minute), 1, "temporary timeout"
 	if err = s.store.NexovccCache("withdraw_state", state); err != nil {
 		t.Fatal(err)
 	}
 	if ran, err = restarted.runNexovccWithdrawCheck(ctx); ran || err != nil {
-		t.Fatal("persisted retry bypassed", ran, err)
+		t.Fatal("configured interval bypassed", ran, err)
 	}
-	state.RetryAfter = time.Now().Add(-time.Second)
+	state.LastAttempt = time.Now().Add(-time.Hour)
+	state.RetryAfter = time.Now().Add(time.Hour)
 	if err = s.store.NexovccCache("withdraw_state", state); err != nil {
 		t.Fatal(err)
 	}

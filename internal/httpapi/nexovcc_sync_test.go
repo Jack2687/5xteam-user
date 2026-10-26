@@ -40,7 +40,7 @@ func TestNexovccPageAndBackgroundSharePersistentRefreshClock(t *testing.T) {
 	}
 }
 
-func TestNexovccFailedSyncKeepsFinanceAndBlocksRepeatedAttempts(t *testing.T) {
+func TestNexovccFailedSyncKeepsFinanceAndConfiguredInterval(t *testing.T) {
 	s, _ := nexFixtureServer(t)
 	if err := s.syncNexovccLocked(context.Background()); err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestNexovccFailedSyncKeepsFinanceAndBlocksRepeatedAttempts(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.runNexovcc(w, httptest.NewRequest("POST", "/api/nexovcc/run", strings.NewReader(`{"action":"sync","automatic_refresh":`+automatic+`}`)))
 		if w.Code != 200 || calls != count {
-			t.Fatal("cooldown bypass", w.Code, calls, count)
+			t.Fatal("configured interval bypass", w.Code, calls, count)
 		}
 	}
 	var after nexovcc.Finance
@@ -78,15 +78,15 @@ func TestNexovccFailedSyncKeepsFinanceAndBlocksRepeatedAttempts(t *testing.T) {
 	}
 	cfg, _, _ := s.store.NexovccSettings()
 	state, err := s.nexovccSyncState(cfg)
-	if err != nil || state.Failures != 1 || !state.RetryAfter.After(time.Now()) || state.Error == "" {
+	if err != nil || state.Failures != 1 || !state.RetryAfter.IsZero() || state.Error == "" {
 		t.Fatal(state, err)
 	}
 	restarted := &Server{store: s.store}
 	if message, err := restarted.nexovccSyncWait(cfg, true); err != nil || message == "" {
-		t.Fatal("restart cleared backoff", message, err)
+		t.Fatal("restart lost configured interval", message, err)
 	}
 	if message, err := restarted.nexovccSyncWait(cfg, false); err != nil || message != "" {
-		t.Fatal("explicit manual action still waits for backoff", message, err)
+		t.Fatal("explicit manual action still waits for the scheduled interval", message, err)
 	}
 }
 
@@ -113,5 +113,73 @@ func TestNexovccSyncJoinsRunningJobAndDisabledEntryStaysLocal(t *testing.T) {
 	s.runNexovcc(w, httptest.NewRequest("POST", "/api/nexovcc/run", strings.NewReader(`{"action":"sync","automatic_refresh":true}`)))
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestNexovccCancelledSyncDoesNotCreateFailureOrCooldown(t *testing.T) {
+	s, _ := nexFixtureServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	base := s.nexovcc.transport
+	interrupt := true
+	s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
+		if interrupt && r.Path == "/api/getBalanceInfo" {
+			cancel()
+			return nexovcc.Response{}, ctx.Err()
+		}
+		return base(ctx, r)
+	}
+	if err := s.syncNexovccLocked(ctx); err == nil {
+		t.Fatal("cancelled sync reported success")
+	}
+	cfg, _, _ := s.store.NexovccSettings()
+	state, err := s.nexovccSyncState(cfg)
+	if err != nil || state.Error != "" || state.Failures != 0 || !state.RetryAfter.IsZero() || state.Parts["balance"].Error != "" || state.Parts["balance"].Failures != 0 {
+		t.Fatal("cancellation was presented as an upstream failure", state, err)
+	}
+	if message, err := s.nexovccSyncWait(cfg, true); err != nil || message != "" {
+		t.Fatal("cancelled read delayed the next scheduled attempt", message, err)
+	}
+	interrupt = false
+	if err = s.syncNexovccLocked(nexovccScheduledSync(context.Background())); err != nil {
+		t.Fatal("resume after cancellation", err)
+	}
+}
+
+func TestNexovccLegacyCooldownDoesNotBlockOtherDueParts(t *testing.T) {
+	s, _ := nexFixtureServer(t)
+	cfg, _, _ := s.store.NexovccSettings()
+	old := time.Now().Add(-24 * time.Hour)
+	parts := map[string]nexovccSyncPart{}
+	for key := range nexovccSyncIntervals(cfg) {
+		parts[key] = nexovccSyncPart{LastAttempt: old, LastSuccess: old, RetryAfter: time.Now().Add(time.Hour), Error: "context canceled"}
+	}
+	if err := s.store.NexovccCache("sync_parts", parts); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.NexovccCache("sync_state", nexovccSyncState{Error: "context canceled", RetryAfter: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.nexovccSyncState(cfg)
+	if err != nil || state.Error != "" || !state.RetryAfter.IsZero() || time.Now().Before(state.NextRefresh) {
+		t.Fatal(state, err)
+	}
+	if message, err := s.nexovccSyncWait(cfg, true); err != nil || message != "" {
+		t.Fatal(message, err)
+	}
+	// One recent failed part cannot postpone a different category that is due.
+	parts["balance"] = nexovccSyncPart{LastAttempt: time.Now(), Error: "HTTP 522", Failures: 5}
+	if err = s.store.NexovccCache("sync_parts", parts); err != nil {
+		t.Fatal(err)
+	}
+	if message, err := s.nexovccSyncWait(cfg, true); err != nil || message != "" {
+		t.Fatal("unrelated categories blocked", message, err)
+	}
+	if err = s.syncNexovccLocked(nexovccScheduledSync(context.Background())); err != nil {
+		t.Fatal(err)
+	}
+	state, err = s.nexovccSyncState(cfg)
+	if err != nil || state.Parts["cards"].LastSuccess.Before(old.Add(time.Hour)) || state.Parts["balance"].Error != "HTTP 522" {
+		t.Fatal(state, err)
 	}
 }

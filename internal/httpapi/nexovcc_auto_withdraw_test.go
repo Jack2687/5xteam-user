@@ -112,14 +112,15 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 		t.Fatal("522 before submission must not send money", ran, err, writes)
 	}
 	state, err := s.nexovccWithdrawState(cfg)
-	if err != nil || state.Failures != 1 || state.Error == "" || !state.RetryAfter.After(time.Now()) {
+	if err != nil || state.Failures != 1 || state.Error == "" || !state.RetryAfter.IsZero() || !state.NextCheck.After(time.Now()) {
 		t.Fatal("missing retry state", state, err)
 	}
 	if ran, err := s.runNexovccWithdrawCheck(context.Background()); ran || err != nil {
-		t.Fatal("cooldown bypassed", ran, err)
+		t.Fatal("configured withdrawal interval bypassed", ran, err)
 	}
-	// Expire the persisted delay and recreate the client to model a restart.
-	state.RetryAfter = time.Now().Add(-time.Second)
+	// Advance beyond the configured interval, retaining a legacy cooldown.
+	state.LastAttempt = time.Now().Add(-time.Hour)
+	state.RetryAfter = time.Now().Add(time.Hour)
 	if err = s.store.NexovccCache("withdraw_state", state); err != nil {
 		t.Fatal(err)
 	}

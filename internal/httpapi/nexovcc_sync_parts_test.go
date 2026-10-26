@@ -28,7 +28,7 @@ func TestNexovccSyncIndependentIntervalsAndManualAll(t *testing.T) {
 	}
 	baseline := time.Now().Add(-2 * time.Minute)
 	for key, part := range parts {
-		part.LastSuccess = baseline
+		part.LastSuccess, part.LastAttempt = baseline, baseline
 		parts[key] = part
 	}
 	if err = s.store.NexovccCache("sync_parts", parts); err != nil {
@@ -126,7 +126,8 @@ func TestNexovccSyncFailureRetainsSuccessfulPartClocks(t *testing.T) {
 		return base(ctx, r)
 	}
 	part := parts["transactions"]
-	part.RetryAfter = time.Now().Add(-time.Second)
+	part.LastAttempt = time.Now().Add(-time.Hour)
+	part.RetryAfter = time.Now().Add(time.Hour) // Legacy cooldown must not block the due read.
 	parts["transactions"] = part
 	if err = s.store.NexovccCache("sync_parts", parts); err != nil {
 		t.Fatal(err)

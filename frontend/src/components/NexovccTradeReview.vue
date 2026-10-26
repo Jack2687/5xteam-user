@@ -2,7 +2,7 @@
 import {computed,ref,watch,nextTick} from 'vue'
 import {api} from '../api'
 import {formatTime} from '../utils'
-import {tradeStates,rmb,cents} from '../nexovcc-finance'
+import {tradeStates,rmb,cents,tradeGroupNeedsReview} from '../nexovcc-finance'
 import Pagination from './Pagination.vue'
 const props=defineProps({data:{type:Object,required:true},serial:{type:String,default:''},pageSize:{type:Number,default:10}})
 const emit=defineEmits(['saved','busy'])
@@ -15,7 +15,7 @@ const review=id=>reviews.value.find(r=>r.group_id===id)
 const at=g=>trades(g).reduce((latest,t)=>Date.parse(t.at)>Date.parse(latest||'1970-01-01')?t.at:latest,'')
 const last4=g=>trades(g)[0]?.last4||'—'
 const filtered=computed(()=>{
- const rows=mode.value==='pending'?groups.value.filter(g=>!g.valid&&!review(g.id)?.applied).map(g=>({id:g.id,g})):reviews.value.map(r=>({id:r.group_id,g:info(r.group_id),r}))
+ const rows=mode.value==='pending'?groups.value.filter(g=>tradeGroupNeedsReview(props.data,g)&&!review(g.id)?.applied).map(g=>({id:g.id,g})):reviews.value.map(r=>({id:r.group_id,g:info(r.group_id),r}))
  const q=query.value.trim().toLowerCase()
  return rows.filter(row=>(!props.serial||row.g?.serial_no===props.serial)&&(!q||[row.id,row.g?.authorization,last4(row.g),row.r?.reason,...trades(row.g).map(t=>t.id)].some(v=>String(v||'').toLowerCase().includes(q)))).sort((a,b)=>Date.parse(b.r?.updated_at||at(b.g)||'1970-01-01')-Date.parse(a.r?.updated_at||at(a.g)||'1970-01-01'))
 })

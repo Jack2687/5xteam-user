@@ -88,7 +88,7 @@ func TestHTTPErrorDoesNotReplayWritesOrOtherErrors(t *testing.T) {
 func TestHTTPErrorDisabledAndCancelledRetry(t *testing.T) {
 	for _, status := range []int{500, 522} {
 		t.Run(fmt.Sprintf("HTTP%d", status), func(t *testing.T) {
-			for _, scenario := range []string{"disabled", "cancelled", "probe", "cooldown"} {
+			for _, scenario := range []string{"disabled", "cancelled", "probe"} {
 				calls := 0
 				c := New(Credentials{}, func(context.Context, Request) (Response, error) { calls++; return Response{Status: status}, nil })
 				c.until = time.Now().Add(time.Hour)
@@ -101,14 +101,9 @@ func TestHTTPErrorDisabledAndCancelledRetry(t *testing.T) {
 					c.wait = func(context.Context, time.Duration) error { return context.Canceled }
 				case "probe":
 					ctx = WithOutcomeProbe(ctx)
-				case "cooldown":
-					c.retryAt, c.retryCode = time.Now().Add(time.Minute), status
 				}
 				_, err := c.Do(ctx, "/api/getBalanceInfo", nil)
 				want := 1
-				if scenario == "cooldown" {
-					want = 0
-				}
 				if err == nil || calls != want || (scenario == "cancelled" && !errors.Is(err, context.Canceled)) {
 					t.Fatal(scenario, calls, err)
 				}

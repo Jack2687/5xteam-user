@@ -43,7 +43,7 @@ func TestRequestSpacingIncludesLoginAndPagination(t *testing.T) {
 	}
 }
 
-func TestProviderRetryAfterAndTimeoutClassification(t *testing.T) {
+func TestProviderErrorsDoNotBlockSubsequentRequests(t *testing.T) {
 	for _, code := range []int{429, 500, 522} {
 		for _, header := range []string{"90", time.Unix(1090, 0).UTC().Format(http.TimeFormat), "invalid", "-1"} {
 			now := time.Unix(1000, 0)
@@ -56,16 +56,12 @@ func TestProviderRetryAfterAndTimeoutClassification(t *testing.T) {
 			c.until = now.Add(time.Hour)
 			_, err := c.Do(context.Background(), "/api/card/userCardWithdraw", nil)
 			var remote *Error
-			delay := 90 * time.Second
-			if header == "invalid" || header == "-1" {
-				delay = 30 * time.Second
-			}
-			if !errors.As(err, &remote) || remote.Code != code || !remote.RetryAt.Equal(now.Add(delay)) || !IsUnknown(err) {
-				t.Fatal(remote, err)
+			if !errors.As(err, &remote) || remote.Code != code || !IsUnknown(err) || calls != 1 {
+				t.Fatal(remote, err, calls)
 			}
 			_, err = c.Do(context.Background(), "/api/getBalanceInfo", nil)
-			if !errors.As(err, &remote) || remote.Code != code || calls != 1 {
-				t.Fatal("replayed during cooldown", calls, err)
+			if !errors.As(err, &remote) || remote.Code != code || calls != 2 {
+				t.Fatal("a prior error blocked the next request", calls, err)
 			}
 			if code == 522 && !strings.Contains(err.Error(), "连接超时") {
 				t.Fatal("522 mislabeled as rate limit", err)
@@ -74,26 +70,25 @@ func TestProviderRetryAfterAndTimeoutClassification(t *testing.T) {
 	}
 }
 
-func TestRateLimitAnd522DoNotReplayAndBackOff(t *testing.T) {
+func TestProviderErrorsDoNotReplayMoneyOrAddCooldown(t *testing.T) {
 	for _, response := range []Response{{Status: 200, Body: `{"code":500,"message":"请求过于频繁，稍后重试"}`}, {Status: 429}, {Status: 500}, {Status: 522}} {
 		now := time.Unix(1000, 0)
 		calls := 0
 		c := New(Credentials{}, func(_ context.Context, r Request) (Response, error) { calls++; return response, nil })
 		c.now = func() time.Time { return now }
 		c.until = now.Add(time.Hour)
-		for attempt, delay := range []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second} {
+		for attempt := 0; attempt < 3; attempt++ {
 			_, err := c.Do(context.Background(), "/api/card/createUserCard", nil)
 			var remote *Error
-			if !errors.As(err, &remote) || !remote.RetryAt.Equal(now.Add(delay)) || calls != attempt+1 {
-				t.Fatal("wrong backoff or replay", calls, err, c.RetryAt())
+			if !errors.As(err, &remote) || calls != attempt*2+1 {
+				t.Fatal("money request replayed or blocked", calls, err)
 			}
 			if (response.Status == 500 || response.Status == 522) && !IsUnknown(err) {
 				t.Fatal("uncertain write became definite")
 			}
-			if _, err = c.Do(context.Background(), "/api/getBalanceInfo", nil); err == nil || calls != attempt+1 {
-				t.Fatal("cooldown sent another request", calls, err)
+			if _, err = c.Do(context.Background(), "/api/getBalanceInfo", nil); err == nil || calls != attempt*2+2 {
+				t.Fatal("next query blocked after a failed write", calls, err)
 			}
-			now = now.Add(delay)
 		}
 	}
 }
@@ -111,7 +106,7 @@ func TestCancelledSpacingDoesNotSubmitPayment(t *testing.T) {
 	}
 }
 
-func TestManualRequestsBypassPacingAndBackoffOnlyForExplicitCall(t *testing.T) {
+func TestManualRequestsBypassPacingOnlyForExplicitCall(t *testing.T) {
 	now := time.Unix(1000, 0)
 	calls, waits := 0, 0
 	c := New(Credentials{}, func(context.Context, Request) (Response, error) {
@@ -120,19 +115,19 @@ func TestManualRequestsBypassPacingAndBackoffOnlyForExplicitCall(t *testing.T) {
 	})
 	c.now = func() time.Time { return now }
 	c.until = now.Add(time.Hour)
-	c.nextRequest, c.retryAt = now.Add(time.Hour), now.Add(time.Hour)
-	c.retryCode = 522
+	c.nextRequest = now.Add(time.Hour)
+	c.SetRequestInterval(3 * time.Second)
 	c.wait = func(context.Context, time.Duration) error { waits++; return nil }
 	_, err := c.Do(WithImmediateRequests(context.Background()), "/api/card/createUserCard", nil)
 	if err == nil || calls != 1 || waits != 0 || !IsUnknown(err) {
 		t.Fatal("manual request waited, replayed, or lost uncertainty", calls, waits, err)
 	}
-	if _, err = c.Do(context.Background(), "/api/getBalanceInfo", nil); err == nil || calls != 1 {
-		t.Fatal("manual request disabled background backoff", calls, err)
+	if _, err = c.Do(context.Background(), "/api/getBalanceInfo", nil); err == nil || calls != 2 || waits != 1 {
+		t.Fatal("background request did not use configured pacing", calls, waits, err)
 	}
 	ctx, cancel := context.WithCancel(WithImmediateRequests(context.Background()))
 	cancel()
-	if _, err = c.Do(ctx, "/api/card/createUserCard", nil); err == nil || calls != 1 {
+	if _, err = c.Do(ctx, "/api/card/createUserCard", nil); err == nil || calls != 2 {
 		t.Fatal("manual bypass ignored cancellation", calls, err)
 	}
 }

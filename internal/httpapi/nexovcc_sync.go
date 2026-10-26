@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -44,8 +43,9 @@ func (s *Server) nexovccSyncState(cfg nexovcc.Settings) (nexovccSyncState, error
 			state.NextRefresh = part.NextRefresh
 		}
 	}
-	if !state.RetryAfter.IsZero() {
-		state.NextRefresh = state.RetryAfter
+	state.RetryAfter = time.Time{}
+	if state.Error == context.Canceled.Error() {
+		state.Error = ""
 	}
 	return state, nil
 }
@@ -61,18 +61,8 @@ func (s *Server) nexovccSyncWait(cfg nexovcc.Settings, automatic bool) (string, 
 	if err != nil {
 		return "", err
 	}
-	until := state.RetryAfter
-	if automatic {
-		until = state.NextRefresh
-	}
-	if s.nexovcc.client != nil && s.nexovcc.client.RetryAt().After(until) {
-		until = s.nexovcc.client.RetryAt()
-	}
-	if time.Now().Before(until) {
-		if state.Error != "" || !state.RetryAfter.IsZero() {
-			return fmt.Sprintf("保留上次数据，约 %d 秒后重试", int(time.Until(until).Seconds())+1), nil
-		}
-		return "数据已更新，使用缓存", nil
+	if time.Now().Before(state.NextRefresh) {
+		return "按配置间隔同步，当前显示已保存数据", nil
 	}
 	return "", nil
 }
@@ -101,22 +91,18 @@ func (s *Server) syncNexovccLocked(ctx context.Context, forceAccount ...bool) (e
 	defer func() {
 		state.NextRefresh = time.Time{}
 		state.Parts = nil
-		if errors.Is(err, errNexovccReadYielded) {
+		state.RetryAfter = time.Time{}
+		if errors.Is(err, errNexovccReadYielded) || errors.Is(ctx.Err(), context.Canceled) {
 			// A user operation took priority, not an upstream failure. Resume later
 			// using the per-card checkpoints, without increasing the failure counter.
-			state.RetryAfter = time.Now().Add(30 * time.Second)
+			state.Error = ""
 		} else if err == nil {
 			state.LastSuccess = time.Now()
 			state.Error, state.Failures, state.RetryAfter = "", 0, time.Time{}
 		} else {
 			state.Failures++
-			delay := min(30*time.Second*time.Duration(1<<min(state.Failures-1, 4)), 5*time.Minute)
-			state.RetryAfter = time.Now().Add(delay)
-			if s.nexovcc.client != nil && s.nexovcc.client.RetryAt().After(state.RetryAfter) {
-				state.RetryAfter = s.nexovcc.client.RetryAt()
-			}
 			state.Error = err.Error()
-			slog.Warn("环球同步失败，已安排退避", "error", state.Error, "retry_at", state.RetryAfter)
+			slog.Warn("环球同步失败，后续按配置间隔执行", "error", state.Error)
 		}
 		if saveErr := s.store.NexovccCache("sync_state", state); saveErr != nil && err == nil {
 			err = saveErr

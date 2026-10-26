@@ -248,6 +248,9 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.NexovccCached("finance_error", &financeError)
+	if financeError == context.Canceled.Error() {
+		financeError = ""
+	}
 	groups, e := s.store.NexovccTradeGroups(finance)
 	if e != nil {
 		writeAPI(w, 500, nil, "读取交易标记失败")
