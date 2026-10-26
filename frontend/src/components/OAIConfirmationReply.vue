@@ -2,7 +2,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { formatTime } from '../utils'
 import { copyText } from '../clipboard'
-const props=defineProps({record:Object})
+const props=defineProps({record:Object,clickOnly:Boolean,triggerLabel:{type:String,default:'查看 Help 完整回答'}})
 const anchor=ref(null),opened=ref(false),pinned=ref(false),position=ref({}),copied=ref(false)
 let timer
 function keep(){clearTimeout(timer)}
@@ -13,7 +13,7 @@ async function copy(){try{await copyText(props.record?.answer||'');copied.value=
 onBeforeUnmount(()=>clearTimeout(timer))
 </script>
 <template>
- <span ref="anchor" class="oai-reply-anchor" tabindex="0" aria-label="查看 Help 完整回答" @mouseenter="show()" @mouseleave="leave" @focusin="show()" @focusout="leave" @click="show(true)" @keydown.enter.prevent="show(true)" @keydown.esc="close"><slot/></span>
+ <component :is="clickOnly?'button':'span'" ref="anchor" :type="clickOnly?'button':undefined" class="oai-reply-anchor" tabindex="0" :aria-label="triggerLabel" aria-haspopup="dialog" :aria-expanded="opened" @mouseenter="!clickOnly && show()" @mouseleave="leave" @focusin="!clickOnly && show()" @focusout="leave" @click="show(true)" @keydown.enter.prevent="show(true)" @keydown.esc="close"><slot/></component>
  <Teleport to="body"><aside v-if="opened" class="oai-reply-popover" :style="position" role="dialog" aria-label="Help 完整回答" @mouseenter="keep" @focusin="keep" @focusout="leave" @mouseleave="leave" @keydown.esc="close">
   <header><strong>Help 完整回答</strong><button type="button" aria-label="关闭 Help 回答" @click="close">关闭</button></header>
   <small v-if="record?.checked_at">询问时间 {{formatTime(record.checked_at)}}</small>

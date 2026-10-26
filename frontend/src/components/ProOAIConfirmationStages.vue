@@ -1,9 +1,10 @@
 <script setup>
 import {computed,ref} from 'vue'
-import {LoaderCircle} from 'lucide-vue-next'
+import {LoaderCircle,MessageSquareText} from 'lucide-vue-next'
 import {api} from '../api'
 import {formatTime} from '../utils'
 import OAIConfirmationStatus from './OAIConfirmationStatus.vue'
+import OAIConfirmationReply from './OAIConfirmationReply.vue'
 const props=defineProps({account:Object,mode:String})
 const emit=defineEmits(['updated'])
 const record=computed(()=>props.account?.pro_oai_confirmations?.[props.mode])
@@ -26,7 +27,11 @@ async function action(action){busy.value=true;error.value='';try{await api(`/api
   <button v-if="['failed','unconfirmed','review','stopped','disabled'].includes(record.status)" type="button" :disabled="busy" @click="action('retry')">重试确认</button>
  </div>
  <small v-if="error" class="danger-text">{{error}}</small>
+ <div class="oai-result">
+  <OAIConfirmationReply :record="record" click-only trigger-label="结果情况，查看 Help 完整回答"><span class="oai-result-button"><MessageSquareText :size="12"/><span>结果情况</span><small>{{record?.answer?'查看回答':record?.error?'查看情况':'暂无回答'}}</small></span></OAIConfirmationReply>
+ </div>
 </div></template>
 <style scoped>
+.oai-result{margin-top:8px}.oai-result-button{display:inline-flex;align-items:center;gap:5px;padding:5px 7px;border:1px solid var(--line);border-radius:5px;font-size:11px;color:var(--green-strong);background:var(--surface)}.oai-result-button small{margin-left:4px;font-size:10px;color:var(--muted)}.oai-result-button:hover{border-color:var(--green);background:var(--green-bg)}
 .pro-oai-flow{min-width:290px;max-width:340px}.oai-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:8px}.oai-steps>span{display:flex;align-items:center;gap:4px;padding:4px 5px;font-size:10px;border:1px solid var(--line);border-radius:5px;white-space:nowrap;color:var(--muted)}.oai-steps small{font-size:9px}.completed,.confirmed{color:var(--green-strong)!important;background:var(--green-bg)}.running,.waiting,.review{color:var(--amber)!important;background:var(--amber-bg)}.failed,.unconfirmed,.interrupted{color:var(--red)!important;background:var(--red-bg)}.oai-actions{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:10px;color:var(--muted)}.oai-actions button{padding:3px 6px;border:1px solid var(--line);border-radius:4px}.spin{animation:oai-spin 1s linear infinite}@keyframes oai-spin{to{transform:rotate(360deg)}}
 </style>
