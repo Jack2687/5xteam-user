@@ -58,15 +58,24 @@ func (q ProQualitySettings) Validate() error {
 
 type ProQualityState struct {
 	AccountQuality
-	ErrorFailures     int        `json:"error_failures"`
-	ErrorFailureLimit int        `json:"error_failure_limit"`
-	ErrorSample       string     `json:"error_sample,omitempty"`
-	ErrorDegraded     bool       `json:"error_degraded"`
-	ActionError       string     `json:"action_error,omitempty"`
-	ValidUntil        *time.Time `json:"valid_until,omitempty"`
-	FetchedAt         *time.Time `json:"fetched_at,omitempty"`
-	MergeAttempts     int        `json:"merge_attempts"`
-	NextMergeAt       *time.Time `json:"next_merge_at,omitempty"`
+	ErrorFailures     int                        `json:"error_failures"`
+	ErrorFailureLimit int                        `json:"error_failure_limit"`
+	ErrorSample       string                     `json:"error_sample,omitempty"`
+	ErrorDegraded     bool                       `json:"error_degraded"`
+	ActionError       string                     `json:"action_error,omitempty"`
+	ValidUntil        *time.Time                 `json:"valid_until,omitempty"`
+	FetchedAt         *time.Time                 `json:"fetched_at,omitempty"`
+	MergeAttempts     int                        `json:"merge_attempts"`
+	NextMergeAt       *time.Time                 `json:"next_merge_at,omitempty"`
+	ConnectionCheck   *ProQualityConnectionCheck `json:"connection_check,omitempty"`
+}
+
+type ProQualityConnectionCheck struct {
+	CheckedAt  time.Time `json:"checked_at"`
+	Sample     string    `json:"sample"`
+	Status     string    `json:"status"`
+	HTTPStatus int       `json:"http_status,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
 
 func (p *MailAccountProfile) ReconcileProQualityMerge() {

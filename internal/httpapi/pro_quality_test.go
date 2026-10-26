@@ -19,17 +19,20 @@ import (
 
 type proQualityFixture struct {
 	*proExecutionFixture
-	mu            sync.Mutex
-	mode          string
-	groups        map[int64][]int64
-	reads         [][]int64
-	writes        int
-	ambiguous     bool
-	failGroupRead bool
-	probeAt       *time.Time
-	hook          func()
-	cfg           model.ProSettings
-	policy        model.ProQualitySettings
+	mu              sync.Mutex
+	mode            string
+	groups          map[int64][]int64
+	reads           [][]int64
+	writes          int
+	ambiguous       bool
+	failGroupRead   bool
+	probeAt         *time.Time
+	connectionMode  string
+	connectionTests int
+	connectionHook  func()
+	hook            func()
+	cfg             model.ProSettings
+	policy          model.ProQualitySettings
 }
 
 func newProQualityFixture(t *testing.T, action string) *proQualityFixture {
@@ -112,6 +115,36 @@ func newProQualityFixture(t *testing.T, action string) *proQualityFixture {
 				snapshot.Accounts = append(snapshot.Accounts, v)
 			}
 			reply(snapshot)
+			return
+		}
+		if r.URL.Path == "/api/v1/admin/accounts/42/test" && r.Method == "POST" {
+			var body map[string]any
+			if json.NewDecoder(r.Body).Decode(&body) != nil || body["model_id"] != "gpt-6.1-sol" || body["mode"] != "default" || body["endpoint"] != "original" || body["prompt"] != "hi" {
+				t.Error("connection recheck did not use the ordinary account test")
+			}
+			f.mu.Lock()
+			f.connectionTests++
+			mode, hook := f.connectionMode, f.connectionHook
+			f.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
+			if mode == "http_error" {
+				http.Error(w, "unavailable", 503)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"type\":\"test_start\",\"model\":\"gpt-6.1-sol\",\"data\":{\"custom_prompt\":true}}\n\n")
+			switch mode {
+			case "normal":
+				fmt.Fprint(w, "data: {\"type\":\"content\",\"text\":\"Hello\"}\n\ndata: {\"type\":\"test_complete\",\"success\":true}\n\n")
+			case "truncated":
+				fmt.Fprint(w, "data: {\"type\":\"content\",\"text\":\"Hello\"}\n\n")
+			case "empty":
+				fmt.Fprint(w, "data: {\"type\":\"test_complete\",\"success\":true}\n\n")
+			default:
+				fmt.Fprint(w, "data: {\"type\":\"error\",\"error\":\"API returned 401: unauthorized\"}\n\n")
+			}
 			return
 		}
 		const prefix = "/api/v1/admin/accounts/"

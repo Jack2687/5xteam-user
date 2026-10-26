@@ -24,6 +24,7 @@ func observeProQuality(p model.MailAccountProfile, q model.ProQualitySettings, c
 	}
 	if state.Revision != q.Revision {
 		state.ErrorFailures, state.ErrorSample = 0, ""
+		state.ConnectionCheck = nil
 		if !state.ActionStarted {
 			state.MergeAttempts, state.NextMergeAt = 0, nil
 		}
@@ -40,11 +41,12 @@ func observeProQuality(p model.MailAccountProfile, q model.ProQualitySettings, c
 		state.Reason = ""
 		state.Status, state.Error = "error", "Sub2 降智结果读取失败："+readErr.Error()
 		bad := proQualityErrorObservation(&state, p, q, snapshot, v, readErr, countFailure, now)
-		return state, bad, false
+		return state, bad, state.SourceRecovered
 	}
 	bad, recovered := remoteQualityDecisionSince(q.DecisionSettings(), proQualitySince(p), snapshot, v)
 	if state.SourceVersion != "" && !strings.HasPrefix(state.SourceVersion, v.Revision+"|") {
 		state.ErrorFailures, state.ErrorSample = 0, ""
+		state.ConnectionCheck = nil
 	}
 	state.SourceVersion, state.SourceFailureLimit = v.Revision+"|"+v.Version, snapshot.Settings.FailureLimit
 	state.SourceModel, state.SourceQuestionAt, state.SourceModelAt = snapshot.Settings.ModelAuditModel, v.Question.EvidenceAt, v.Model.EvidenceAt
@@ -102,6 +104,8 @@ func observeProQuality(p model.MailAccountProfile, q model.ProQualitySettings, c
 	}
 	if proQualityErrorObservation(&state, p, q, snapshot, v, nil, countFailure, now) {
 		bad, recovered = true, false
+	} else if state.SourceRecovered {
+		recovered = true
 	}
 	return state, bad, recovered
 }
@@ -126,6 +130,18 @@ func (s *Server) applyProQuality(ctx context.Context, initial model.MailAccountP
 		return
 	}
 	state, bad, recovered := proQualityObservation(p, q, c, snapshot, v, readErr)
+	if state.ErrorDegraded && !state.ActionStarted {
+		state, err = s.recheckProQualityFailure(ctx, p, q, c, password, state)
+		if err != nil || !s.proQualityPolicyCurrent(q, c) {
+			return
+		}
+		latest, _, readErr := s.store.MailAccountCredential(p.Email)
+		if readErr != nil || !proQualityEligible(latest, c) || latest.ProWorkflowRunning || proQualityIdentity(latest, c) != state.Identity {
+			return
+		}
+		p = latest
+		bad, recovered = state.Degraded, state.SourceRecovered
+	}
 	if q.Action == "siwc" && bad && proQualityCanAct(p) {
 		_, err = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) { p.ProQuality = state })
 		if err != nil {
@@ -297,14 +313,26 @@ func (s *Server) checkProQualityMerge(ctx context.Context, p model.MailAccountPr
 		verdict = snapshot.Accounts[0]
 	}
 	// Rechecking a queued action must not count as another scheduled failure.
-	state, bad, _ := observeProQuality(p, q, c, snapshot, verdict, readErr, false)
+	state, _, _ := observeProQuality(p, q, c, snapshot, verdict, readErr, false)
+	state, err = s.recheckProQualityFailure(ctx, p, q, c, password, state)
+	if err != nil {
+		return err
+	}
 	if !s.proQualityPolicyCurrent(q, c) {
 		return errors.New("降智配置已变化，取消本次自动合并")
+	}
+	latest, _, err = s.store.MailAccountCredential(p.Email)
+	latest.ProWorkflowRunning = false // This job owns the account workflow lock.
+	if err != nil || !proQualityEligible(latest, c) || !proQualityCanAct(latest) || proQualityIdentity(latest, c) != request.Identity {
+		return errors.New("测试连接后账号状态或绑定已变化，取消本次降智处理")
 	}
 	if _, err = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) { p.ProQuality = state }); err != nil {
 		return err
 	}
-	if !bad || !s.proQualityPolicyCurrent(q, c) {
+	if state.Status == "normal" && state.ConnectionCheck != nil && state.ConnectionCheck.Status == "normal" {
+		return errProQualityConnectionRecovered
+	}
+	if !state.Degraded || !s.proQualityPolicyCurrent(q, c) {
 		return errors.New("最新结果未确认降智或配置已变化，取消本次自动合并")
 	}
 	_, err = s.store.UpdateProAccount(p.Email, func(p *model.MailAccountProfile) { p.ProQuality.ActionStarted = true; p.ProMergeTrigger = "quality" })
@@ -317,6 +345,11 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 	}
 	_, _ = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		if p.ProQuality.Identity != request.Identity {
+			return
+		}
+		if errors.Is(runErr, errProQualityConnectionRecovered) {
+			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "cancelled", ""
+			p.ProQuality.MergeAttempts, p.ProQuality.NextMergeAt = 0, nil
 			return
 		}
 		if errors.Is(runErr, errProAutoFinalStepPaused) {
@@ -337,7 +370,7 @@ func (s *Server) finishProQualityMerge(email string, request *proQualityMergeReq
 			p.ProQuality.ActionStatus, p.ProQuality.ActionError = "completed", ""
 		}
 	})
-	if errors.Is(runErr, errProAutoFinalStepPaused) {
+	if errors.Is(runErr, errProAutoFinalStepPaused) || errors.Is(runErr, errProQualityConnectionRecovered) {
 		return
 	}
 	status, message := "completed", "降智触发的空间合并已完成"

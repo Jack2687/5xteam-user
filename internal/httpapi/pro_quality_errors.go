@@ -52,6 +52,9 @@ func proQualityErrorObservation(state *model.ProQualityState, p model.MailAccoun
 		}
 		state.ErrorSample = sample
 	}
+	if restoreProQualityConnection(state, q, sample, now) {
+		return false
+	}
 	if q.ErrorFailureLimit < 1 || state.ErrorFailures < q.ErrorFailureLimit {
 		return false
 	}

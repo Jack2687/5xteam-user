@@ -100,6 +100,11 @@ func (c *Client) ProbeQuality(ctx context.Context, s model.Sub2Settings, passwor
 // Only HTTPStatus from a parsed upstream SSE error is evidence; an admin API
 // authentication failure is returned as an error by probeAccount.
 func (c *Client) ProbeDeletion(ctx context.Context, s model.Sub2Settings, password string, id int64) (QualityProbeResult, error) {
+	return c.ProbeConnection(ctx, s, password, id)
+}
+
+// ProbeConnection runs the ordinary/original account test shown in the Sub2 UI.
+func (c *Client) ProbeConnection(ctx context.Context, s model.Sub2Settings, password string, id int64) (QualityProbeResult, error) {
 	return c.probeAccount(ctx, s, password, id, model.QualitySettings{
 		Model: "gpt-6.1-sol", Prompt: "hi", Mode: "time", TimeoutSeconds: 45,
 	}, map[string]any{"mode": "default", "endpoint": "original"})
