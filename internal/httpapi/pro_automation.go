@@ -22,11 +22,14 @@ import (
 )
 
 type proAutomationHooks struct {
-	Session   func(context.Context, string, func(string, map[string]any) (any, error)) error
-	Push      func(context.Context, string) (model.MailAccountProfile, error)
-	Quota     func(context.Context, string, bool) (model.MailAccountProfile, error)
-	Merge     func(context.Context, string) (model.MailAccountProfile, error)
-	PollDelay time.Duration
+	BeforePaymentReserve func()
+	PaymentReserved      func()
+	BeforePaymentSubmit  func()
+	Session              func(context.Context, string, func(string, map[string]any) (any, error)) error
+	Push                 func(context.Context, string) (model.MailAccountProfile, error)
+	Quota                func(context.Context, string, bool) (model.MailAccountProfile, error)
+	Merge                func(context.Context, string) (model.MailAccountProfile, error)
+	PollDelay            time.Duration
 }
 
 func (s *Server) proAutomationRunning(email string) bool {
@@ -700,26 +703,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 		}
 		order := gptpay.Order{Provider: cfg.Provider, Country: cfg.Country, CreditQuantity: cfg.CreditQuantity, ID: p.ProAuto.PaymentOrderID(), Email: email, CardID: card.ID, CardName: card.Name, CardLast4: card.Last4, PlanCode: cfg.PlanCode, Status: "submitting", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 		snap := gptpay.NewSnapshot(cfg, key, secret, session)
-		// Reserve the payment atomically before attaching its stable ID. A crash
-		// between these writes still leaves an active order, preventing repayment.
-		if err = s.store.CreateGPTPayOrder(order, snap); err != nil {
-			return nil, err
-		}
-		if _, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
-			p.ProAuto.OrderID = order.ID
-		}); err != nil {
-			return nil, err
-		}
-		if err = s.autoProUpdate(email, "recharge", "running", "提交 GPTPay 开通订单，原登录会话保持中"); err != nil {
-			return nil, err
-		}
-		if err = ctx.Err(); err != nil {
-			return nil, err
-		}
-		// Only a newly reserved order reaches this boundary. Paid recovery and
-		// repeated RPCs cannot send another start notice or create a payment.
-		s.queueNotification("pro_start", "Pro 全自动开始开通", "账号："+email+"\n套餐："+order.PlanCode+"\n已完成登录，开始提交开通订单"+s.proCardProviderNotice(order.CardID))
-		order, err = s.submitGPTPayOrder(ctx, order, snap)
+		order, err = s.submitProAutoPayment(ctx, p.ProAuto, order, snap)
 		if err != nil {
 			return nil, err
 		}

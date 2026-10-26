@@ -415,9 +415,18 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, 200, order, "")
 }
 func (s *Server) submitGPTPayOrder(ctx context.Context, order gptpay.Order, snapshot gptpay.Snapshot) (gptpay.Order, error) {
+	return s.submitGPTPayOrderWithAdmission(ctx, order, snapshot, nil)
+}
+
+func (s *Server) submitGPTPayOrderWithAdmission(ctx context.Context, order gptpay.Order, snapshot gptpay.Snapshot, admit func() error) (gptpay.Order, error) {
 	s.updateProPaymentStage(order)
 	ctx, cancel := context.WithTimeout(ctx, 50*time.Second)
 	defer cancel()
+	if admit != nil {
+		if err := admit(); err != nil {
+			return order, err
+		}
+	}
 	remote, rid, err := s.gptPayClient().Create(ctx, snapshot, order.ID)
 	order.RequestID = rid
 	order.UpdatedAt = time.Now()

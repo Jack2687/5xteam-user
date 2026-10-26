@@ -379,6 +379,22 @@ func (s *Store) CreateGPTPayOrder(v gptpay.Order, snapshot gptpay.Snapshot) erro
 	return tx.Commit()
 }
 func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
+	return s.updateGPTPayOrder(v, nil)
+}
+
+// Call only for an order created by the current account-locked worker before
+// it enters the supplier submission call. Never use this to sweep old orders.
+func (s *Store) FailUnsubmittedGPTPayOrder(expected gptpay.Order) (gptpay.Order, error) {
+	v := expected
+	if expected.Status != "submitting" || expected.RequestID != "" || mustJSON(expected.Remote) != mustJSON(gptpay.RemoteOrder{}) || expected.SucceededAt != nil || expected.OccupancyResolution != nil {
+		return v, fmt.Errorf("订单不是本轮尚未提交的初始订单")
+	}
+	v.Status = "failed"
+	v.Error = "本地订单在提交付款前已中止，未向供应商发起开通请求"
+	return v, s.updateGPTPayOrder(v, &expected)
+}
+
+func (s *Store) updateGPTPayOrder(v gptpay.Order, unsubmitted *gptpay.Order) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v.UpdatedAt = time.Now()
@@ -397,6 +413,11 @@ func (s *Store) UpdateGPTPayOrder(v gptpay.Order) error {
 	var current gptpay.Order
 	if err = json.Unmarshal([]byte(currentRaw), &current); err != nil {
 		return err
+	}
+	// Compare the whole initial record inside the transaction. Any intervening
+	// response, reconciliation or status write makes automatic cleanup unsafe.
+	if unsubmitted != nil && mustJSON(current) != mustJSON(*unsubmitted) {
+		return fmt.Errorf("订单已变化，保留原订单占用")
 	}
 	if current.OccupancyResolution != nil {
 		if v.OccupancyResolution == nil || v.Status != current.Status || !v.OccupancyResolution.At.Equal(current.OccupancyResolution.At) {
