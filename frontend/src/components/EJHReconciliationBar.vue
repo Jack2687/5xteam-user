@@ -12,7 +12,7 @@ const state=computed(()=>props.masked?'unknown':report.value.state)
  <section class="reconcile-bar" :class="state" aria-label="资金核对">
   <div class="reconcile-status"><span class="status-dot"></span><div><strong>资金核对 · {{masked?'已关闭':report.label}}</strong><small>按最近查询余额 · 含估算 · ≤ 1 USD 为小额差异</small></div></div>
   <div class="reconcile-values"><div><span>账面差额</span><b>{{display(value.gap??'—')}} <em>USD</em></b><small>{{display(usdToR(value.gap)??'—')}} R</small></div><div><span>其中未销卡待补回</span><b>{{display(value.closurePending??'—')}} <em>USD</em></b><small>不计成本</small></div><div><span>其余待核对</span><b>{{display(value.unexplained??'—')}} <em>USD</em></b><small>未认定为损失</small></div></div>
-  <p v-if="!masked&&value.gap!==null">充值 <b>{{display(value.gross)}}</b> − 余额及在途 <b>{{display(value.assets)}}</b> − 总成本 <b>{{display(value.earnings.costUSD)}}</b><template v-if="value.externalTransfer!=='0.00'"> − 平台外转出 <b>{{display(value.externalTransfer??'—')}}</b></template><template v-if="value.paymentOnly.amount"> − 只付款支出 <b>{{(value.paymentOnly.amount/100).toFixed(2)}}</b></template> ＝ 差额 <b>{{display(value.gap)}}</b> USD</p>
+  <details v-if="!masked&&value.gap!==null"><summary>核对明细与计算方式</summary><p>充值 <b>{{display(value.gross)}}</b> − 余额及在途 <b>{{display(value.assets)}}</b> − 总成本 <b>{{display(value.earnings.costUSD)}}</b><template v-if="value.externalTransfer!=='0.00'"> − 平台外转出 <b>{{display(value.externalTransfer??'—')}}</b></template><template v-if="value.paymentOnly.amount"> − 只付款支出 <b>{{(value.paymentOnly.amount/100).toFixed(2)}}</b></template> ＝ 差额 <b>{{display(value.gap)}}</b> USD</p></details>
   <p v-else-if="!masked">{{display(value.lossReasons.join('；')||'部分费用待核实，暂不能核对总账。')}}</p>
  </section>
 </template>
@@ -21,4 +21,8 @@ const state=computed(()=>props.masked?'unknown':report.value.state)
 </style>
 <style scoped>
 .reconcile-bar.small{color:var(--green-strong);background:var(--green-bg);border-color:var(--line)}.small .status-dot{background:var(--green-strong)}.reconcile-bar.stale{color:var(--muted);background:var(--bg);border-color:var(--line)}
+</style>
+
+<style scoped>
+.reconcile-bar{padding:12px 16px;gap:10px 24px}.reconcile-values b{font-size:20px;margin:3px 0}.reconcile-bar details{flex-basis:100%;font-size:11px}.reconcile-bar summary{cursor:pointer;width:fit-content}.reconcile-bar details p{margin-top:10px}
 </style>

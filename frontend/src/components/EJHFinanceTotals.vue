@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { financeOverview } from '../ejh-finance'
-const props=defineProps({data:{type:Object,required:true},masked:Boolean})
+const props=defineProps({data:{type:Object,required:true},masked:Boolean,collapsible:Boolean})
 const display=value=>props.masked?'---':value
 const totals=computed(()=>financeOverview(props.data))
 const earnings=computed(()=>totals.value.earnings)
@@ -13,6 +13,7 @@ const earnings=computed(()=>totals.value.earnings)
    <div><span>总成本 <small v-if="!masked&&(earnings.estimated)">估算</small></span><strong>{{display(earnings.costR??'—')}} <em>R</em></strong><small>{{display(earnings.costUSD??'—')}} USD</small><small>开卡费 + 充值手续费 + 撤销费 + 清算 + 退款费 + API 收费</small><small v-if="!masked&&(earnings.costIncomplete)" class="warning">已知 {{display(earnings.knownCostR??'—')}} R · {{display(earnings.knownCostUSD??'—')}} USD · 部分费用待核实</small></div>
    <div class="profit"><span>净利润 <small v-if="!masked&&(earnings.estimated)">估算</small></span><strong :class="{negative:earnings.profitR?.startsWith('-')}">{{display(earnings.profitR??'—')}} <em>R</em></strong><small>消费收益 − 总成本</small><small v-if="!masked&&(earnings.incomplete)" class="warning">数据未完整，暂不计算净利润</small></div>
   </div>
+  <details class="finance-details" :open="!collapsible"><summary><span>费用与收支明细</span><small>API 收费、开卡费、手续费、清算与资金核对</small><span class="expand-label"></span></summary>
   <div class="finance-fees"><div><span>API 收费</span><strong>{{display(earnings.merchantR)}} <em>R</em></strong><small>{{display(totals.merchantFee)}} USD · 商户最终成功后记账</small></div>
    <div><span>开卡费</span><strong>{{display(earnings.openingR)}} <em>R</em></strong><small>{{display(totals.openingFee)}} USDT · {{display(totals.openingCount)}} 张 × 0.50（含已销卡）</small></div>
    <div><span>充值手续费</span><strong>{{display(earnings.rechargeR??'—')}} <em>R</em></strong><small>{{display(totals.depositFee??'—')}} USD · 充值总额 × 1%</small></div>
@@ -25,9 +26,14 @@ const earnings=computed(()=>totals.value.earnings)
   </div>
   <div class="finance-cash"><span>实际到账 <b>{{display(totals.netR??'—')}} R</b> <small>（{{display(totals.net??'—')}} USD）</small></span><span :title="totals.lossReasons.join('；')">实际损耗（资金核对）<b>{{display(totals.lossR??'—')}} R</b> <small>（{{display(totals.loss??'—')}} USD）</small></span><small>1 USD = 6.7 R · 开卡 USDT 按 1:1 USD 记账</small><small v-if="!masked&&(totals.lossReasons.length)" class="warning">{{display(totals.lossReasons.join('；'))}}</small><small v-if="!masked&&(totals.stale)" class="warning">{{display(totals.stale)}} 张卡使用上次余额</small></div>
   <details v-if="!masked&&(totals.gap!==null)" class="finance-reconcile"><summary>成本之外的资金差额：{{display(totals.gap)}} USD（待核对）</summary><p>差额＝实际损耗 − 开卡费 − 授权撤销费 − 清算成本 − 清算退款手续费。含未销卡补回差额与汇率估算差异，不作为确定费用再次扣减利润。</p></details>
+  </details>
  </div>
 </template>
 <style scoped>
 .finance-totals{border-top:1px solid var(--line);font-variant-numeric:tabular-nums}.finance-main,.finance-fees{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.finance-main>div,.finance-fees>div{padding:18px 20px;min-width:0}.finance-main>div+div,.finance-fees>div+div{border-left:1px solid var(--line)}.finance-totals span{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:12px}.finance-totals strong{display:block;font-size:28px;font-weight:600;margin:10px 0 6px;overflow-wrap:anywhere}.finance-totals em{font-size:11px;font-style:normal;color:var(--muted);font-weight:400}.finance-totals small{display:block;color:var(--muted);font-size:10px;line-height:1.7}.finance-main .profit{background:var(--green-bg)}.profit strong{color:var(--green-strong)}.profit .negative{color:var(--red)}.finance-fees{border-top:1px solid var(--line)}.finance-fees strong{font-size:20px}.finance-cash{display:flex;flex-wrap:wrap;gap:10px 24px;padding:12px 20px;border-top:1px solid var(--line);background:var(--bg)}.finance-cash span{flex-wrap:wrap;font-size:11px;gap:4px}.finance-cash b{color:var(--text)}.finance-totals .warning{color:var(--red)}@media(max-width:640px){.finance-main,.finance-fees{grid-template-columns:1fr}.finance-main>div+div,.finance-fees>div+div{border-left:0;border-top:1px solid var(--line)}}
 .finance-extra{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line)}.finance-extra>div{padding:16px 20px}.finance-extra>div+div{border-left:1px solid var(--line)}.finance-extra strong{font-size:20px}@media(max-width:640px){.finance-extra{grid-template-columns:1fr}.finance-extra>div+div{border-left:0;border-top:1px solid var(--line)}}.finance-reconcile{border-top:1px solid var(--line);padding:12px 20px;font-size:11px;color:var(--muted);line-height:1.7}.finance-reconcile summary{cursor:pointer}.finance-reconcile p{margin:6px 0}
+</style>
+
+<style scoped>
+.finance-details>summary{display:flex;align-items:center;gap:12px;padding:12px 20px;border-top:1px solid var(--line);cursor:pointer;list-style:none}.finance-details>summary::-webkit-details-marker{display:none}.finance-details>summary:hover{background:var(--bg)}.finance-details .expand-label{margin-left:auto;white-space:nowrap;color:var(--green-strong)}.expand-label::after{content:'展开 ▾'}.finance-details[open]>summary .expand-label::after{content:'收起 ▴'}.finance-main>div{padding:16px 20px}.finance-main strong{font-size:24px}.finance-fees{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:1000px){.finance-fees{grid-template-columns:repeat(2,minmax(0,1fr))}.finance-fees>div:nth-child(3){border-left:0}.finance-fees>div:nth-child(n+3){border-top:1px solid var(--line)}}@media(max-width:640px){.finance-details>summary>small{display:none}.finance-details>summary{gap:8px}.finance-fees{grid-template-columns:1fr}}
 </style>
