@@ -141,7 +141,11 @@ func (s *Store) NexovccCached(kind string, value any) error {
 func (s *Store) NexovccCards() ([]nexovcc.Card, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, e := s.db.Query(`SELECT profile FROM nexovcc_cards ORDER BY json_extract(profile,'$.created_at') DESC,id DESC`)
+	return nexovccCardsQuery(s.db)
+}
+
+func nexovccCardsQuery(q nexovccCaseQuery) ([]nexovcc.Card, error) {
+	rows, e := q.Query(`SELECT profile FROM nexovcc_cards ORDER BY json_extract(profile,'$.created_at') DESC,id DESC`)
 	if e != nil {
 		return nil, e
 	}
@@ -188,10 +192,19 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 	if e = lockProCardAdmission(tx); e != nil {
 		return c, e
 	}
+	c, e = s.saveNexovccCardTx(tx, c, private, false)
+	if e != nil {
+		return c, e
+	}
+	return c, tx.Commit()
+}
+
+func (s *Store) saveNexovccCardTx(tx *sql.Tx, c nexovcc.Card, private *nexovcc.PrivateCard, clearError bool) (nexovcc.Card, error) {
+	c.ID = nexovcc.CardID(c.Serial)
 	var raw string
 	var oldKey sql.NullString
 	var old nexovcc.Card
-	e = tx.QueryRow(`SELECT profile,card_key FROM nexovcc_cards WHERE id=?`, c.ID).Scan(&raw, &oldKey)
+	e := tx.QueryRow(`SELECT profile,card_key FROM nexovcc_cards WHERE id=?`, c.ID).Scan(&raw, &oldKey)
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return c, e
 	}
@@ -218,7 +231,7 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 		if c.ProductID == "" {
 			c.ProductID = old.ProductID
 		}
-		if c.Error == "" && private == nil {
+		if c.Error == "" && private == nil && !clearError {
 			c.Error = old.Error
 		}
 		if c.CreatedAt.IsZero() {
@@ -317,7 +330,7 @@ func (s *Store) SaveNexovccCard(c nexovcc.Card, private *nexovcc.PrivateCard) (n
 	if e != nil {
 		return c, e
 	}
-	return c, tx.Commit()
+	return c, nil
 }
 
 // Save only holder fields so a manual copy cannot overwrite concurrent balance,

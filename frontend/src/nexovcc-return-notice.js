@@ -17,9 +17,6 @@ export function cardReturnNotice(data, row) {
  if (!amount(card.balance) || !Number.isFinite(balanceAt) || !Number.isFinite(ledgerAt)) {
   return {text:'流水待同步', detail:'余额或本卡流水不完整，回款状态仍以对应退款流水为准。'}
  }
- if (ledgerAt < balanceAt) {
-  return {text:'余额已更新，流水待同步', detail:'余额比本卡流水更新；余额变化不代表该笔回款已经确认。'}
- }
  const serial = card.serial_no
  const funds = (finance.funds || []).filter(f => f.serial_no === serial)
  const groups = (data.groups || []).filter(g => g.serial_no === serial)
@@ -39,6 +36,9 @@ export function cardReturnNotice(data, row) {
  const netPaid = groups.reduce((sum,g) => sum+cents(g.payment)-cents(g.returned),0)
  const expected = funding-netPaid, excess = cents(card.balance)-expected
  if (excess <= 1) return null // One cent of rounding alone is not a return signal.
+ if (ledgerAt < balanceAt) {
+  return {text:'余额已更新，流水待同步', detail:'余额比本卡流水更新；余额变化不代表该笔回款已经确认。'}
+ }
  return {
   text:'余额高于流水，回款待确认',
   detail:`卡余额 ${money(cents(card.balance))} USD，现有流水推算 ${money(expected)} USD，相差 ${money(excess)} USD。仅提示本卡数据差异，不认定某笔到账；仍等待对应撤销 / 退款流水。`,

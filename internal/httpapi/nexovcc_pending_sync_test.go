@@ -114,9 +114,21 @@ func TestNexovccPendingRefreshScopes(t *testing.T) {
 				t.Fatal("wrong ledger request count", calls)
 			}
 			pending, _ := s.store.NexovccCard(cards["pending"].ID)
-			if mode == "pending_sync" || mode == "failed_pending" {
-				if pending.Balance != "10.00" || pending.Remark != "fresh pending" || !pending.NormalPending || calls["/api/card/getUserCardDetail"] != 1 || calls["/api/card/getUserCardBalance"] != 1 {
-					t.Fatal("pending card was not refreshed", pending, calls)
+			if want == "pending" {
+				wantBalance := "10.00"
+				if mode == "failed_pending" {
+					wantBalance = cards["pending"].Balance
+				}
+				if pending.Balance != wantBalance || !pending.NormalPending || calls["/api/card/getUserCardBalance"] != 1 {
+					t.Fatal("wrong pending snapshot", pending, calls)
+				}
+				if mode == "pending_sync" || mode == "failed_pending" {
+					if pending.Remark != "fresh pending" || calls["/api/card/getUserCardDetail"] != 1 {
+						t.Fatal("pending metadata was not refreshed", pending, calls)
+					}
+				}
+				if mode == "failed_pending" && (!pending.BalanceAt.Equal(oldAt) || pending.Error == "") {
+					t.Fatal("partial finance published", pending)
 				}
 			} else if !reflect.DeepEqual(pending, cards["pending"]) {
 				t.Fatal("pending snapshot changed during unrelated refresh")

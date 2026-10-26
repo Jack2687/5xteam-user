@@ -46,6 +46,18 @@ func TestNexovccTransactionActionsQueryOnlySelectedCards(t *testing.T) {
 				if r.Path == "/api/login" || r.Path == "/api/verifyGoogleCode" {
 					return base(ctx, r)
 				}
+				if r.Path == "/api/card/getUserCardBalance" {
+					selected := false
+					for i, c := range cards {
+						if c.Serial == r.Body["serial_no"] && wanted[pans[i]] && c.Status != "4" {
+							selected = true
+						}
+					}
+					if !selected {
+						t.Fatal("balance query expanded scope", r.Body["serial_no"])
+					}
+					return base(ctx, r)
+				}
 				number, _ := r.Body["card_no"].(string)
 				if !wanted[number] || (r.Path != "/api/findLogCardTrades" && r.Path != "/api/findLogWebFunds") {
 					t.Errorf("transaction action expanded its scope: %s", r.Path)

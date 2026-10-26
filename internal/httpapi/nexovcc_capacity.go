@@ -132,8 +132,8 @@ func (s *Server) oldestNexovccRecycleCandidateLocked(cards []nexovcc.Card, usedO
 }
 
 // Caller holds proCardAdmissionMu before nexovcc.mu, sharing the same lock order
-// as Pro card selection and reservation. Run only after a complete fresh sync.
-func (s *Server) autoRecycleNexovccLocked(ctx context.Context) error {
+// as Pro card selection and reservation. Run only with complete card evidence.
+func (s *Server) autoRecycleNexovccLocked(ctx context.Context, onlyCard ...string) error {
 	var lastCard time.Time
 	for {
 		if err := ctx.Err(); err != nil {
@@ -151,6 +151,9 @@ func (s *Server) autoRecycleNexovccLocked(ctx context.Context) error {
 			return err
 		}
 		for _, op := range ops {
+			if len(onlyCard) > 0 && op.CardID != onlyCard[0] {
+				continue
+			}
 			if op.CapacityRecycle && !op.Terminal() {
 				if err = s.waitNexovccCapacityCloseLocked(ctx, op); err != nil {
 					return err
@@ -173,7 +176,7 @@ func (s *Server) autoRecycleNexovccLocked(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if card == nil {
+		if card == nil || (len(onlyCard) > 0 && card.ID != onlyCard[0]) {
 			return nil // Wait for actual refunds; do not retire unused new cards.
 		}
 		if !lastCard.IsZero() {

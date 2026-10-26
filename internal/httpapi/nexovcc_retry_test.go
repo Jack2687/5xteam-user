@@ -87,7 +87,7 @@ func TestNexovccHTTPErrorFreezeDoesNotGuessUnverifiedStatus(t *testing.T) {
 	}
 }
 
-func TestNexovccHTTPErrorSyncStopsAfterExhaustion(t *testing.T) {
+func TestNexovccHTTPErrorSyncContinuesWithNextCard(t *testing.T) {
 	for _, status := range []int{500, 522} {
 		t.Run(fmt.Sprintf("HTTP%d", status), func(t *testing.T) {
 			s, _ := nexFixtureServer(t)
@@ -110,8 +110,8 @@ func TestNexovccHTTPErrorSyncStopsAfterExhaustion(t *testing.T) {
 				return base(ctx, r)
 			}
 			err := s.syncNexovccTransactionsLocked(nexovcc.WithImmediateRequests(context.Background()), "")
-			if nexovcc.RetryableHTTPStatus(err) != status || calls != 1 {
-				t.Fatal("sync kept sending requests after exhaustion", calls, err)
+			if nexovcc.RetryableHTTPStatus(err) != status || calls != 2 {
+				t.Fatal("failed card blocked the remaining card or retried beyond configured limit", calls, err)
 			}
 		})
 	}

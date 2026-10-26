@@ -225,6 +225,10 @@ const noSnapshot=structuredClone(returnData);delete noSnapshot.finance.card_at.c
 assert.equal(notice(noSnapshot).text,'流水待同步','never use another card\'s global refresh time')
 const normalBalance=structuredClone(returnData);normalBalance.cards[0].card.balance='28.18'
 assert.equal(notice(normalBalance),null)
+const unchangedNewBalance=structuredClone(normalBalance)
+unchangedNewBalance.finance.card_at={'return-card':new Date(now-3600000).toISOString()}
+unchangedNewBalance.finance.card_at[unchangedNewBalance.cards[0].card.serial_no]=new Date(now-3600000).toISOString()
+assert.equal(notice(unchangedNewBalance),null,'a newer balance timestamp without a financial discrepancy is not an alert')
 normalBalance.cards[0].card.balance='28.19';assert.equal(notice(normalBalance),null)
 const toppedUp=structuredClone(returnData)
 toppedUp.finance.funds.push({kind:4001,serial_no:'card4276',currency:'USD',amount:'-141.21',at:'2026-10-20T18:13:00+08:00'})

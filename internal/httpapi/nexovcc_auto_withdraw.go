@@ -36,7 +36,7 @@ func nexovccAutoWithdrawID(card nexovcc.Card, f nexovcc.Finance) string {
 // Runs on its own persisted schedule with both Pro admission and issuer mutexes
 // held. Select structural candidates locally, refresh stale same-card evidence,
 // then recheck live balance and admission before submitting. Withdrawal-only never freezes or deletes a card.
-func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
+func (s *Server) autoWithdrawNexovccLocked(ctx context.Context, onlyCard ...string) error {
 	cfg, _, err := s.store.NexovccSettings()
 	if err != nil || !cfg.Enabled || !cfg.AutoWithdrawEnabled {
 		return err
@@ -61,7 +61,11 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	waiting := nexovccWaitingReturnCards(cases)
 	sort.Slice(cards, func(i, j int) bool {
+		if waiting[cards[i].ID] != waiting[cards[j].ID] {
+			return waiting[cards[i].ID]
+		}
 		if cards[i].CreatedAt.Equal(cards[j].CreatedAt) {
 			return cards[i].ID < cards[j].ID
 		}
@@ -69,6 +73,9 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 	})
 	var last time.Time
 	for _, card := range cards {
+		if len(onlyCard) > 0 && card.ID != onlyCard[0] {
+			continue
+		}
 		if err = ctx.Err(); err != nil {
 			return err
 		}
@@ -106,23 +113,13 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 		// A recent successful ordinary sync can supply this evidence too.
 		freshAfter := time.Now().Add(-time.Duration(max(cfg.AutoWithdrawIntervalSeconds, 30)) * time.Second)
 		s.nexovccProgress("自动提现检查 · 更新尾号 "+card.Last4+" 余额与流水", 0, 3)
-		if card.BalanceAt.Before(freshAfter) || card.Error != "" {
-			card, e = s.refreshNexovccBalanceLocked(ctx, card.ID)
-			if e != nil {
-				return fmt.Errorf("提现前更新尾号 %s 余额：%w", card.Last4, e)
+		if card.BalanceAt.Before(freshAfter) || finance.CardSyncedAt(card.Serial).Before(freshAfter) || card.Error != "" {
+			if e = s.syncNexovccCardSnapshotLocked(ctx, card.ID); e != nil {
+				return fmt.Errorf("提现前更新尾号 %s 余额与流水：%w", card.Last4, e)
 			}
-		}
-		amount, e := nexovcc.Cents(card.Balance)
-		if e != nil || amount <= 100 || card.NormalPending || card.Status != "1" || card.Error != "" {
-			continue
-		}
-		at := finance.CardAt[card.Serial]
-		if finance.CardAt == nil {
-			at = finance.At
-		}
-		if at.Before(freshAfter) {
-			if e = s.syncNexovccCardFinanceLocked(ctx, card.ID); e != nil {
-				return fmt.Errorf("提现前更新尾号 %s 流水：%w", card.Last4, e)
+			card, e = s.store.NexovccCard(card.ID)
+			if e != nil {
+				return e
 			}
 			if e = s.store.NexovccCached("finance", &finance); e != nil {
 				return e
@@ -135,6 +132,10 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context) error {
 			if e != nil {
 				return e
 			}
+		}
+		amount, e := nexovcc.Cents(card.Balance)
+		if e != nil || amount <= 100 || card.NormalPending || card.Status != "1" || card.Error != "" {
+			continue
 		}
 		local, _, e = s.store.GPTPayCard(card.ID)
 		if e != nil {

@@ -139,8 +139,8 @@ func TestNexovccAutoWithdrawRefreshesStaleCandidates(t *testing.T) {
 					t.Fatal("ineligible card contacted supplier", reads)
 				}
 			}
-			if scenario == "one dollar" && ledgerReads != 0 {
-				t.Fatal("unnecessary ledgers for 1U")
+			if scenario == "one dollar" && ledgerReads != 1 {
+				t.Fatal("balance and ledger must be saved together even when no withdrawal is needed")
 			}
 			if wantWrites == 1 {
 				ops, err := s.store.NexovccOperations()

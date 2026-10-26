@@ -34,16 +34,16 @@ func (s *Server) syncNexovccPendingCardsLocked(ctx context.Context) error {
 			continue
 		}
 		s.nexovccProgress(fmt.Sprintf("刷新正常待定卡 %d/%d · 尾号 %s · 资料与余额", i+1, len(cards), card.Last4), i, len(cards))
-		_, e = s.refreshNexovccLocked(ctx, card.ID, card.Serial)
+		_, e = s.refreshNexovccDetailsLocked(ctx, card.ID, card.Serial, false)
 		if e != nil {
-			if ctx.Err() != nil || nexovcc.RetryableHTTPStatus(e) != 0 {
+			if ctx.Err() != nil {
 				return fmt.Errorf("尾号 %s：%w", card.Last4, e)
 			}
 			failures = append(failures, fmt.Errorf("尾号 %s 资料或余额：%w", card.Last4, e))
 		}
 		s.nexovccProgress(fmt.Sprintf("刷新正常待定卡 %d/%d · 尾号 %s · 交易与资金明细", i+1, len(cards), card.Last4), i, len(cards))
 		if e = s.syncNexovccCardFinanceLocked(ctx, card.ID); e != nil {
-			if ctx.Err() != nil || nexovcc.RetryableHTTPStatus(e) != 0 {
+			if ctx.Err() != nil {
 				return fmt.Errorf("尾号 %s：%w", card.Last4, e)
 			}
 			failures = append(failures, fmt.Errorf("尾号 %s 交易明细：%w", card.Last4, e))

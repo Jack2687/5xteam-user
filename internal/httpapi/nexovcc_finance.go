@@ -34,7 +34,7 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 		}
 		_ = s.store.NexovccCache("finance_error", message)
 	}()
-	c, cfg, err := s.nexovccClientLocked()
+	_, cfg, err := s.nexovccClientLocked()
 	if err != nil {
 		return err
 	}
@@ -65,9 +65,19 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 	}
 	skipped := len(cards) - len(selected)
 	cards = selected
-	// Resume with the least recently refreshed card after an opening preempts
-	// a long scan; already completed cards must not starve the remaining ones.
-	sort.SliceStable(cards, func(i, j int) bool { return f.CardAt[cards[i].Serial].Before(f.CardAt[cards[j].Serial]) })
+	cases, err := s.store.NexovccCases()
+	if err != nil {
+		return err
+	}
+	waiting := nexovccWaitingReturnCards(cases)
+	// Requested returns come first. Within each priority use the oldest card
+	// snapshot, so a scan interrupted by Pro work resumes with unfinished cards.
+	sort.SliceStable(cards, func(i, j int) bool {
+		if waiting[cards[i].ID] != waiting[cards[j].ID] {
+			return waiting[cards[i].ID]
+		}
+		return f.CardSyncedAt(cards[i].Serial).Before(f.CardSyncedAt(cards[j].Serial))
+	})
 	var failures []error
 	if account && (forceAccount || time.Since(f.AccountAt) >= time.Duration(cfg.WithSyncDefaults().AccountSyncSeconds)*time.Second) {
 		cardAt := f.CardAt
@@ -85,29 +95,28 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		label := "同步正常卡交易明细"
+		current, readErr := s.store.NexovccCard(card.ID)
+		if readErr != nil {
+			return readErr
+		}
+		if cardID == "" && (current.Status == "4" || current.NormalPending != (category == "normal_pending")) {
+			continue
+		}
+		label := "同步正常卡余额与流水"
 		if category == "normal_pending" {
-			label = "同步正常待定卡交易明细"
+			label = "同步正常待定卡余额与流水"
 		}
 		if cardID != "" {
-			label = "同步本卡交易明细"
+			label = "同步本卡余额与流水"
 		}
 		s.nexovccProgress(fmt.Sprintf("%s %d/%d · 尾号 %s", label, i+1, len(cards), card.Last4), i, len(cards))
-		number, e := s.nexovccFinanceNumberLocked(card)
+		e := s.syncNexovccCardSnapshotLocked(ctx, card.ID)
 		if e == nil {
-			var fresh nexovcc.Finance
-			fresh, e = c.ReadCardFinance(ctx, number, card.Serial)
-			if e == nil {
-				next := nexovcc.MergeCardFinance(f, fresh, card.Serial)
-				e = s.store.SaveNexovccFinance(next)
-				if e == nil {
-					f = next
-				}
-			}
+			e = s.afterNexovccCardSnapshotLocked(ctx, card.ID)
 		}
 		if e != nil {
-			if nexovcc.RetryableHTTPStatus(e) != 0 {
-				return fmt.Errorf("尾号 %s：%w", card.Last4, e)
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 			failures = append(failures, fmt.Errorf("尾号 %s：%w", card.Last4, e))
 		}
@@ -121,16 +130,12 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 	if err = s.store.CaptureNexovccRevenue(); err != nil {
 		return err
 	}
-	f.At = time.Now()
-	if err = s.store.SaveNexovccFinance(f); err != nil {
-		return err
-	}
-	message := fmt.Sprintf("已同步 %d 张正常卡交易明细，%d 张正常待定或销卡保留已有数据", len(cards), skipped)
+	message := fmt.Sprintf("已同步 %d 张正常卡余额与流水，%d 张正常待定或销卡保留已有数据", len(cards), skipped)
 	if category == "normal_pending" {
-		message = fmt.Sprintf("已同步 %d 张正常待定卡交易与资金明细", len(cards))
+		message = fmt.Sprintf("已同步 %d 张正常待定卡余额、交易与资金明细", len(cards))
 	}
 	if cardID != "" {
-		message = "本卡交易明细已同步"
+		message = "本卡余额与交易明细已同步"
 	}
 	s.nexovccProgress(message, len(cards), len(cards))
 	return nil
@@ -149,6 +154,17 @@ func (s *Server) syncNexovccAccountLocked(ctx context.Context) error {
 	since := f.AccountAt
 	if since.IsZero() && f.CardAt == nil {
 		since = f.At
+	}
+	// Account reads must not advance legacy per-card freshness.
+	if f.CardAt == nil {
+		cards, e := s.store.NexovccCards()
+		if e != nil {
+			return e
+		}
+		f.CardAt = map[string]time.Time{}
+		for _, card := range cards {
+			f.CardAt[card.Serial] = f.At
+		}
 	}
 	if !since.IsZero() {
 		since = since.Add(-72 * time.Hour).Truncate(time.Second)
@@ -181,6 +197,9 @@ func (s *Server) syncNexovccCardFundsLocked(ctx context.Context, id string) erro
 }
 
 func (s *Server) syncNexovccCardLedgerLocked(ctx context.Context, id string, fundsOnly bool) error {
+	if !fundsOnly {
+		return s.syncNexovccCardSnapshotLocked(ctx, id)
+	}
 	card, err := s.store.NexovccCard(id)
 	if err != nil {
 		return err
@@ -193,12 +212,7 @@ func (s *Server) syncNexovccCardLedgerLocked(ctx context.Context, id string, fun
 	if err != nil {
 		return err
 	}
-	var fresh nexovcc.Finance
-	if fundsOnly {
-		fresh, err = client.ReadCardFunds(ctx, number, card.Serial)
-	} else {
-		fresh, err = client.ReadCardFinance(ctx, number, card.Serial)
-	}
+	fresh, err := client.ReadCardFunds(ctx, number, card.Serial)
 	if err != nil {
 		return err
 	}
@@ -206,22 +220,7 @@ func (s *Server) syncNexovccCardLedgerLocked(ctx context.Context, id string, fun
 	if err = s.store.NexovccCached("finance", &previous); err != nil {
 		return err
 	}
-	if fundsOnly {
-		return s.store.SaveNexovccFinance(nexovcc.MergeCardFunds(previous, fresh, card.Serial))
-	}
-	// Preserve legacy timestamps for cards excluded from this manual refresh.
-	// Updating the aggregate timestamp must not mark other cards as refreshed.
-	if previous.CardAt == nil && !previous.At.IsZero() {
-		cards, err := s.store.NexovccCards()
-		if err != nil {
-			return err
-		}
-		previous.CardAt = map[string]time.Time{}
-		for _, other := range cards {
-			previous.CardAt[other.Serial] = previous.At
-		}
-	}
-	return s.store.SaveNexovccFinance(nexovcc.MergeCardFinance(previous, fresh, card.Serial))
+	return s.store.SaveNexovccFinance(nexovcc.MergeCardFunds(previous, fresh, card.Serial))
 }
 
 func (s *Server) nexovccCaseMatch(w http.ResponseWriter, r *http.Request) {

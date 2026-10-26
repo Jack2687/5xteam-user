@@ -211,7 +211,7 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取环球停止状态失败")
 		return
 	}
-	cards, e := s.store.NexovccCards()
+	cards, finance, cases, groups, e := s.store.NexovccFinancialSnapshot()
 	if e != nil {
 		writeAPI(w, 500, nil, "读取环球卡片失败")
 		return
@@ -226,11 +226,6 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取环球操作失败")
 		return
 	}
-	cases, e := s.store.NexovccCases()
-	if e != nil {
-		writeAPI(w, 500, nil, "读取环球账号记录失败")
-		return
-	}
 	var balance nexovcc.Balance
 	products := []nexovcc.Product{}
 	if e = s.store.NexovccCached("balance", &balance); e != nil {
@@ -241,20 +236,10 @@ func (s *Server) nexovccDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取产品缓存失败")
 		return
 	}
-	var finance nexovcc.Finance
 	var financeError string
-	if e = s.store.NexovccCached("finance", &finance); e != nil {
-		writeAPI(w, 500, nil, "读取环球财务缓存失败")
-		return
-	}
 	_ = s.store.NexovccCached("finance_error", &financeError)
 	if financeError == context.Canceled.Error() {
 		financeError = ""
-	}
-	groups, e := s.store.NexovccTradeGroups(finance)
-	if e != nil {
-		writeAPI(w, 500, nil, "读取交易标记失败")
-		return
 	}
 	cfg, _, e := s.store.NexovccSettings()
 	if e != nil {
@@ -508,26 +493,42 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 	}
 	scheduled, _ := ctx.Value(nexovccScheduledSyncKey{}).(bool)
 	force := len(forceAccount) > 0 && forceAccount[0]
+	cfg, _, err := s.store.NexovccSettings()
+	if err != nil {
+		return err
+	}
+	clocks, err := s.nexovccSyncParts(cfg)
+	if err != nil {
+		return err
+	}
+	financeDue := !scheduled || !time.Now().Before(clocks["transactions"].NextRefresh)
+	// During a financial sweep, load missing details with that card's complete
+	// snapshot so unrelated unimported cards cannot delay requested refunds.
+	ctx = context.WithValue(ctx, nexovccDeferCardDetailsKey{}, financeDue)
 	parts := []struct {
 		key   string
 		force bool
 		run   func(context.Context) error
 	}{
 		{"balance", !scheduled, s.nexovccBalanceLocked},
-		{"cards", !scheduled, s.syncNexovccCardsLocked},
+		{"cards", financeDue, s.syncNexovccCardsLocked},
 		{"transactions", !scheduled, func(ctx context.Context) error { return s.syncNexovccTransactionsLocked(ctx, "") }},
 		{"account", force, s.syncNexovccAccountLocked},
 		{"products", force, func(ctx context.Context) error { _, err := s.syncNexovccProductsLocked(ctx); return err }},
 	}
+	var failures []error
 	for _, part := range parts {
 		if err = s.runNexovccSyncPartLocked(ctx, part.key, part.force, part.run); err != nil {
 			if (part.key == "transactions" || part.key == "account") && ctx.Err() == nil {
 				_ = s.store.NexovccCache("finance_error", err.Error())
 			}
-			return err
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			failures = append(failures, err)
 		}
 	}
-	cfg, _, err := s.store.NexovccSettings()
+	cfg, _, err = s.store.NexovccSettings()
 	if err != nil {
 		return err
 	}
@@ -568,7 +569,7 @@ func (s *Server) fetchNexovccLocked(parent context.Context, forceAccount ...bool
 			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 func (s *Server) syncNexovccCardsLocked(ctx context.Context) error {
 	c, _, e := s.nexovccClientLocked()
@@ -590,13 +591,7 @@ func (s *Server) syncNexovccCardsLocked(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	failures := 0
-	normalCount, normalDone := 0, 0
-	for _, r := range rows {
-		if nexovcc.String(r["status"]) != "4" && !pending[nexovcc.String(r["serial_no"])] {
-			normalCount++
-		}
-	}
+	var failures []error
 	for _, r := range rows {
 		if e = ctx.Err(); e != nil {
 			return e
@@ -616,6 +611,7 @@ func (s *Server) syncNexovccCardsLocked(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
+		card.Balance, card.BalanceAt = "", time.Time{}
 		card, e = s.store.SaveNexovccCard(card, nil)
 		if e != nil {
 			return e
@@ -623,37 +619,19 @@ func (s *Server) syncNexovccCardsLocked(ctx context.Context) error {
 		if card.Status == "4" || card.NormalPending {
 			continue
 		}
-		normalDone++
-		s.nexovccProgress(fmt.Sprintf("同步正常卡余额 %d/%d · 尾号 %s", normalDone, normalCount, card.Last4), normalDone-1, normalCount)
-		if !card.Imported || card.Error != "" {
-			if _, e = s.refreshNexovccLocked(ctx, card.ID, ""); e != nil {
-				if nexovcc.RetryableHTTPStatus(e) != 0 {
-					return e
+		deferred, _ := ctx.Value(nexovccDeferCardDetailsKey{}).(bool)
+		if !deferred && nexovccNeedsCardDetails(card) {
+			if _, e = s.refreshNexovccDetailsLocked(ctx, card.ID, "", false); e != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
 				}
-				failures++
-			}
-		} else {
-			// The list often omits balance. Imported cards still need the live
-			// balance endpoint after payments/refunds; an import is not a refresh.
-			updated, balanceErr := s.readNexovccCardBalanceLocked(ctx, card)
-			if balanceErr != nil {
-				if nexovcc.RetryableHTTPStatus(balanceErr) != 0 {
-					return balanceErr
-				}
-				updated.Error = "余额同步失败：" + balanceErr.Error()
-				failures++
-			}
-			if _, e = s.store.SaveNexovccCard(updated, nil); e != nil {
-				return e
+				failures = append(failures, fmt.Errorf("尾号 %s 资料：%w", card.Last4, e))
 			}
 		}
 	}
-
-	if failures > 0 {
-		return fmt.Errorf("%d 张卡余额或资料同步失败，请稍后重新同步", failures)
-	}
-	return nil
+	return errors.Join(failures...)
 }
+
 func (s *Server) refreshNexovccLocked(ctx context.Context, id, serial string) (nexovcc.Card, error) {
 	return s.refreshNexovccDetailsLocked(ctx, id, serial, true)
 }
@@ -701,6 +679,9 @@ func (s *Server) refreshNexovccDetailsLocked(ctx context.Context, id, serial str
 			if err != nil {
 				return card, err
 			}
+			if !withBalance {
+				card.Balance, card.BalanceAt = "", time.Time{}
+			}
 			return s.store.SaveNexovccCard(card, nil)
 		}
 		return nexovcc.Card{}, fmt.Errorf("卡片详情暂未返回，等待卡列表同步状态")
@@ -718,6 +699,9 @@ func (s *Server) refreshNexovccDetailsLocked(ctx context.Context, id, serial str
 	card, e := nexovcc.CardFrom(m)
 	if e != nil {
 		return card, e
+	}
+	if !withBalance {
+		card.Balance, card.BalanceAt = "", time.Time{}
 	}
 	private, pe := nexovcc.PrivateFrom(m)
 	if card.Status == "4" {

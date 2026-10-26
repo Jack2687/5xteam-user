@@ -169,8 +169,8 @@ func Normalize(s Settings) (Settings, error) {
 		name    string
 		seconds int
 	}{
-		{"主账户余额", s.BalanceSyncSeconds}, {"卡片资料与余额", s.CardSyncSeconds},
-		{"卡片交易与资金流水", s.TransactionSyncSeconds}, {"充值记录与每日汇总", s.AccountSyncSeconds}, {"产品与 BIN", s.ProductSyncSeconds},
+		{"主账户余额", s.BalanceSyncSeconds}, {"卡片资料与状态", s.CardSyncSeconds},
+		{"卡片余额与交易流水", s.TransactionSyncSeconds}, {"充值记录与每日汇总", s.AccountSyncSeconds}, {"产品与 BIN", s.ProductSyncSeconds},
 	} {
 		if item.seconds < 60 || item.seconds > 86400 {
 			return s, fmt.Errorf("%s同步间隔须为 60～86400 秒", item.name)

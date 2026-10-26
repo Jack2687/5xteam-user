@@ -106,7 +106,7 @@ func (s *Server) runNexovccSyncPartLocked(ctx context.Context, key string, force
 	if err = s.store.NexovccCache("sync_parts", parts); err != nil {
 		return err
 	}
-	label := map[string]string{"balance": "主账户余额", "cards": "卡片资料与余额", "transactions": "卡片交易与资金流水", "account": "充值记录与每日汇总", "products": "产品 / BIN"}[key]
+	label := map[string]string{"balance": "主账户余额", "cards": "卡片资料与状态", "transactions": "卡片余额与交易流水", "account": "充值记录与每日汇总", "products": "产品 / BIN"}[key]
 	s.nexovccProgress("同步"+label, 0, 1)
 	err = fn(ctx)
 	if err == nil {

@@ -68,6 +68,15 @@ func TestNexovccAutoWithdrawRefundsOnlyAndNoDuplicate(t *testing.T) {
 		case "/api/findLogCardTrades":
 			rows := []any{}
 			for _, tr := range f.Trades {
+				selected := false
+				for i, pan := range pans {
+					if r.Body["card_no"] == pan && tr.Serial == cards[i].Serial {
+						selected = true
+					}
+				}
+				if !selected {
+					continue
+				}
 				rows = append(rows, map[string]any{"log_no": tr.ID, "serial_no": tr.Serial, "business_token": tr.Authorization, "money_id": 3, "trade_amount": tr.Amount, "merchant_amount": tr.MerchantAmount, "merchant_currency": tr.MerchantCurrency, "status": tr.Status, "created_at": tr.At.Format(time.RFC3339Nano)})
 			}
 			return nexReply(map[string]any{"list": rows, "total": len(rows), "page": 1}), nil

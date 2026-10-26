@@ -85,8 +85,8 @@ func TestNexovccSyncIndependentIntervalsAndManualAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.tickNexovccMonitor(ctx)
-	if len(calls) != 2 || calls["/api/findLogCardTrades"] != 1 || calls["/api/findLogWebFunds"] != 1 {
-		t.Fatal("worker didn't isolate ledgers", calls)
+	if len(calls) != 4 || calls["/api/card/findUserCardList"] != 1 || calls["/api/card/getUserCardBalance"] != 1 || calls["/api/findLogCardTrades"] != 1 || calls["/api/findLogWebFunds"] != 1 {
+		t.Fatal("worker did not pair card balances and ledgers", calls)
 	}
 	calls = map[string]int{}
 	w := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestNexovccSyncFailureRetainsSuccessfulPartClocks(t *testing.T) {
 	if err = s.syncNexovccLocked(nexovccScheduledSync(context.Background())); err != nil {
 		t.Fatal(err)
 	}
-	if calls["/api/getBalanceInfo"] != 0 || calls["/api/card/findUserCardList"] != 0 || calls["/api/findLogCardTrades"] != 1 {
-		t.Fatal("retry re-ran successful categories", calls)
+	if calls["/api/getBalanceInfo"] != 0 || calls["/api/card/findUserCardList"] != 1 || calls["/api/card/getUserCardBalance"] != 1 || calls["/api/findLogCardTrades"] != 1 {
+		t.Fatal("retry must refresh the list and complete card snapshot, without re-reading the account", calls)
 	}
 }
