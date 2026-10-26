@@ -619,6 +619,8 @@ def parse_retry_after(headers):
 
 
 def run(payload, rpc=None):
+    if payload.get("help_oai"):
+        return _run_once(payload, rpc)  # Go owns inquiry retries and send checkpoints.
     if payload.get("credential_mode") != "chatgpt_at":
         return _run_once(payload, rpc)
     # Keep one proxy and the Go job deadline, but discard the rate-limited login session.
@@ -682,6 +684,9 @@ def _run_once(payload, rpc=None):
             flow = ProjectProtocolLogin("local", {**local, "credential_mode": "chatgpt_at", "allow_sms": False, "skip_phone_verification": True})
         else:
             flow = ProjectProtocolLogin("local", local)
+        if payload.get("help_oai"):
+            from .help_confirmation import run as run_help
+            return run_help(flow, payload["help_oai"])
         bridge.emit("login_method", "login_start", "开始本次 ChatGPT 登录" if credential_mode == "chatgpt_at" else "开始本次 OAuth 登录")
         session = flow.login()
         if local.get("merge_v2"):

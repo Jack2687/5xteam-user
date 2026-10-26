@@ -33,6 +33,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	input.Automation.MerchantSuccessFeeUSD = current.MerchantSuccessFeeUSD
 	input.Automation.MerchantAPIURL = current.MerchantAPIURL
 	input.Automation.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
+	input.Automation.OAIConfirmation = current.OAIConfirmation.Normalized()
 	input.Automation.PurchaseScheduleEnabled, input.Automation.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
 	input.Automation.EJHPlanTemplates, input.Automation.NexovccPlanTemplates = current.EJHPlanTemplates, current.NexovccPlanTemplates
 	if err := decodeJSON(w, r, &input, 2<<20); err != nil {

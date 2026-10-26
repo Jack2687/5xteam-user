@@ -14,6 +14,7 @@ import (
 )
 
 func normalizeProSettings(v *model.ProSettings) {
+	v.OAIConfirmation = v.OAIConfirmation.Normalized()
 	if strings.TrimSpace(v.MerchantAPIURL) == "" {
 		v.MerchantAPIURL = refundmerchant.DefaultSubmitURL
 	}
@@ -259,6 +260,11 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	if !expected.IsZero() && !p.UpdatedAt.Equal(expected) {
 		return p, ErrProStageConflict
 	}
+	// Decode a separate copy because nested workflow maps/pointers are mutated.
+	var previous model.MailAccountProfile
+	if err := json.Unmarshal([]byte(raw), &previous); err != nil {
+		return p, err
+	}
 	wasConfirmed := p.TransferStatus == "completed" && p.ProMergeConfirmedSource != ""
 	wasRemoved := p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed"
 	wasDeleted := p.DeletionAccepted()
@@ -302,6 +308,22 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	if p.ProPushEndTime() != nil || !wasEnding {
 		p.FreezeProPushDuration(p.UpdatedAt)
 	}
+	for _, mode := range model.ProDispositionModes {
+		if !previous.OAIConfirmationPrerequisite(mode) && p.OAIConfirmationPrerequisite(mode) {
+			settings := model.DefaultProSettings()
+			var settingsRaw string
+			if err := s.db.QueryRow("SELECT profile FROM pro_settings WHERE id=1").Scan(&settingsRaw); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return p, err
+			}
+			if settingsRaw != "" {
+				if err := json.Unmarshal([]byte(settingsRaw), &settings); err != nil {
+					return p, err
+				}
+			}
+			p.PrepareOAIConfirmation(previous, settings.OAIConfirmation, p.UpdatedAt)
+			break
+		}
+	}
 	encoded, err := json.Marshal(p)
 	if err != nil {
 		return p, err
@@ -313,6 +335,13 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	defer tx.Rollback()
 	if _, err = tx.Exec("UPDATE mail_accounts SET profile=?,updated_at=? WHERE email=?", string(encoded), formatTime(p.UpdatedAt), email); err != nil {
 		return p, err
+	}
+	// Keep confirmation history available to card return records after the
+	// mailbox is removed locally. It never changes financial status or amounts.
+	if len(p.ProOAIConfirmations) > 0 && mustJSON(previous.ProOAIConfirmations) != mustJSON(p.ProOAIConfirmations) {
+		if _, err = tx.Exec(`INSERT INTO pro_oai_confirmation_accounts(email,profile) VALUES(?,?) ON CONFLICT(email) DO UPDATE SET profile=excluded.profile`, email, mustJSON(p.ProOAIConfirmations)); err != nil {
+			return p, err
+		}
 	}
 	if err = s.recordEJHConsumptionTx(tx, p, p.UpdatedAt); err != nil {
 		return p, err

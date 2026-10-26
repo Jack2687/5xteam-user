@@ -1,0 +1,288 @@
+"""Authenticated Help inquiry over the existing ChatGPT login session.
+
+No support messages are sent until Go has durably recorded the send intent.
+Cookie/proxy snapshots travel only over the private stdio RPC, never diagnostics.
+"""
+import json
+import re
+import time
+import uuid
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlsplit, parse_qs, urlencode
+
+from . import bridge, upstream
+
+HELP = "https://help.openai.com"
+SUPPORT = "https://support.api.openai.com"
+AUTH = "https://auth.openai.com"
+CHAT = SUPPORT + "/api/v1/chatkit"
+PAGE = HELP + "/en/collections/3742473-chatgpt"
+ALLOWED = {"help.openai.com", "support.api.openai.com", "auth.openai.com"}
+
+
+class HelpError(RuntimeError):
+    def __init__(self, message, code="help_failed"):
+        super().__init__(message)
+        self.code = code
+
+
+class AccountButtons(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.buttons = []; self.current = None
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "button" and attrs.get("name") == "session_id":
+            self.current = [attrs.get("value", ""), ""]
+    def handle_data(self, data):
+        if self.current is not None: self.current[1] += data
+    def handle_endtag(self, tag):
+        if tag == "button" and self.current is not None:
+            self.buttons.append(self.current); self.current = None
+
+
+def parse_time(value):
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt.replace(tzinfo=timezone.utc).timestamp() if dt.tzinfo is None else dt.timestamp()
+    except (ValueError, TypeError):
+        return 0
+
+
+def message_text(item):
+    return "\n".join(c.get("text", "") for c in item.get("content", [])
+                     if c.get("type") in {"output_text", "input_text"} and isinstance(c.get("text"), str))
+
+
+class HelpInquiry:
+    def __init__(self, flow, config):
+        self.flow, self.config = flow, config
+        self.email = flow.payload["email"].strip().lower()
+        self.session_id = str((config.get("session") or {}).get("session_id") or uuid.uuid4())
+        self.frame_id = str(uuid.uuid4())
+        self.thread = str(config.get("conversation_id") or "")
+        self.user_message = str(config.get("user_message_id") or "")
+        self.sent_at = parse_time(config.get("sent_at"))
+        self.prompt = str(config.get("prompt") or "")
+        self.verified = False
+
+    def checkpoint(self, name, **values):
+        return bridge.call("help_" + name, **values)
+
+    def stage(self, stage, status):
+        self.checkpoint("stage", stage=stage, status=status)
+
+    def headers(self, json_request=False):
+        h = {"Accept": "application/json", "Origin": HELP, "Referer": HELP + "/",
+             "x-openai-client": "support-automation", "x-chatkit-locale": "zh-CN", "x-chatkit-version": "rc2",
+             "x-help-center-session-id": self.session_id, "x-session-id": self.session_id,
+             "chatkit-frame-instance-id": self.frame_id, "x-current-page": PAGE}
+        if json_request: h["Content-Type"] = "application/json"
+        return h
+
+    def request(self, url, **kwargs):
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or parsed.hostname not in ALLOWED or parsed.port not in (None, 443) or parsed.username:
+            raise HelpError("Help 跳转地址不受信任")
+        # Direct curl session: no automatic retries for support writes.
+        return self.flow.web_session.request(kwargs.pop("method", "GET"), url,
+            allow_redirects=False, timeout=kwargs.pop("timeout", 60), **kwargs)
+
+    def identity(self, allow_expired=False):
+        r = self.request(SUPPORT + "/api/v1/me", headers=self.headers())
+        if r.status_code in (401, 403) and allow_expired: return False
+        if r.status_code != 200: raise HelpError(f"Help 身份校验失败：HTTP {r.status_code}")
+        try: email = r.json().get("email", "").strip().lower()
+        except (ValueError, AttributeError): email = ""
+        if not email or email != self.email: raise HelpError("Help 登录账号与当前账号不一致", "help_identity_mismatch")
+        self.verified = True
+        return True
+
+    def restore(self):
+        saved = self.config.get("session") or {}
+        if saved.get("email", "").lower() != self.email or saved.get("proxy") != self.flow.proxy_url:
+            return False
+        for cookie in saved.get("cookies", []):
+            domain = str(cookie.get("domain", "")).lstrip(".")
+            if domain not in ALLOWED and domain not in {"openai.com", "chatgpt.com"}: continue
+            name, value = cookie.get("name", ""), cookie.get("value", "")
+            bridge.protect_code(value)
+            if name and value: self.flow.set_cookie(name, value, cookie.get("domain", ""), cookie.get("path", "/"))
+        if saved.get("device_id"): self.flow.device_id = saved["device_id"]
+        return bool(saved.get("cookies")) and self.identity(allow_expired=True)
+
+    def save_session(self):
+        cookies = []
+        for c in self.flow.web_session.cookies.jar:
+            if c.domain.lstrip(".") in ALLOWED | {"openai.com", "chatgpt.com"}:
+                bridge.protect_code(c.value)
+                cookies.append({"name": c.name, "value": c.value, "domain": c.domain, "path": c.path})
+        self.checkpoint("session", session={"email": self.email, "proxy": self.flow.proxy_url,
+            "cookies": cookies, "session_id": self.session_id, "device_id": self.flow.device_id})
+
+    def authorize(self):
+        self.stage("authorize", "running")
+        current = HELP + "/auth/login?" + urlencode({"redirectTo": PAGE})
+        expected_state = ""
+        for _ in range(20):
+            p = urlsplit(current)
+            if p.hostname == "auth.openai.com" and p.path == "/oauth/authorize":
+                q = parse_qs(p.query)
+                if q.get("redirect_uri", [""])[0] != HELP + "/auth/callback":
+                    raise HelpError("Help OAuth 回调地址不匹配")
+                expected_state = q.get("state", [""])[0]
+            if p.hostname == "help.openai.com" and p.path == "/auth/callback":
+                q = parse_qs(p.query)
+                if not expected_state or q.get("state", [""])[0] != expected_state or not q.get("code"):
+                    raise HelpError("Help OAuth 回调校验失败")
+                bridge.protect_code(q["code"][0])
+            r = self.request(current, headers={"Accept": "text/html,application/xhtml+xml", "Referer": PAGE})
+            if r.status_code in (301, 302, 303, 307, 308):
+                location = r.headers.get("location", "")
+                if not location: raise HelpError("Help 授权跳转缺少地址")
+                current = urljoin(current, location); continue
+            if r.status_code == 200 and p.hostname == "auth.openai.com" and p.path == "/choose-an-account":
+                parser = AccountButtons(); parser.feed(r.text)
+                matching = [sid for sid, text in parser.buttons if self.email in
+                            re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", text.lower())]
+                if len(matching) != 1: raise HelpError("Help 账号选择页未找到唯一匹配账号")
+                sid = matching[0]; bridge.protect_code(sid)
+                headers = self.flow.headers(AUTH + "/api/accounts/session/select", {
+                    "Accept": "application/json", "Origin": AUTH, "Referer": current})
+                if self.flow.sentinel_token: headers["openai-sentinel-token"] = self.flow.sentinel_token
+                self.flow._sync_web_session_cookies()
+                selected = self.flow.request(AUTH + "/api/accounts/session/select", method="POST",
+                    json_data={"session_id": sid}, headers=headers, timeout=60)
+                next_url = selected.location() or self.flow.extract_continue_url(selected.json())
+                if selected.status not in (200, 301, 302, 303, 307, 308) or not next_url:
+                    raise HelpError("Help 账号选择未返回有效回调")
+                current = urljoin(current, next_url); continue
+            if r.status_code == 200 and p.hostname == "help.openai.com":
+                self.identity(); self.save_session(); self.stage("authorize", "completed"); return
+            raise HelpError(f"Help 授权未完成：HTTP {r.status_code}")
+        raise HelpError("Help 授权跳转次数超限")
+
+    def query(self, kind, params):
+        r = self.request(CHAT, method="POST", json={"type": kind, "params": params}, headers=self.headers(True))
+        if r.status_code != 200: raise HelpError(f"Help 对话读取失败：HTTP {r.status_code}")
+        try: return r.json()
+        except ValueError: raise HelpError("Help 对话返回格式异常")
+
+    def thread_items(self, thread_id):
+        data = self.query("threads.get_by_id", {"thread_id": thread_id})
+        if data.get("id") != thread_id: raise HelpError("Help 对话标识不匹配")
+        items = data.get("items", {})
+        if items.get("has_more"):
+            items = self.query("items.list", {"thread_id": thread_id, "limit": 100, "order": "desc"})
+        if items.get("has_more"):
+            raise HelpError("Help 对话过长，需人工核实原提问", "help_reply_unknown")
+        return sorted(items.get("data", []), key=lambda x: parse_time(x.get("created_at")))
+
+    def recover(self):
+        self.stage("reply", "running")
+        threads = [self.thread] if self.thread else [x.get("id") for x in self.query("threads.list", {"limit": 20, "order": "desc"}).get("data", [])]
+        matched = False
+        for tid in threads:
+            if not tid: continue
+            own = False
+            for item in self.thread_items(tid):
+                if item.get("thread_id") != tid: continue
+                if item.get("type") == "user_message":
+                    own = (item.get("id") == self.user_message) if self.user_message else (
+                        message_text(item) == self.prompt and self.sent_at - 5 <= parse_time(item.get("created_at")) <= self.sent_at + 600)
+                    if own:
+                        matched = True; self.thread = tid; self.user_message = item["id"]
+                        self.checkpoint("thread", conversation_id=tid, user_message_id=item["id"])
+                elif own and item.get("type") == "assistant_message":
+                    return self.accept_answer(item)
+        if not matched: raise HelpError("上次发送结果不明，未找到原提问；已停止重复发送", "help_send_unknown")
+        raise HelpError("Help 原对话尚未返回完整回答", "help_reply_pending")
+
+    def accept_answer(self, item):
+        answer = message_text(item)
+        if not self.verified or item.get("thread_id") != self.thread or not self.user_message or not answer.strip():
+            raise HelpError("Help 完整回复缺少匹配的账号或对话")
+        if len(answer.encode("utf-8")) > 65536: raise HelpError("Help 回答过长，需要人工查看", "help_reply_unknown")
+        self.checkpoint("reply", answer=answer, message_id=item.get("id", ""), conversation_id=self.thread)
+        return {"success": True, "help_completed": True}
+
+    def send(self):
+        if not self.verified: raise HelpError("Help 身份尚未校验")
+        # Must commit successfully before any potentially mutating request.
+        self.checkpoint("sending")
+        self.stage("send", "running")
+        params = {"input": {"content": [{"type": "input_text", "text": self.prompt}],
+                  "quoted_text": "", "attachments": [], "inference_options": {}}}
+        if self.thread: params["thread_id"] = self.thread
+        headers = self.headers(True)
+        headers["x-customer-agents-chat-create-id"] = self.config["request_id"]
+        response = self.request(CHAT, method="POST", json={"type": "threads.add_user_message" if self.thread else "threads.create", "params": params},
+                                headers=headers, stream=True, timeout=180)
+        try:
+            if response.status_code != 200:
+                raise HelpError(f"Help 提问返回 HTTP {response.status_code}，先核查原对话", "help_send_unknown")
+            if "text/event-stream" not in response.headers.get("content-type", ""):
+                raise HelpError("Help 未返回回复数据流", "help_send_unknown")
+            self.stage("reply", "running")
+            data_lines, size, answer = [], 0, None
+            def event(text):
+                nonlocal answer
+                try: e = json.loads(text)
+                except ValueError: raise HelpError("Help 回复数据流格式异常", "help_reply_unknown")
+                if e.get("type") == "thread.created":
+                    tid = e.get("thread", {}).get("id", "")
+                    if not tid or self.thread and tid != self.thread: raise HelpError("Help 新对话标识异常")
+                    self.thread = tid; self.checkpoint("thread", conversation_id=tid)
+                if e.get("type") == "thread.item.done":
+                    item = e.get("item", {})
+                    if item.get("thread_id") != self.thread: return
+                    if item.get("type") == "user_message" and message_text(item) == self.prompt:
+                        self.user_message = item.get("id", "")
+                        self.checkpoint("thread", conversation_id=self.thread, user_message_id=self.user_message)
+                        self.stage("send", "completed")
+                    elif item.get("type") == "assistant_message" and self.user_message:
+                        answer = item
+                if e.get("type") == "error":
+                    raise HelpError("Help 回复流返回错误，等待核查原对话", "help_reply_unknown")
+            for line in response.iter_lines():
+                if isinstance(line, bytes): line = line.decode("utf-8")
+                size += len(line.encode("utf-8"))
+                if size > 2 << 20: raise HelpError("Help 数据流超出限制", "help_reply_unknown")
+                if not line:
+                    if data_lines: event("\n".join(data_lines)); data_lines = []
+                elif line.startswith("data:"): data_lines.append(line[5:].lstrip())
+            if data_lines: event("\n".join(data_lines))
+            if answer: return self.accept_answer(answer)
+            raise HelpError("Help 连接中断或尚未返回完整回答", "help_reply_pending")
+        finally:
+            response.close()
+
+    def run(self):
+        login_result = None
+        try:
+            if not self.config.get("prepare_only") and self.restore():
+                self.stage("login", "completed"); self.stage("authorize", "completed")
+            else:
+                self.stage("login", "running")
+                if not self.flow.payload.get("password") or not self.flow.payload.get("_totp_secret"):
+                    raise HelpError("OAI 确认重新登录需要账号密码和 2FA")
+                login_result = self.flow.login()
+                self.stage("login", "completed")
+                self.authorize()
+            if self.config.get("prepare_only"):
+                return {**(login_result or {}), "success": True}
+            return self.recover() if self.sent_at else self.send()
+        except Exception as exc:
+            if self.config.get("prepare_only") and login_result:
+                self.checkpoint("prepare_failed", error="删除前 Help 授权未完成：" + bridge.redact(exc)[:400])
+                return {**login_result, "success": True}
+            raise
+
+
+def run(flow, config):
+    try:
+        return HelpInquiry(flow, config).run()
+    except Exception as exc:
+        code = getattr(exc, "code", "help_failed")
+        return {"success": False, "retryable": False, "error_code": code,
+                "error": bridge.redact(exc)[:600]}

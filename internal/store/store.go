@@ -211,6 +211,8 @@ func (s *Store) initSchema() error {
 		CREATE TABLE IF NOT EXISTS cpa_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1), profile TEXT NOT NULL, encrypted_key TEXT NOT NULL DEFAULT ''
 		);
+		CREATE TABLE IF NOT EXISTS pro_oai_confirmation_accounts (email TEXT PRIMARY KEY COLLATE NOCASE,profile TEXT NOT NULL);
+		CREATE TABLE IF NOT EXISTS pro_oai_sessions (email TEXT COLLATE NOCASE,mode TEXT,encrypted_session TEXT NOT NULL,PRIMARY KEY(email,mode));
 		CREATE TABLE IF NOT EXISTS pro_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1), profile TEXT NOT NULL,
 			encrypted_sub2_password TEXT NOT NULL DEFAULT '', encrypted_cpa_key TEXT NOT NULL DEFAULT ''
@@ -587,6 +589,7 @@ func preserveMailPlanCheck(profile *model.MailAccountProfile, old model.MailAcco
 }
 
 func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccountProfile) {
+	profile.ProOAIConfirmations = old.ProOAIConfirmations
 	profile.ProDailyMerge, profile.ProMergeTrigger = old.ProDailyMerge, old.ProMergeTrigger
 	profile.ProRestockTaskID, profile.ProRestockTargetID = old.ProRestockTaskID, old.ProRestockTargetID
 	profile.ProPushStartedAt = old.ProPushStartedAt

@@ -27,6 +27,9 @@ type ProDeactivation struct {
 }
 
 func (s ProSettings) ValidateDisposition() error {
+	if err := s.OAIConfirmation.Validate(); err != nil {
+		return err
+	}
 	if s.DeletionCheckIntervalSeconds < 0 || s.DeletionCheckIntervalSeconds > 86400 {
 		return errors.New("删除结果核验间隔须为 1～86400 秒")
 	}

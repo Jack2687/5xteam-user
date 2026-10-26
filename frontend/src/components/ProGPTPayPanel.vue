@@ -1,4 +1,5 @@
 <script setup>
+import { dispositionLabels, normalizeOAISettings } from '../pro-disposition'
 import { oaiTemplates } from '../card-platform'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
@@ -76,6 +77,8 @@ async function changeProvider(event) {
   event.target.value = settings.provider
 }
 const automation = reactive({ purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, auto_delete_enabled: false, auto_merchant_enabled:false,auto_merge_v2_enabled:false,merchant_success_fee_usd:'0.00', merchant_api_url:'https://refunds.llmrefund.com/v1/refunds', merchant_key_present:false, deletion_check_interval_seconds: 300, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
+automation.oai_confirmation=normalizeOAISettings()
+watch(()=>automation.oai_confirmation, value=>{if(!value || Object.keys(dispositionLabels).some(mode=>!value[mode]))automation.oai_confirmation=normalizeOAISettings(value)},{immediate:true})
 const merchantAPIKey=ref('')
 const selectDisposition=(key)=>{if(automation[key])for(const name of ['auto_merge_enabled','auto_delete_enabled','auto_merchant_enabled','auto_merge_v2_enabled'])if(name!==key)automation[name]=false}
 const selectedAdmin = computed(() => props.adminAccounts.find(a => a.id === automation.target_admin_id))
@@ -316,6 +319,16 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <label class="toggle-row wide"><div><strong>查额度达标后自动删除</strong><small>使用当前账号登录凭据执行个人账户删除。已受理立即调整所选分组，最终删除状态单独核验；回款仍以卡台流水为准。</small></div><input v-model="automation.auto_delete_enabled" @change="selectDisposition('auto_delete_enabled')" type="checkbox"/><i></i></label>
         <label class="toggle-row wide"><div><strong>查额度达标后 API 商户</strong><small>将账号、ChatGPT 密码和 2FA 提交给商户，每 15 秒查询处理进度；最终成功才完成。不执行空间合并或本地删除账户流程。</small></div><input v-model="automation.auto_merchant_enabled" @change="selectDisposition('auto_merchant_enabled')" type="checkbox"/><i></i></label>
         <label class="toggle-row wide"><div><strong>查额度达标后合并空间2.0</strong><small>邀请 → 重新登录受邀团队 → 提交导出停用 → 移出团队 → 调整分组。仅明确受理才继续；流程完成不代表上游停用或退款完成，结果不明时保留成员。</small></div><input v-model="automation.auto_merge_v2_enabled" @change="selectDisposition('auto_merge_v2_enabled')" type="checkbox"/><i></i></label>
+        <section class="oai-confirmation-settings wide" aria-label="OAI 确认设置">
+          <h4>流程完成后询问 OAI</h4>
+          <p class="table-note">各流程完成后独立等待并询问 Help，默认等待 300 秒、间隔 300 秒、总计尝试 3 次。已确认后停止；回答不明确时待人工核实，历史完成账号不会自动补问。删除账户前会尝试保留 Help 会话。</p>
+          <div v-for="(label,mode) in dispositionLabels" :key="mode" class="oai-rule">
+            <label class="oai-rule-toggle"><input v-model="automation.oai_confirmation[mode].enabled" type="checkbox" :aria-label="label+'完成后询问 OAI'"/><span>{{label}}完成后询问</span></label>
+            <label class="oai-delay"><span>等待</span><input v-model.number="automation.oai_confirmation[mode].delay_seconds" type="number" min="1" max="604800" step="1" required :aria-label="label+' OAI 询问等待秒数'"/><span>秒</span></label>
+            <label class="oai-delay"><span>重试间隔</span><input v-model.number="automation.oai_confirmation[mode].retry_interval_seconds" type="number" min="1" max="604800" step="1" required :aria-label="label+' OAI 重试间隔秒数'"/><span>秒</span></label>
+            <label class="oai-delay"><span>总尝试</span><input v-model.number="automation.oai_confirmation[mode].max_attempts" type="number" min="1" max="10" step="1" required :aria-label="label+' OAI 总尝试次数'"/><span>次</span></label>
+          </div>
+        </section>
         <label class="field wide"><span>API 商户每次成功收费（USD）</span><input v-model="automation.merchant_success_fee_usd" type="number" min="0" max="1000000" step="0.01" required/><small>最终处理成功后计入所属卡台的 API 收费成本；每个申请只记一次，提交时锁定金额，默认 0。</small></label>
         <label class="field wide"><span>API 商户地址</span><input v-model="automation.merchant_api_url" type="url" placeholder="https://refunds.llmrefund.com/v1/refunds"/><small>填写完整提交接口，例如 http://127.0.0.1:18740/open/v1/requests 或 http://127.0.0.1:18740/v1/cemifh。直接请求填写的地址，进度查询在其后加 /申请ID；留空使用原接口。</small></label>
         <label class="field wide"><span>API 商户密钥</span><input v-model="merchantAPIKey" type="password" autocomplete="new-password" :placeholder="automation.merchant_key_present?'已保存，留空保留原密钥':'填写该商户的 API Key'"/><small>密钥加密保存，不回显。修改地址和密钥仅影响新申请；已有申请继续使用提交时的地址和密钥。</small></label>
@@ -432,4 +445,8 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 </style>
 <style scoped>
 .card-filter{display:flex;gap:4px;align-items:center;padding:0 20px 16px}.card-filter button{padding:8px 18px;border:1px solid var(--line);border-radius:7px;font-size:12px;color:var(--muted);background:var(--surface)}.card-filter button.active{background:var(--green-bg);color:var(--green-strong);border-color:var(--green-strong)}.card-filter button:disabled{opacity:.6}.card-filter>span{font-size:11px;color:var(--muted);margin-left:10px}
+</style>
+
+<style scoped>
+.oai-confirmation-settings{padding:16px;border:1px solid var(--line);border-radius:8px}.oai-confirmation-settings h4{margin:0 0 8px}.oai-rule{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:14px 0;border-top:1px solid var(--line)}.oai-rule-toggle{grid-column:1/-1}.oai-rule-toggle,.oai-delay{display:flex;align-items:center;gap:8px;font-size:12px}.oai-delay input{width:80px;min-width:0;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}.oai-rule-toggle input{width:16px;height:16px}@media(max-width:650px){.oai-rule{grid-template-columns:1fr;gap:8px}}
 </style>

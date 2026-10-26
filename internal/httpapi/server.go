@@ -92,6 +92,8 @@ type Server struct {
 	proAutoHooks              *proAutomationHooks
 	proMerchantClient         *refundmerchant.Client
 	proMergeV2Login           func(context.Context, string) (map[string]any, error)
+	proOAILogin               func(context.Context, string) (map[string]any, error)
+	proOAIJobs                sync.Map
 	proDeleteHooks            *proDeactivationHooks
 	proFinalStepMu            sync.Mutex
 	proFinalStepJobs          map[*proAutomaticFinalStepJob]struct{}
@@ -152,6 +154,9 @@ func New(dataStore *store.Store, jobs *workflow.Manager) (*Server, error) {
 		return nil, err
 	}
 	if err := dataStore.RecoverProManualStages(); err != nil {
+		return nil, err
+	}
+	if err := dataStore.RecoverProOAIConfirmations(); err != nil {
 		return nil, err
 	}
 	if err := dataStore.RecoverSMSActivations(); err != nil {
@@ -360,6 +365,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pro-accounts/quota", s.checkProAccountQuotas)
 	mux.HandleFunc("POST /api/pro-accounts/{email}/merge", s.mergeProAccount)
 	mux.HandleFunc("POST /api/pro-accounts/{email}/merge-v2", s.mergeV2ProAccount)
+	mux.HandleFunc("POST /api/pro-accounts/{email}/oai-confirmation", s.manageProOAI)
 	mux.HandleFunc("PUT /api/pro-accounts/{email}/merge-v2-stage", s.updateProMergeV2Stage)
 	mux.HandleFunc("POST /api/pro-accounts/{email}/merchant", s.merchantProAccount)
 	mux.HandleFunc("POST /api/pro-accounts/{email}/deactivate", s.deactivateProAccount)

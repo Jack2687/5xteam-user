@@ -1086,6 +1086,12 @@ func (s *Server) executeOpenAILoginContext(parent context.Context, email, creden
 		return nil, err
 	}
 	login := selectOAuthLogin(s.store.AutoRotationSettings().OAuthLoginMode, credentials)
+	if _, ok := parent.Value(proOAILoginKey{}).(*proOAILoginOptions); ok {
+		login = selectOAuthLogin("password_totp", credentials)
+		if login.selected != "password_totp" {
+			return nil, errors.New("OAI 确认需要账号的 ChatGPT 密码和 2FA")
+		}
+	}
 	loginDetails := login.details()
 	loginDetails["login_method"], loginDetails["login_method_label"], loginDetails["login_auth_status"] = "not_started", "尚未执行登录", "not_started"
 	started := time.Now()
@@ -1202,6 +1208,9 @@ func (s *Server) executeOpenAILoginContext(parent context.Context, email, creden
 			}
 			result, runErr := s.executeOpenAILoginWithProxy(parent, email, proxyURL, lease.label, lease.activeCount, credentialMode, login, progress, diagnostic)
 			lease.Release()
+			if _, ok := parent.Value(proOAILoginKey{}).(*proOAILoginOptions); ok {
+				return result, runErr
+			}
 			if err := parent.Err(); err != nil {
 				return nil, err
 			}
@@ -1364,6 +1373,9 @@ func (s *Server) executeOpenAILoginWithProxy(parent context.Context, email, prox
 	if opts, ok := parent.Value(mergeV2LoginKey{}).(*mergeV2LoginOptions); ok {
 		payload["merge_v2"] = map[string]any{"team_id": opts.TeamID}
 	}
+	if opts, ok := parent.Value(proOAILoginKey{}).(*proOAILoginOptions); ok {
+		payload["help_oai"] = opts.Config
+	}
 	login.apply(payload)
 	python := workflow.FindPython()
 	if python == "" {
@@ -1381,6 +1393,14 @@ func (s *Server) executeOpenAILoginWithProxy(parent context.Context, email, prox
 	if opts, ok := parent.Value(mergeV2LoginKey{}).(*mergeV2LoginOptions); ok {
 		call = func(method string, args map[string]any) (any, error) {
 			if strings.HasPrefix(method, "merge_v2_") {
+				return opts.Call(method, args)
+			}
+			return localRPC.call(method, args)
+		}
+	}
+	if opts, ok := parent.Value(proOAILoginKey{}).(*proOAILoginOptions); ok {
+		call = func(method string, args map[string]any) (any, error) {
+			if strings.HasPrefix(method, "help_") {
 				return opts.Call(method, args)
 			}
 			return localRPC.call(method, args)

@@ -1111,6 +1111,7 @@ func (s *Server) startProAutomationMonitor() {
 	s.proAutoCancel = cancel
 	s.startProRestockMonitor(ctx)
 	s.startProSIWCWorker(ctx)
+	s.startProOAIWorker(ctx)
 	s.proAutoWG.Add(1)
 	go func() {
 		defer s.proAutoWG.Done()
@@ -1194,12 +1195,26 @@ func (s *Server) stopProAutomation(w http.ResponseWriter, r *http.Request) {
 		p.ProAuto.Status = "stopped"
 		p.ProAuto.NextCheckAt = nil
 		p.ProAuto.Error = "用户已停止账号流程"
+		for _, v := range p.ProOAIConfirmations {
+			if v == nil || v.ConfirmedAt != nil || v.Status == "disabled" || v.Status == "stopped" {
+				continue
+			}
+			v.Generation++
+			v.Status = "stopped"
+			v.NextAttemptAt = nil
+			v.Error = "随账号全自动停止"
+			v.Step(v.Stage, "interrupted", time.Now())
+		}
 	})
 	if err != nil {
 		writeAPI(w, 404, nil, err.Error())
 		return
 	}
 	cancelled := false
+	if cancel, ok := s.proOAIJobs.Load(email); ok {
+		cancel.(context.CancelFunc)()
+		cancelled = true
+	}
 	for _, cancel := range []context.CancelFunc{s.proAutoJobs[email], s.proMergeJobs[email]} {
 		if cancel != nil {
 			cancel()
@@ -1234,7 +1249,7 @@ func (s *Server) guardProAutomation(next http.Handler) http.Handler {
 					action = parts[4]
 				}
 			}
-			if strings.Contains(email, "@") && action != "auto-pro" {
+			if strings.Contains(email, "@") && action != "auto-pro" && action != "oai-confirmation" {
 				s.proAutoMu.Lock()
 				running := s.proAutoJobs[strings.ToLower(email)] != nil
 				if !running && len(parts) >= 5 && parts[1] == "mail" && (action == "login" || action == "oauth") {

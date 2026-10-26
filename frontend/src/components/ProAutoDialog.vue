@@ -1,4 +1,5 @@
 <script setup>
+import { accountDisposition } from '../pro-disposition'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { X } from 'lucide-vue-next'
 import { api } from '../api'
@@ -13,6 +14,8 @@ const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const emit=defineEmits(['updated'])
 const email=ref(''),opened=ref(false),busy=ref(false),error=ref(''),state=ref({}),settings=ref({}),cards=ref([]),cardID=ref(''),page=ref(1),pageSize=ref(props.defaultPageSize || 10),total=ref(0)
 const preparingCard=ref(false)
+const openedAccount=ref({})
+const displayDisposition=computed(()=>accountDisposition({...openedAccount.value,...state.value,pro_auto:state.value},settings.value))
 const visibleError=computed(()=>busy.value?'':error.value||(state.value.error?(state.value.restock_retry_available?'上次开卡结果：':'')+state.value.error:''))
 const autoCardEnabled=computed(()=>settings.value.card_provider==='nexovcc'?settings.value.nexovcc_auto_open:settings.value.ejh_auto_open)
 const autoCardLabel=computed(()=>settings.value.card_provider==='nexovcc'?'环球':'EJH')
@@ -47,7 +50,7 @@ async function occupancyResolved(){
 let timer,generation=0
 const path=()=>`/api/pro-accounts/${encodeURIComponent(email.value)}/auto-pro`
 async function loadCards(){const data=await api(`/api/gptpay/cards?page=${page.value}&page_size=${pageSize.value}&enabled=true&card_provider=${settings.value.card_provider||'configured'}`);cards.value=data.items||[];total.value=data.total||0;cardID.value=autoCardEnabled.value?'':cards.value[0]?.id||''}
-async function open(account){if(busy.value)return;clearTimeout(timer);generation++;blockedCards.value=[];occupancyMessage.value='';email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;pageSize.value=props.defaultPageSize || 10;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings')]);settings.value={...config,auto_delete_enabled:pro.auto_delete_enabled,auto_merchant_enabled:pro.auto_merchant_enabled,auto_merge_v2_enabled:pro.auto_merge_v2_enabled,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open,nexovcc_auto_open:pro.nexovcc_auto_open,card_provider:pro.card_provider};await loadCards();state.value=current||{}}catch(e){error.value=e.message}finally{preparingCard.value=false;busy.value=false;schedule()}}
+async function open(account){if(busy.value)return;openedAccount.value=account;clearTimeout(timer);generation++;blockedCards.value=[];occupancyMessage.value='';email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;pageSize.value=props.defaultPageSize || 10;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings')]);settings.value={...config,auto_delete_enabled:pro.auto_delete_enabled,auto_merchant_enabled:pro.auto_merchant_enabled,auto_merge_v2_enabled:pro.auto_merge_v2_enabled,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open,nexovcc_auto_open:pro.nexovcc_auto_open,card_provider:pro.card_provider};await loadCards();state.value=current||{}}catch(e){error.value=e.message}finally{preparingCard.value=false;busy.value=false;schedule()}}
 function close(){if(busy.value)return;opened.value=false;generation++;clearTimeout(timer)}
 function schedule(){clearTimeout(timer);if(opened.value&&(active.value||manualRunning.value))timer=setTimeout(refresh,state.value.status==='running'||manualRunning.value?1500:5000)}
 async function refresh(){const gen=generation;try{const value=await api(path());if(gen!==generation)return;state.value=value;emit('updated')}catch(e){if(gen===generation)error.value=e.message}finally{if(gen===generation)schedule()}}
@@ -66,7 +69,7 @@ defineExpose({open})
 </script>
 <template><Teleport to="body"><div v-if="opened" class="modal-backdrop" @click.self="close"><section class="modal pro-auto-dialog" role="dialog" aria-modal="true" aria-label="全自动开通 Pro">
 <div class="modal-heading"><h2>全自动开通 Pro</h2><button class="icon-button" title="关闭全自动窗口" :disabled="busy" @click="close"><X :size="17" /></button></div>
-<p>{{ email }}</p><ProAutoStages :state="state.stage_progress || state" :delete-mode="settings.auto_delete_enabled" :merchant-mode="settings.auto_merchant_enabled" :merge-v2-mode="settings.auto_merge_v2_enabled" />
+<p>{{ email }}</p><ProAutoStages :state="state.stage_progress || state" :disposition="displayDisposition" />
 <p v-if="preparingCard&&autoCardEnabled" role="status">正在准备银行卡；新卡资料同步完成后会继续全自动，请稍候。</p>
 <p v-if="state.retry_attempts" role="status">原账号重试：第 {{ state.retry_attempts }} 次<span v-if="state.status==='running'&&state.retry_at"> · 下次执行：{{ formatTime(state.retry_at) }}</span></p>
 <ProMergeV2Stages v-if="state.pro_merge_v2" :account="{pro_merge_v2:state.pro_merge_v2,pro_auto:state}" :disabled="busy || state.pro_workflow_running" readonly @retry="resumeMergeV2"/>

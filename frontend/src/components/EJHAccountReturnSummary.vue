@@ -1,4 +1,5 @@
 <script setup>
+import OAIConfirmationStatus from './OAIConfirmationStatus.vue'
 import { paymentOnlySummary, paymentMoney } from '../payment-only'
 import { computed } from 'vue'
 import { accountAmounts } from '../ejh-account-amounts'
@@ -33,7 +34,7 @@ const clearing = computed(() => {
   <p v-if="amounts.pending||amounts.invalid" class="return-note">{{amounts.pending?amounts.pending+' 笔回款待核实，未计入金额':'回款金额待核实'}}</p>
   <p v-else-if="amounts.paid!==null&&amounts.reason" class="return-note">{{amounts.reason}}</p>
   <p v-if="row.state_override?.state==='returned'&&!amounts.returned.length" class="return-note">人工标记已回款，尚无已确认金额</p>
-  <footer><span>开通时间 {{row.opened_at?formatTime(row.opened_at):'—'}}</span><span>申请时间 {{row.requested_at?formatTime(row.requested_at):'—'}}</span><span>回款时间 {{amounts.returnedAt?formatTime(amounts.returnedAt):'—'}}</span></footer>
+  <OAIConfirmationStatus :records="row.pro_oai_confirmations" labelled/><footer><span>开通时间 {{row.opened_at?formatTime(row.opened_at):'—'}}</span><span>申请时间 {{row.requested_at?formatTime(row.requested_at):'—'}}</span><span>回款时间 {{amounts.returnedAt?formatTime(amounts.returnedAt):'—'}}</span></footer>
  </article>
 </template>
 

@@ -1,6 +1,9 @@
 package ejh
 
-import "time"
+import (
+	"chatgpt-space-merge/internal/model"
+	"time"
+)
 
 type Operation struct {
 	Platform     string `json:"platform"`
@@ -69,8 +72,9 @@ func ValidCaseState(state string) bool {
 }
 
 type Case struct {
-	ReversalFee    *ReversalFeeRate `json:"reversal_fee,omitempty"`
-	MerchantFeeUSD string           `json:"merchant_fee_usd"`
+	ProOAIConfirmations map[string]*model.ProOAIConfirmation `json:"pro_oai_confirmations,omitempty"`
+	ReversalFee         *ReversalFeeRate                     `json:"reversal_fee,omitempty"`
+	MerchantFeeUSD      string                               `json:"merchant_fee_usd"`
 	// Removal only affects the unopened return record in the EJH dashboard.
 	// Keep the underlying case for payment reconciliation and card occupancy.
 	RemovedAt *time.Time `json:"removed_at,omitempty"`

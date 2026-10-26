@@ -730,29 +730,30 @@ func (s *Store) SaveNexovccOperation(op nexovcc.Operation) error {
 }
 
 type NexovccCase struct {
-	MerchantFeeUSD string             `json:"merchant_fee_usd"`
-	SharedFees     *NexovccSharedFees `json:"shared_fees,omitempty"`
-	CardName       string             `json:"card_name"`
-	Provider       string             `json:"provider"`
-	OpenedAt       *time.Time         `json:"opened_at,omitempty"`
-	Deleted        bool               `json:"deleted"`
-	ManualState    string             `json:"manual_state,omitempty"`
-	RemovedAt      string             `json:"removed_at,omitempty"`
-	Match          *NexovccMatch      `json:"match,omitempty"`
-	Revenue        *float64           `json:"revenue_r"`
-	RevenueNote    string             `json:"revenue_note,omitempty"`
-	ID             string             `json:"id"`
-	Email          string             `json:"email"`
-	CardID         string             `json:"card_id"`
-	Last4          string             `json:"last4"`
-	Plan           string             `json:"plan"`
-	PaymentStatus  string             `json:"payment_status"`
-	State          string             `json:"state"`
-	Reason         string             `json:"reason"`
-	RequestedAt    string             `json:"requested_at"`
-	UpdatedAt      string             `json:"updated_at"`
-	Revision       int                `json:"revision"`
-	CreatedAt      time.Time          `json:"created_at"`
+	ProOAIConfirmations map[string]*model.ProOAIConfirmation `json:"pro_oai_confirmations,omitempty"`
+	MerchantFeeUSD      string                               `json:"merchant_fee_usd"`
+	SharedFees          *NexovccSharedFees                   `json:"shared_fees,omitempty"`
+	CardName            string                               `json:"card_name"`
+	Provider            string                               `json:"provider"`
+	OpenedAt            *time.Time                           `json:"opened_at,omitempty"`
+	Deleted             bool                                 `json:"deleted"`
+	ManualState         string                               `json:"manual_state,omitempty"`
+	RemovedAt           string                               `json:"removed_at,omitempty"`
+	Match               *NexovccMatch                        `json:"match,omitempty"`
+	Revenue             *float64                             `json:"revenue_r"`
+	RevenueNote         string                               `json:"revenue_note,omitempty"`
+	ID                  string                               `json:"id"`
+	Email               string                               `json:"email"`
+	CardID              string                               `json:"card_id"`
+	Last4               string                               `json:"last4"`
+	Plan                string                               `json:"plan"`
+	PaymentStatus       string                               `json:"payment_status"`
+	State               string                               `json:"state"`
+	Reason              string                               `json:"reason"`
+	RequestedAt         string                               `json:"requested_at"`
+	UpdatedAt           string                               `json:"updated_at"`
+	Revision            int                                  `json:"revision"`
+	CreatedAt           time.Time                            `json:"created_at"`
 }
 
 func (s *Store) NexovccCases() ([]NexovccCase, error) {
@@ -766,7 +767,7 @@ func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,'') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0) ORDER BY o.created_at DESC,o.id DESC`)
+	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,''),coalesce(oc.profile,'{}') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id LEFT JOIN pro_oai_confirmation_accounts oc ON oc.email=o.email JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0) ORDER BY o.created_at DESC,o.id DESC`)
 	if e != nil {
 		return nil, e
 	}
@@ -774,8 +775,11 @@ func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
 	out := []NexovccCase{}
 	for rows.Next() {
 		var v NexovccCase
-		var at, openedAt string
-		if e = rows.Scan(&v.ID, &v.Email, &v.CardID, &v.Last4, &v.Plan, &v.PaymentStatus, &v.State, &v.Reason, &v.RequestedAt, &v.UpdatedAt, &v.Revision, &at, &v.CardName, &v.Provider, &openedAt, &v.Deleted, &v.ManualState, &v.RemovedAt); e != nil {
+		var at, openedAt, oaiRaw string
+		if e = rows.Scan(&v.ID, &v.Email, &v.CardID, &v.Last4, &v.Plan, &v.PaymentStatus, &v.State, &v.Reason, &v.RequestedAt, &v.UpdatedAt, &v.Revision, &at, &v.CardName, &v.Provider, &openedAt, &v.Deleted, &v.ManualState, &v.RemovedAt, &oaiRaw); e != nil {
+			return nil, e
+		}
+		if e = json.Unmarshal([]byte(oaiRaw), &v.ProOAIConfirmations); e != nil {
 			return nil, e
 		}
 		v.MerchantFeeUSD = merchantFees[v.ID]

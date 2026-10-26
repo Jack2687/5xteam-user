@@ -424,6 +424,10 @@ func (s *Server) loginForProDeletion(ctx context.Context, p model.MailAccountPro
 	if s.proDeleteHooks != nil && s.proDeleteHooks.Login != nil {
 		login, err = s.proDeleteHooks.Login(ctx, p.Email)
 	} else {
+		ctx, err = s.proOAIDeletionContext(ctx, p.Email)
+		if err != nil {
+			return err
+		}
 		login, err = s.executeOpenAILoginContext(ctx, p.Email, "chatgpt_at", func(msg string) {
 			s.auditProEvent(p, "account_deactivation_login", "running", "", redactSensitiveText(msg), nil)
 		}, nil)

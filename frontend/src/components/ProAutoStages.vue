@@ -1,9 +1,11 @@
 <script setup>
 import { computed } from 'vue'
+import { accountDisposition } from '../pro-disposition'
 import { LoaderCircle } from 'lucide-vue-next'
-const props = defineProps({ state: { type: Object, default: () => ({}) }, editable: Boolean, disabled: Boolean, deleteMode: Boolean, merchantMode:Boolean, mergeV2Mode:Boolean })
+const props = defineProps({ state: { type: Object, default: () => ({}) }, editable: Boolean, disabled: Boolean, deleteMode: Boolean, merchantMode:Boolean, mergeV2Mode:Boolean, disposition:String })
 const emit = defineEmits(['change'])
-const steps = computed(() => [['login','登录'],['recharge','开通'],['oauth','RT/AT'],['push','推送'],['quota','额度'], props.state.steps?.merge_v2 || props.mergeV2Mode && !props.state.steps?.merchant && !props.state.steps?.deactivate && !props.state.steps?.merge ? ['merge_v2','合并2.0'] : props.merchantMode || props.state.steps?.merchant ? ['merchant','API 商户'] : props.deleteMode || props.state.steps?.deactivate ? ['deactivate','删除'] : ['merge','合并']])
+const mode = computed(() => props.disposition || accountDisposition({pro_auto:props.state}, {auto_delete_enabled:props.deleteMode,auto_merchant_enabled:props.merchantMode,auto_merge_v2_enabled:props.mergeV2Mode}))
+const steps = computed(() => [['login','登录'],['recharge','开通'],['oauth','RT/AT'],['push','推送'],['quota','额度'],[mode.value,{merge:'合并',deactivate:'删除',merchant:'API 商户',merge_v2:'合并2.0'}[mode.value]]])
 const names = {not_started:'未开始',pending:'待处理',running:'执行中',waiting:'等待额度',completed:'已完成',skipped:'已跳过',failed:'失败',interrupted:'已中断',unknown:'待确认'}
 function change(key,label,event) { const status=event.target.value;event.target.value=props.state.steps?.[key]||'not_started';emit('change',{key,label,status}) }
 </script>
