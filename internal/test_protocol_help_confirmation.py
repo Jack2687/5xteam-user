@@ -205,5 +205,19 @@ class HelpTests(unittest.TestCase):
             with self.assertRaises(help.HelpError): self.inquiry.query('threads.create', {})
             req.assert_not_called()
 
+    def test_history_can_rewrite_ids_but_requires_unique_original_turn(self):
+        self.inquiry.verified = True
+        self.inquiry.sent_at = help.parse_time('2026-10-26T10:00:00Z')
+        self.inquiry.thread, self.inquiry.user_message = 'thread-1', 'sse-user-id'
+        messages = [item('user_message','stored-user-id',PROMPT), item('assistant_message','thinking','稍等'), item('assistant_message','stored-answer',ANSWER)]
+        with patch.object(self.inquiry,'thread_items',return_value=messages):
+            self.assertTrue(self.inquiry.recover()['success'])
+        self.assertEqual(self.inquiry.user_message, 'stored-user-id')
+        self.assertEqual(next(v['answer'] for n,v in self.calls if n=='help_reply'), ANSWER)
+        self.calls.clear();self.inquiry.user_message = 'sse-user-id'
+        with patch.object(self.inquiry,'thread_items',return_value=messages+[item('user_message','duplicate',PROMPT)]):
+            with self.assertRaisesRegex(help.HelpError,'未唯一匹配'):self.inquiry.recover()
+        self.assertNotIn('help_reply',[n for n,_ in self.calls])
+
 
 if __name__ == "__main__": unittest.main()

@@ -261,21 +261,31 @@ class HelpInquiry:
     def recover(self):
         self.stage("reply", "running")
         threads = [self.thread] if self.thread else [x.get("id") for x in self.query("threads.list", {"limit": 20, "order": "desc"}).get("data", [])]
-        matched = False
+        exact, candidates = [], []
         for tid in threads:
             if not tid: continue
-            own = False
-            for item in self.thread_items(tid):
-                if item.get("thread_id") != tid: continue
-                if item.get("type") == "user_message":
-                    own = (item.get("id") == self.user_message) if self.user_message else (
-                        message_text(item) == self.prompt and self.sent_at - 5 <= parse_time(item.get("created_at")) <= self.sent_at + 600)
-                    if own:
-                        matched = True; self.thread = tid; self.user_message = item["id"]
-                        self.checkpoint("thread", conversation_id=tid, user_message_id=item["id"])
-                elif own and item.get("type") == "assistant_message":
-                    return self.accept_answer(item)
-        if not matched: raise HelpError("上次发送结果不明，未找到原提问；已停止重复发送", "help_send_unknown")
+            items = self.thread_items(tid)
+            for index, item in enumerate(items):
+                if item.get("thread_id") != tid or item.get("type") != "user_message": continue
+                match = (tid, items, index)
+                if self.user_message and item.get("id") == self.user_message:
+                    exact.append(match)
+                # Help can rewrite SSE IDs when persisting conversation history.
+                # Accept only one full-text/time match, never a nearby other turn.
+                if message_text(item) == self.prompt and self.sent_at - 5 <= parse_time(item.get("created_at")) <= self.sent_at + 600:
+                    candidates.append(match)
+        matches = exact or candidates
+        if len(matches) != 1:
+            raise HelpError("上次发送结果不明，未唯一匹配原提问；已停止重复发送", "help_send_unknown")
+        tid, items, index = matches[0]
+        self.thread, self.user_message = tid, items[index]["id"]
+        self.checkpoint("thread", conversation_id=tid, user_message_id=self.user_message)
+        answer = None
+        for item in items[index+1:]:
+            if item.get("thread_id") != tid: continue
+            if item.get("type") == "user_message": break
+            if item.get("type") == "assistant_message": answer = item
+        if answer: return self.accept_answer(answer)
         raise HelpError("Help 原对话尚未返回完整回答", "help_reply_pending")
 
     def accept_answer(self, item):
