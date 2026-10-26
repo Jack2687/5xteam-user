@@ -14,6 +14,13 @@ import (
 )
 
 func normalizeProSettings(v *model.ProSettings) {
+	v.OAIInquiry = v.OAIInquiry.Normalized()
+	if v.OAIConfirmationConcurrency < 1 {
+		v.OAIConfirmationConcurrency = 2
+	}
+	if v.OAIConfirmationConcurrency > 100 {
+		v.OAIConfirmationConcurrency = 100
+	}
 	v.OAIConfirmation = v.OAIConfirmation.Normalized()
 	if strings.TrimSpace(v.MerchantAPIURL) == "" {
 		v.MerchantAPIURL = refundmerchant.DefaultSubmitURL

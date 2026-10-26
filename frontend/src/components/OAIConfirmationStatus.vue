@@ -6,8 +6,8 @@ import { formatTime } from '../utils'
 import { dispositionLabels } from '../pro-disposition'
 const props = defineProps({ records: Object, mode: String, labelled: Boolean })
 const entries = computed(() => props.mode ? [[props.mode, props.records?.[props.mode]]] : Object.entries(props.records || {}))
-const label = record => record?.status === 'confirmed' && record.confirmed_at ? 'OAI 已确认' : ({ waiting: '等待询问', preparing:'预备 Help 会话', running: '询问中', failed: '询问失败', unconfirmed:'OAI 未确认', review:'待核实', stopped:'已停止', disabled: '未启用' }[record?.status] || '未确认')
-const tone = record => record?.status === 'confirmed' && record.confirmed_at ? 'success' : ['failed','unconfirmed'].includes(record?.status) ? 'danger' : 'pending'
+const label = record => record?.status === 'confirmed' && (record.confirmed_at || record.confirmation_source==='card_return') ? 'OAI 已确认' : ({ waiting: '等待询问', preparing:'预备 Help 会话', running: '询问中', failed: '询问失败', unconfirmed:'OAI 未确认', review:'待核实', stopped:'已停止', disabled: '未启用' }[record?.status] || '未确认')
+const tone = record => record?.status === 'confirmed' && (record.confirmed_at || record.confirmation_source==='card_return') ? 'success' : ['failed','unconfirmed'].includes(record?.status) ? 'danger' : 'pending'
 </script>
 <template>
   <div class="oai-confirmation" aria-label="OAI 是否确认">
@@ -17,6 +17,7 @@ const tone = record => record?.status === 'confirmed' && record.confirmed_at ? '
       <small v-if="!mode && entries.length > 1">{{dispositionLabels[key]}}</small>
       <OAIConfirmationReply :record="record"><StatusPill :tone="tone(record)">{{label(record)}}</StatusPill></OAIConfirmationReply>
       <small v-if="record?.confirmed_at">{{formatTime(record.confirmed_at)}}</small>
+      <small v-if="record?.confirmation_source==='card_return'">已回款，自动确认</small>
       <template v-else-if="record?.status === 'waiting'">
         <small v-if="record.not_before">最早询问 {{formatTime(record.not_before)}}</small>
       </template>

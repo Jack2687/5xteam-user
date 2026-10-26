@@ -94,6 +94,7 @@ type Server struct {
 	proMergeV2Login           func(context.Context, string) (map[string]any, error)
 	proOAILogin               func(context.Context, string) (map[string]any, error)
 	proOAIJobs                sync.Map
+	proOAIMu                  sync.Mutex
 	proDeleteHooks            *proDeactivationHooks
 	proFinalStepMu            sync.Mutex
 	proFinalStepJobs          map[*proAutomaticFinalStepJob]struct{}

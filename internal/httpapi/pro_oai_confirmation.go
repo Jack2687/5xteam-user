@@ -14,13 +14,13 @@ import (
 )
 
 type proOAILoginKey struct{}
+type proOAIJob struct {
+	Mode   string
+	Cancel context.CancelFunc
+}
 type proOAILoginOptions struct {
 	Config map[string]any
 	Call   func(string, map[string]any) (any, error)
-}
-
-func oaiPrompt(email string) string {
-	return "请查询订阅邮箱【" + email + "】对应的最近一笔网页订阅退款，确认是否已经发起或处理，并给我预计入账时间和发票号。请以实际查询结果为准，不要仅凭我的描述推断；这次仅查询，不要新建退款、取消订阅或删除账户申请。\n如果确认退款已发起或已处理，请在最后一行仅输入：已成功\n如果确认退款未发起或没有退款，请在最后一行仅输入：已失败\n如果无法查询或不能确认，请在最后一行仅输入：待核实"
 }
 
 func (s *Server) proOAICheckpoint(ctx context.Context, email, mode string, generation int, prepare bool, method string, args map[string]any) (any, error) {
@@ -104,14 +104,15 @@ func (s *Server) proOAICheckpoint(ctx context.Context, email, mode string, gener
 				return
 			}
 			v.Answer, v.MessageID, v.CheckedAt = answer, id, &now
-			v.Status = model.ProOAIAnswerStatus(email, answer)
+			v.Status = model.ProOAIAnswerStatus(email, answer, model.ProOAIInquiry{SuccessMarker: v.SuccessMarker, FailureMarker: v.FailureMarker, ReviewMarker: v.ReviewMarker})
 			v.NextAttemptAt = nil
 			v.Error = ""
 			v.Step("reply", "completed", now)
 			v.Step("confirm", v.Status, now)
 			if v.Status == "confirmed" {
 				v.ConfirmedAt = &now
-			} else if v.Status == "unconfirmed" && v.Attempts < v.MaxAttempts {
+				v.ConfirmationSource = "help"
+			} else if (v.Status == "unconfirmed" || v.Status == "review") && v.Attempts < v.MaxAttempts {
 				next := now.Add(time.Duration(v.RetryIntervalSeconds) * time.Second)
 				v.NextAttemptAt = &next
 			}
@@ -125,6 +126,13 @@ func (s *Server) proOAICheckpoint(ctx context.Context, email, mode string, gener
 	})
 	if err = errors.Join(err, checkpointErr); err == nil && session != nil {
 		err = s.store.SaveProOAISession(email, mode, generation, session)
+		if err == nil {
+			_, err = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+				if v := p.ProOAIConfirmations[mode]; v != nil && v.Generation == generation && v.Status != "stopped" && v.ConfirmedAt == nil {
+					v.FreshLogin = false
+				}
+			})
+		}
 	}
 	return true, err
 }
@@ -155,7 +163,7 @@ func (s *Server) runProOAI(ctx context.Context, email, mode string) error {
 	var generation int
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		v := p.ProOAIConfirmations[mode]
-		if !v.Due(time.Now()) || (!cfg.OAIConfirmation[mode].Enabled && !v.Manual) || p.ProAuto.StopRequested || p.ProWorkflowRunning {
+		if ctx.Err() != nil || !v.Due(time.Now()) || (!cfg.OAIConfirmation[mode].Enabled && !v.Manual) || p.ProAuto.StopRequested || p.ProWorkflowRunning {
 			return
 		}
 		if v.MaxAttempts < 1 {
@@ -170,14 +178,17 @@ func (s *Server) runProOAI(ctx context.Context, email, mode string) error {
 			v.Error = "已达到总尝试次数，请手动重试"
 			return
 		}
-		// A definitive negative answer permits a later follow-up in the same thread.
+		// A complete negative or inconclusive answer permits a later follow-up.
 		// An unknown send/partial stream retains the original send checkpoint.
-		if v.Status == "unconfirmed" {
+		if v.Status == "unconfirmed" || v.Status == "review" {
 			v.SentAt = nil
 			v.UserMessageID = ""
 			v.MessageID = ""
 		}
 		v.Generation++
+		if v.OrderID == "" {
+			v.OrderID = p.ProAuto.OrderID
+		}
 		generation = v.Generation
 		v.Attempts++
 		v.Status = "running"
@@ -186,8 +197,10 @@ func (s *Server) runProOAI(ctx context.Context, email, mode string) error {
 		if v.RequestID == "" || v.SentAt == nil {
 			v.RequestID = fmt.Sprintf("oai-%s-%s-%d", p.ID, mode, time.Now().UnixNano())
 		}
-		if v.Prompt == "" {
-			v.Prompt = oaiPrompt(email)
+		if v.Prompt == "" || v.SentAt == nil {
+			inquiry := cfg.OAIInquiry.Normalized()
+			v.Prompt = inquiry.Question(email)
+			v.SuccessMarker, v.FailureMarker, v.ReviewMarker = inquiry.SuccessMarker, inquiry.FailureMarker, inquiry.ReviewMarker
 		}
 		v.Step("wait", "completed", time.Now())
 		run = true
@@ -196,7 +209,10 @@ func (s *Server) runProOAI(ctx context.Context, email, mode string) error {
 		return err
 	}
 	v := p.ProOAIConfirmations[mode]
-	snapshot, err := s.store.ProOAISession(email, mode)
+	var snapshot map[string]any
+	if !v.FreshLogin {
+		snapshot, err = s.store.ProOAISession(email, mode)
+	}
 	if err != nil {
 		return s.finishProOAIError(email, mode, generation, err)
 	}
@@ -288,41 +304,92 @@ func (s *Server) proOAIDeletionContext(ctx context.Context, email string) (conte
 }
 
 func (s *Server) startProOAIWorker(ctx context.Context) {
-	// Two independent workers; existing per-account locks serialize all account
-	// mutations. No Pro restock or disposition concurrency slot is consumed.
-	for range 2 {
+	s.proAutoWG.Add(1)
+	go func() {
+		defer s.proAutoWG.Done()
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		var synced time.Time
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				if now.Sub(synced) >= 30*time.Second {
+					if err := s.syncProOAIRefunds(); err != nil {
+						continue
+					}
+					synced = now
+				}
+				// New settings apply to admission on every sweep. Reducing the
+				// limit drains running work without interrupting its conversations.
+				s.dispatchProOAI(ctx)
+			}
+		}
+	}()
+}
+
+func (s *Server) syncProOAIRefunds() error {
+	s.proOAIMu.Lock()
+	defer s.proOAIMu.Unlock()
+	emails, err := s.store.SyncProOAIRefundConfirmations()
+	if err != nil {
+		return err
+	}
+	for _, email := range emails {
+		if value, ok := s.proOAIJobs.Load(email); ok {
+			job := value.(*proOAIJob)
+			p, _, readErr := s.store.MailAccountCredential(email)
+			if readErr != nil {
+				return readErr
+			}
+			if v := p.ProOAIConfirmations[job.Mode]; v != nil && v.ConfirmationSource == "card_return" {
+				job.Cancel()
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) dispatchProOAI(ctx context.Context) {
+	s.proOAIMu.Lock()
+	defer s.proOAIMu.Unlock()
+	cfg, _, _, err := s.store.ProSettings()
+	if err != nil || ctx.Err() != nil {
+		return
+	}
+	active := 0
+	s.proOAIJobs.Range(func(_, _ any) bool { active++; return true })
+	if active >= cfg.OAIConfirmationConcurrency {
+		return
+	}
+	items, err := s.store.ProOAIWork(time.Now(), false)
+	if err != nil {
+		return
+	}
+	for _, item := range items {
+		if item.Blocked || (!item.Manual && !cfg.OAIConfirmation[item.Mode].Enabled) {
+			continue
+		}
+		if ctx.Err() != nil || active >= cfg.OAIConfirmationConcurrency {
+			return
+		}
+		value, _ := s.proLocks.LoadOrStore("account:"+item.Email, &sync.Mutex{})
+		lock := value.(*sync.Mutex)
+		if !lock.TryLock() {
+			continue
+		}
+		call, cancel := context.WithTimeout(ctx, 8*time.Minute)
+		job := &proOAIJob{Mode: item.Mode, Cancel: cancel}
+		s.proOAIJobs.Store(item.Email, job)
+		active++
 		s.proAutoWG.Add(1)
 		go func() {
 			defer s.proAutoWG.Done()
-			ticker := time.NewTicker(3 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-				}
-				items, err := s.store.ProOAIWork(time.Now(), false)
-				if err != nil {
-					continue
-				}
-				for _, item := range items {
-					if ctx.Err() != nil {
-						return
-					}
-					value, _ := s.proLocks.LoadOrStore("account:"+item.Email, &sync.Mutex{})
-					lock := value.(*sync.Mutex)
-					if !lock.TryLock() {
-						continue
-					}
-					call, cancel := context.WithTimeout(ctx, 8*time.Minute)
-					s.proOAIJobs.Store(item.Email, cancel)
-					_ = s.runProOAI(call, item.Email, item.Mode)
-					s.proOAIJobs.Delete(item.Email)
-					cancel()
-					lock.Unlock()
-				}
-			}
+			defer lock.Unlock()
+			defer cancel()
+			defer s.proOAIJobs.CompareAndDelete(item.Email, job)
+			_ = s.runProOAI(call, item.Email, item.Mode)
 		}()
 	}
 }
@@ -330,16 +397,23 @@ func (s *Server) startProOAIWorker(ctx context.Context) {
 func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	var in struct {
-		Mode   string `json:"mode"`
-		Action string `json:"action"`
+		Mode    string `json:"mode"`
+		Action  string `json:"action"`
+		OrderID string `json:"order_id"`
 	}
 	if decodeJSON(w, r, &in, 4096) != nil {
 		return
 	}
-	if (in.Action != "retry" && in.Action != "stop") || !validOAIMode(in.Mode) {
+	if (in.Action != "retry" && in.Action != "stop" && in.Action != "restart") || !validOAIMode(in.Mode) {
 		writeAPI(w, 400, nil, "OAI 操作无效")
 		return
 	}
+	if err := s.syncProOAIRefunds(); err != nil {
+		writeAPI(w, 500, nil, "读取回款确认状态失败")
+		return
+	}
+	s.proOAIMu.Lock()
+	defer s.proOAIMu.Unlock()
 	cfg, _, _, err := s.store.ProSettings()
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
@@ -348,10 +422,15 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 	var actionErr error
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		v := p.ProOAIConfirmations[in.Mode]
+		if in.OrderID != "" && ((v != nil && v.OrderID != "" && v.OrderID != in.OrderID) || (v == nil && p.ProAuto.OrderID != "" && p.ProAuto.OrderID != in.OrderID)) {
+			actionErr = errors.New("账号已关联其他开通订单，请刷新后操作")
+			return
+		}
 		// Explicit manual catch-up is allowed for an already completed historical
 		// outcome; enabling settings alone never backfills old accounts.
-		if in.Action == "retry" && v == nil && p.ManagementScope == "pro" && p.OAIConfirmationPrerequisite(in.Mode) && !p.ProAuto.StopRequested {
+		if (in.Action == "retry" || in.Action == "restart") && v == nil && p.ManagementScope == "pro" && p.OAIConfirmationPrerequisite(in.Mode) && !p.ProAuto.StopRequested {
 			v = model.NewProOAIConfirmation(in.Mode, cfg.OAIConfirmation[in.Mode])
+			v.OrderID = p.ProAuto.OrderID
 			v.CompletedAt = time.Now()
 			if in.Mode == "merge_v2" && p.ProMergeV2.CompletedAt != nil {
 				v.CompletedAt = *p.ProMergeV2.CompletedAt
@@ -369,7 +448,7 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 			actionErr = errors.New("该流程尚未完成，没有 OAI 确认任务")
 			return
 		}
-		if v.ConfirmedAt != nil {
+		if v.ConfirmedAt != nil && (in.Action != "restart" || v.ConfirmationSource == "card_return") {
 			actionErr = errors.New("OAI 已确认，不再执行")
 			return
 		}
@@ -377,7 +456,7 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 			actionErr = errors.New("OAI 确认正在执行")
 			return
 		}
-		if in.Action == "retry" && p.ProAuto.StopRequested {
+		if in.Action != "stop" && p.ProAuto.StopRequested {
 			actionErr = errors.New("账号全自动已停止，请先恢复账号流程")
 			return
 		}
@@ -389,7 +468,15 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 			v.Error = "已手动停止 OAI 确认"
 			v.Step(v.Stage, "interrupted", now)
 		} else {
-			if v.Status == "unconfirmed" || v.MessageID != "" {
+			if in.Action == "restart" {
+				// Retain history, but acquire a fresh login and Help authorization.
+				v.FreshLogin = true
+				v.PreparedAt, v.SentAt, v.CheckedAt, v.ConfirmedAt = nil, nil, nil, nil
+				v.ConfirmationSource, v.ConversationID, v.UserMessageID, v.MessageID, v.RequestID, v.Answer = "", "", "", "", "", ""
+				v.Steps, v.StepTimes = nil, nil
+				v.Step("wait", "waiting", now)
+			}
+			if v.Status == "unconfirmed" || v.Status == "review" || v.MessageID != "" {
 				v.SentAt = nil
 				v.UserMessageID = ""
 				v.MessageID = ""
@@ -408,9 +495,12 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, err.Error())
 		return
 	}
-	if in.Action == "stop" {
-		if cancel, ok := s.proOAIJobs.Load(email); ok {
-			cancel.(context.CancelFunc)()
+	if in.Action == "stop" || in.Action == "restart" {
+		if value, ok := s.proOAIJobs.Load(email); ok {
+			job := value.(*proOAIJob)
+			if job.Mode == in.Mode {
+				job.Cancel()
+			}
 		}
 	}
 	writeAPI(w, 200, p, "")

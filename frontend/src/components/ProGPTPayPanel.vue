@@ -1,5 +1,6 @@
 <script setup>
 import { dispositionLabels, normalizeOAISettings } from '../pro-disposition'
+import { defaultOAIInquiry } from '../oai-confirmation'
 import { oaiTemplates } from '../card-platform'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
@@ -78,6 +79,8 @@ async function changeProvider(event) {
 }
 const automation = reactive({ purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, auto_delete_enabled: false, auto_merchant_enabled:false,auto_merge_v2_enabled:false,merchant_success_fee_usd:'0.00', merchant_api_url:'https://refunds.llmrefund.com/v1/refunds', merchant_key_present:false, deletion_check_interval_seconds: 300, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 automation.oai_confirmation=normalizeOAISettings()
+automation.oai_confirmation_concurrency=2
+automation.oai_inquiry={...defaultOAIInquiry}
 watch(()=>automation.oai_confirmation, value=>{if(!value || Object.keys(dispositionLabels).some(mode=>!value[mode]))automation.oai_confirmation=normalizeOAISettings(value)},{immediate:true})
 const merchantAPIKey=ref('')
 const selectDisposition=(key)=>{if(automation[key])for(const name of ['auto_merge_enabled','auto_delete_enabled','auto_merchant_enabled','auto_merge_v2_enabled'])if(name!==key)automation[name]=false}
@@ -321,7 +324,12 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <label class="toggle-row wide"><div><strong>查额度达标后合并空间2.0</strong><small>邀请 → 重新登录受邀团队 → 提交导出停用 → 移出团队 → 调整分组。仅明确受理才继续；流程完成不代表上游停用或退款完成，结果不明时保留成员。</small></div><input v-model="automation.auto_merge_v2_enabled" @change="selectDisposition('auto_merge_v2_enabled')" type="checkbox"/><i></i></label>
         <section class="oai-confirmation-settings wide" aria-label="OAI 确认设置">
           <h4>流程完成后询问 OAI</h4>
-          <p class="table-note">各流程完成后独立等待并询问 Help，默认等待 300 秒、间隔 300 秒、总计尝试 3 次。已确认后停止；回答不明确时待人工核实，历史完成账号不会自动补问。删除账户前会尝试保留 Help 会话。</p>
+          <p class="table-note">各流程完成后独立等待并询问 Help，默认等待 300 秒、间隔 300 秒、总计尝试 3 次。已确认或已回款后停止；待核实也按间隔和次数重试，历史完成账号不会自动补问。删除账户前会尝试保留 Help 会话。</p>
+          <label class="oai-delay"><span>OAI 确认并发数</span><input v-model.number="automation.oai_confirmation_concurrency" type="number" min="1" max="100" step="1" required aria-label="OAI 确认并发数"/><span>个账号（1～100）</span></label>
+          <p class="table-note">四种流程共用此并发；同一账号串行。降低并发后，正在执行的任务先完成。</p>
+          <label class="field"><span>提问内容</span><textarea v-model="automation.oai_inquiry.prompt" rows="6" maxlength="6000" required aria-label="OAI 提问内容"/><small v-pre>可用 {{email}} 自动填入邮箱，{{success_marker}}、{{failure_marker}}、{{review_marker}} 自动填入下方标识。修改后用于新一轮提问。</small></label>
+          <div class="oai-markers"><label v-for="(label,key) in {success_marker:'成功标识',failure_marker:'失败标识',review_marker:'待核实标识'}" :key="key" class="field"><span>最后一行 · {{label}}</span><input v-model="automation.oai_inquiry[key]" maxlength="40" required :aria-label="'OAI '+label"/></label></div>
+          <p class="table-note">最后一行按标识识别；成功回答仍须明确已发起／处理退款，且正文没有冲突。</p>
           <div v-for="(label,mode) in dispositionLabels" :key="mode" class="oai-rule">
             <label class="oai-rule-toggle"><input v-model="automation.oai_confirmation[mode].enabled" type="checkbox" :aria-label="label+'完成后询问 OAI'"/><span>{{label}}完成后询问</span></label>
             <label class="oai-delay"><span>等待</span><input v-model.number="automation.oai_confirmation[mode].delay_seconds" type="number" min="1" max="604800" step="1" required :aria-label="label+' OAI 询问等待秒数'"/><span>秒</span></label>
@@ -406,6 +414,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 </template>
 
 <style scoped>
+.oai-markers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}.oai-confirmation-settings textarea{min-height:150px}@media(max-width:650px){.oai-markers{grid-template-columns:1fr}}
 .purchase-window{padding:18px 0;border-bottom:1px solid var(--line);margin-bottom:16px}.purchase-window .settings-fields{margin-bottom:12px}
 
 .cmsnav-terms{display:flex;align-items:flex-start;gap:8px;margin:16px 0;font-size:13px;line-height:1.6}.cmsnav-terms input{width:16px;height:16px;margin-top:3px;flex-shrink:0}.cmsnav-terms a{color:var(--green-strong);text-decoration:underline}

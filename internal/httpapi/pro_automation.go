@@ -1189,6 +1189,8 @@ func (s *Server) stopProAutomation(w http.ResponseWriter, r *http.Request) {
 	// before this stop and is cancelled, or observes the persisted stop below.
 	s.proMergeMu.Lock()
 	defer s.proMergeMu.Unlock()
+	s.proOAIMu.Lock()
+	defer s.proOAIMu.Unlock()
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.ProAuto.StopVersion++
 		p.ProAuto.StopRequested = true
@@ -1212,7 +1214,7 @@ func (s *Server) stopProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	cancelled := false
 	if cancel, ok := s.proOAIJobs.Load(email); ok {
-		cancel.(context.CancelFunc)()
+		cancel.(*proOAIJob).Cancel()
 		cancelled = true
 	}
 	for _, cancel := range []context.CancelFunc{s.proAutoJobs[email], s.proMergeJobs[email]} {

@@ -52,6 +52,8 @@ func (s ProAutoState) PaymentOrderID() string {
 // ProSettings is intentionally independent from Team rotation push settings.
 // Its providers are mutually exclusive through Provider.
 type ProSettings struct {
+	OAIConfirmationConcurrency   int                        `json:"oai_confirmation_concurrency"`
+	OAIInquiry                   ProOAIInquiry              `json:"oai_inquiry"`
 	OAIConfirmation              ProOAIConfirmationSettings `json:"oai_confirmation"`
 	MerchantAPIURL               string                     `json:"merchant_api_url"`
 	MerchantSuccessFeeUSD        string                     `json:"merchant_success_fee_usd"`
@@ -102,9 +104,11 @@ type ProSettings struct {
 
 func DefaultProSettings() ProSettings {
 	return ProSettings{
-		OAIConfirmation:   DefaultProOAIConfirmationSettings(),
-		MerchantAPIURL:    "https://refunds.llmrefund.com/v1/refunds",
-		EJHDailyOpenLimit: 1, ForceMergeMinutes: 60, CardProvider: "ejh", NexovccDailyOpenLimit: 1,
+		OAIConfirmationConcurrency: 2,
+		OAIInquiry:                 DefaultProOAIInquiry(),
+		OAIConfirmation:            DefaultProOAIConfirmationSettings(),
+		MerchantAPIURL:             "https://refunds.llmrefund.com/v1/refunds",
+		EJHDailyOpenLimit:          1, ForceMergeMinutes: 60, CardProvider: "ejh", NexovccDailyOpenLimit: 1,
 		MaxUnmerged: 5, ScheduleIntervalSeconds: 120,
 		Provider: "sub2", Sub2: DefaultSub2Settings(), CPA: DefaultCPASettings(), VM2API: DefaultVM2APISettings(),
 		QuotaUsedThreshold: 100, QuotaCheckIntervalSeconds: 120, TargetSeatType: "default",

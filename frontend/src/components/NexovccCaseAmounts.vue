@@ -27,6 +27,7 @@ const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(
    <div><span>差额（付款 − 回款）</span><strong>{{money(value.difference)}} USD</strong><small>{{rmb(value.difference)}} R</small><small>{{row.payment_only?'只付款本金单列，不计业务成本':!row.match?'待匹配流水':value.refundCompleted?'退款已完成，差额计入卡内损耗':value.closed?'已结算差额':'待回款，不计成本'}}</small></div>
    <div><span>消费收益</span><strong>{{money(value.revenue)}} R</strong><small>{{value.revenue===null?'消费尚未同步':'Sub2 实际消费'}}</small></div>
   </div>
+  <details class="fee-details"><summary>费用与回款明细</summary>
   <p v-if="['opened','waiting'].includes(row.state)||value.pending>0" class="return-note">尚待回款：<b>{{money(value.pending)}} USD</b>（已扣清算）</p>
   <p v-if="value.manualUnconfirmed" class="warning">人工标记已回款；流水尚未确认全额回款，金额仍按实际记录显示。</p>
   <p v-if="row.match&&!row.match.group.valid" class="warning">{{row.match.group.problem||'流水金额待核实'}}</p>
@@ -41,6 +42,7 @@ const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(
     <div v-for="trade in [...value.trades,...value.relatedTrades]" :key="trade.id" class="trade-line"><span>{{tradeStates[trade.status]||trade.status}} · {{at(trade.at)}}<small>{{trade.id}} · 授权码 {{trade.authorization||'—'}}</small></span><strong>{{trade.amount}} {{trade.currency}}<small>{{trade.merchant_amount}} {{trade.merchant_currency}}</small></strong></div>
     <div class="links"><button @click="$emit('details',{row,options:{type:'trades'}})">交易明细</button><button :disabled="!row.match" @click="$emit('details',{row,options:{type:'funds'}})">费用明细</button><button :disabled="running||row.payment_status!=='success'" @click="$emit('match',row)">关联流水</button></div>
    </div>
+  </details>
   </details>
  </div>
 </template>

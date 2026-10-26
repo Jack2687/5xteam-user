@@ -739,6 +739,8 @@ func (s *Server) saveProSettings(w http.ResponseWriter, r *http.Request) {
 	input.MerchantAPIURL = current.MerchantAPIURL
 	input.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.OAIConfirmation = current.OAIConfirmation
+	input.OAIConfirmationConcurrency = current.OAIConfirmationConcurrency
+	input.OAIInquiry = current.OAIInquiry
 	input.TargetAdminID, input.TargetSeatType = current.TargetAdminID, current.TargetSeatType
 	if input.AutoMergeEnabled && strings.TrimSpace(input.TargetAdminID) == "" {
 		writeAPI(w, 400, nil, "开启自动合并前请选择目标母号")

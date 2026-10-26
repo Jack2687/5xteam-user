@@ -11,13 +11,15 @@ const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const emit=defineEmits(['updated','open-card'])
 const opened=ref(false),busy=ref(false),loading=ref(false),error=ref(''),target=ref({}),data=ref({cards:[],cases:[],finance:{},groups:[]})
 const edit=ref(null),ledger=ref(null),state=ref(''),page=ref(1),size=ref(props.defaultPageSize)
-let generation=0
+let generation=0, pollTimer
+async function oaiUpdated(){await load();emit('updated')}
+watch(opened,value=>{clearInterval(pollTimer);if(value)pollTimer=setInterval(()=>{if(!loading.value&&!busy.value)load(true)},5000)})
 const rows=computed(()=>sortReturnCases(data.value.cases.filter(c=>(!target.value.email||c.email.toLowerCase()===target.value.email.toLowerCase())&&(!target.value.cardID||c.card_id===target.value.cardID)&&(!state.value||c.state===state.value))))
 const visible=computed(()=>rows.value.slice((page.value-1)*size.value,page.value*size.value))
 watch(state,()=>page.value=1)
 watch(()=>props.defaultPageSize,v=>{size.value=v;page.value=1})
-async function load(){
- const gen=++generation;loading.value=true;error.value=''
+async function load(background=false){
+ const gen=++generation;if(!background)loading.value=true;error.value=''
  try{const result=await api('/api/nexovcc/dashboard');if(gen===generation){data.value=result;page.value=Math.min(page.value,Math.max(1,Math.ceil(rows.value.length/size.value)))}}
  catch(e){if(gen===generation)error.value=e.message}
  finally{if(gen===generation)loading.value=false}
@@ -42,7 +44,7 @@ async function save(){
   await api(path+(d.type==='match'?'/match':''),{method:'PUT',body});edit.value=null;await load();emit('updated')
  }catch(e){error.value=e.message}finally{busy.value=false}
 }
-onBeforeUnmount(()=>generation++)
+onBeforeUnmount(()=>{generation++;clearInterval(pollTimer)})
 defineExpose({open})
 async function tradePurposeUpdated(group){
  const index=data.value.groups.findIndex(g=>g.id===group.id)
@@ -66,7 +68,7 @@ async function tradePurposeUpdated(group){
    <p class="hint">手动状态不改变真实金额；付款结果未知时不能用回款状态解除占用。</p>
    <div class="panel-actions"><button class="btn primary" :disabled="busy||!edit.confirm">{{busy?'保存中…':'保存'}}</button><button type="button" class="btn ghost" :disabled="busy" @click="edit=null">取消</button></div>
   </form>
-  <NexovccCaseTable :data="data" v-else-if="!loading" compact :rows="visible" :cards="data.cards" :finance="data.finance" :running="busy" @state="changeState" @match="changeMatch" @details="details" @card="openCard"/>
+  <NexovccCaseTable @updated="oaiUpdated" :data="data" v-else-if="!loading" compact :rows="visible" :cards="data.cards" :finance="data.finance" :running="busy" @state="changeState" @match="changeMatch" @details="details" @card="openCard"/>
   <Pagination v-if="!edit" :page="page" :page-size="size" :total="rows.length" @update:page="page=$event" @update:page-size="size=$event;page=1"/>
  </section></div></Teleport>
  <NexovccLedgerDialog v-if="opened&&ledger" :data="data" :options="ledger" :page-size="size" @close="ledger=null" @updated="tradePurposeUpdated"/>

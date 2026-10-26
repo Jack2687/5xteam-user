@@ -27,6 +27,12 @@ type ProDeactivation struct {
 }
 
 func (s ProSettings) ValidateDisposition() error {
+	if err := s.OAIInquiry.Validate(); err != nil {
+		return err
+	}
+	if s.OAIConfirmationConcurrency < 0 || s.OAIConfirmationConcurrency > 100 {
+		return errors.New("OAI 确认并发数须为 1～100")
+	}
 	if err := s.OAIConfirmation.Validate(); err != nil {
 		return err
 	}

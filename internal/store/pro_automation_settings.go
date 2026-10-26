@@ -59,6 +59,8 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	v.AutoMerchantEnabled = input.AutoMerchantEnabled
 	v.AutoMergeV2Enabled = input.AutoMergeV2Enabled
 	v.OAIConfirmation = input.OAIConfirmation.Normalized()
+	v.OAIConfirmationConcurrency = input.OAIConfirmationConcurrency
+	v.OAIInquiry = input.OAIInquiry.Normalized()
 	v.MerchantSuccessFeeUSD = input.MerchantSuccessFeeUSD
 	v.MerchantAPIURL = merchantURL
 	var merchantSecret string

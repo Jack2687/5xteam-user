@@ -9,11 +9,14 @@ import (
 	"time"
 )
 
-type ProOAIWorkItem struct{ Email, Mode string }
+type ProOAIWorkItem struct {
+	Email, Mode     string
+	Manual, Blocked bool
+}
 
 func (s *Store) ProOAIWork(now time.Time, recoverRunning bool) ([]ProOAIWorkItem, error) {
 	s.mu.Lock()
-	rows, err := s.db.Query(`SELECT m.email,j.key,j.value FROM pro_oai_confirmation_accounts c JOIN mail_accounts m ON m.email=c.email JOIN json_each(c.profile) j WHERE json_extract(m.profile,'$.management_scope')='pro' AND json_extract(j.value,'$.status') IN ('waiting','failed','unconfirmed','running') ORDER BY json_extract(j.value,'$.completed_at'),m.email,j.key`)
+	rows, err := s.db.Query(`SELECT m.email,j.key,j.value,coalesce(json_extract(m.profile,'$.pro_auto.stop_requested'),0) OR coalesce(json_extract(m.profile,'$.pro_workflow_running'),0) FROM pro_oai_confirmation_accounts c JOIN mail_accounts m ON m.email=c.email JOIN json_each(c.profile) j WHERE json_extract(m.profile,'$.management_scope')='pro' AND json_extract(j.value,'$.status') IN ('waiting','failed','unconfirmed','review','running') ORDER BY json_extract(j.value,'$.completed_at'),m.email,j.key`)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
@@ -25,13 +28,14 @@ func (s *Store) ProOAIWork(now time.Time, recoverRunning bool) ([]ProOAIWorkItem
 		var item ProOAIWorkItem
 		var raw string
 		var v model.ProOAIConfirmation
-		if err = rows.Scan(&item.Email, &item.Mode, &raw); err != nil {
+		if err = rows.Scan(&item.Email, &item.Mode, &raw, &item.Blocked); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(raw), &v); err != nil {
 			return nil, err
 		}
 		if v.Due(now) || recoverRunning && v.Status == "running" {
+			item.Manual = v.Manual
 			out = append(out, item)
 		}
 	}

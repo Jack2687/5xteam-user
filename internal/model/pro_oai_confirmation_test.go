@@ -1,6 +1,37 @@
 package model
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestProOAICustomMarkersAndReviewDue(t *testing.T) {
+	rule := ProOAIInquiry{Prompt: "{{email}} {{success_marker}} {{failure_marker}} {{review_marker}}", SuccessMarker: "确认完成!", FailureMarker: "未处理", ReviewMarker: "未知"}
+	if err := rule.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := rule.Question("child@example.com"); got != "child@example.com 确认完成! 未处理 未知" {
+		t.Fatal(got)
+	}
+	for _, tc := range []struct{ answer, want string }{{"退款已处理。\n确认完成!", "confirmed"}, {"未找到退款记录。\n未处理", "unconfirmed"}, {"无法查询。\n未知", "review"}, {"退款已处理。\n已成功", "review"}, {"无法确认退款已处理。\n确认完成!", "review"}} {
+		if got := ProOAIAnswerStatus("child@example.com", tc.answer, rule); got != tc.want {
+			t.Fatal(tc, got)
+		}
+	}
+	rule.FailureMarker = rule.SuccessMarker
+	if rule.Validate() == nil {
+		t.Fatal("duplicate markers accepted")
+	}
+	past := time.Now().Add(-time.Hour)
+	v := &ProOAIConfirmation{Status: "review", CompletedAt: past, CheckedAt: &past, Attempts: 1, MaxAttempts: 3, RetryIntervalSeconds: 300}
+	if !v.Due(time.Now()) {
+		t.Fatal("legacy review never retries")
+	}
+	v.Attempts = 3
+	if v.Due(time.Now()) {
+		t.Fatal("review ignores attempt cap")
+	}
+}
 
 func TestProOAIAnswerStatus(t *testing.T) {
 	for _, tc := range []struct{ name, answer, want string }{

@@ -165,7 +165,7 @@ func TestProOAINotDueDisabledOrStopped(t *testing.T) {
 	}
 }
 
-func TestProOAINegativeRetriesButUnknownAnswerDoesNot(t *testing.T) {
+func TestProOAINegativeAndUnknownAnswersRetry(t *testing.T) {
 	for _, answer := range []string{"没有退款。\n已失败", "无法查询。\n待核实"} {
 		t.Run(answer, func(t *testing.T) {
 			s, st, email := oaiFixture(t)
@@ -174,13 +174,7 @@ func TestProOAINegativeRetriesButUnknownAnswerDoesNot(t *testing.T) {
 				t.Fatal(err)
 			}
 			v := oaiRecord(t, st, email)
-			if answer == "无法查询。\n待核实" {
-				if v.Status != "review" || v.NextAttemptAt != nil {
-					t.Fatal("ambiguous auto retried")
-				}
-				return
-			}
-			if v.Status != "unconfirmed" || v.NextAttemptAt == nil {
+			if (v.Status != "unconfirmed" && v.Status != "review") || v.NextAttemptAt == nil {
 				t.Fatal("negative not scheduled")
 			}
 			past := time.Now().Add(-time.Minute)

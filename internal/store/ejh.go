@@ -12,6 +12,7 @@ import (
 
 	"chatgpt-space-merge/internal/ejh"
 	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 func (s *Store) initializeEJH() error {
@@ -603,7 +604,7 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 	}
 	rows, e := q.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other'),charge.sealed,o.profile,
         CASE WHEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_identity'),'')<>''
-        THEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_snapshot'),0) END,COALESCE(oc.profile,'{}') FROM ejh_cases c
+        THEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_snapshot'),0) END,COALESCE(oc.profile,'{}'),COALESCE(m.profile,'{}') FROM ejh_cases c
         LEFT JOIN ejh_records charge ON charge.kind='trade' AND charge.id=json_extract(c.profile,'$.original_trade_id')
         LEFT JOIN gptpay_orders o ON o.id=c.id
 		LEFT JOIN mail_accounts m ON m.email=c.email
@@ -624,8 +625,8 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		var ejhCardID, cardType string
 		var chargeRaw, orderRaw sql.NullString
 		var consumption sql.NullFloat64
-		var oaiRaw string
-		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType, &chargeRaw, &orderRaw, &consumption, &oaiRaw); e != nil {
+		var oaiRaw, oaiAccountRaw string
+		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType, &chargeRaw, &orderRaw, &consumption, &oaiRaw, &oaiAccountRaw); e != nil {
 			return nil, e
 		}
 		var v ejh.Case
@@ -634,6 +635,14 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		}
 		if e = json.Unmarshal([]byte(oaiRaw), &v.ProOAIConfirmations); e != nil {
 			return nil, e
+		}
+		var oaiAccount model.MailAccountProfile
+		if e = json.Unmarshal([]byte(oaiAccountRaw), &oaiAccount); e != nil {
+			return nil, e
+		}
+		v.ProOAIActionsAvailable = oaiAccount.ManagementScope == "pro" && (oaiAccount.ProAuto.OrderID == "" || oaiAccount.ProAuto.OrderID == v.ID)
+		if v.ProOAIActionsAvailable {
+			v.ProOAIAvailableModes = oaiAccount.OAIAvailableModes()
 		}
 		v.MerchantFeeUSD = merchantFees[v.ID]
 		v.ConsumptionTotal = nil

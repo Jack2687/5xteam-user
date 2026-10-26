@@ -72,9 +72,11 @@ func ValidCaseState(state string) bool {
 }
 
 type Case struct {
-	ProOAIConfirmations map[string]*model.ProOAIConfirmation `json:"pro_oai_confirmations,omitempty"`
-	ReversalFee         *ReversalFeeRate                     `json:"reversal_fee,omitempty"`
-	MerchantFeeUSD      string                               `json:"merchant_fee_usd"`
+	ProOAIAvailableModes   []string                             `json:"pro_oai_available_modes,omitempty"`
+	ProOAIActionsAvailable bool                                 `json:"pro_oai_actions_available"`
+	ProOAIConfirmations    map[string]*model.ProOAIConfirmation `json:"pro_oai_confirmations,omitempty"`
+	ReversalFee            *ReversalFeeRate                     `json:"reversal_fee,omitempty"`
+	MerchantFeeUSD         string                               `json:"merchant_fee_usd"`
 	// Removal only affects the unopened return record in the EJH dashboard.
 	// Keep the underlying case for payment reconciliation and card occupancy.
 	RemovedAt *time.Time `json:"removed_at,omitempty"`

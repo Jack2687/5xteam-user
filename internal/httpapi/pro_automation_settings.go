@@ -34,12 +34,18 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	input.Automation.MerchantAPIURL = current.MerchantAPIURL
 	input.Automation.DeletionCheckIntervalSeconds = current.DeletionCheckIntervalSeconds
 	input.Automation.OAIConfirmation = current.OAIConfirmation.Normalized()
+	input.Automation.OAIConfirmationConcurrency = current.OAIConfirmationConcurrency
+	input.Automation.OAIInquiry = current.OAIInquiry.Normalized()
 	input.Automation.PurchaseScheduleEnabled, input.Automation.PurchaseWindows = current.PurchaseScheduleEnabled, current.PurchaseWindows
 	input.Automation.EJHPlanTemplates, input.Automation.NexovccPlanTemplates = current.EJHPlanTemplates, current.NexovccPlanTemplates
 	if err := decodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	v := input.Automation
+	if v.OAIConfirmationConcurrency < 1 || v.OAIConfirmationConcurrency > 100 {
+		writeAPI(w, 400, nil, "OAI 确认并发数须为 1～100")
+		return
+	}
 	merchantURL, urlErr := refundmerchant.NormalizeSubmitURL(v.MerchantAPIURL)
 	if urlErr != nil {
 		writeAPI(w, 400, nil, urlErr.Error())
