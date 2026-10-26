@@ -124,7 +124,10 @@ class HelpInquiry:
 
     def authorize(self):
         self.stage("authorize", "running")
-        current = HELP + "/auth/login?" + urlencode({"redirectTo": PAGE})
+        # login-success establishes the support session after the OAuth callback.
+        # Going straight to the collection page leaves /api/v1/me unauthorized.
+        landing = "/auth/login-success?" + urlencode({"returnTo": urlsplit(PAGE).path})
+        current = HELP + "/auth/login?" + urlencode({"redirectTo": landing})
         expected_state = ""
         for _ in range(20):
             p = urlsplit(current)

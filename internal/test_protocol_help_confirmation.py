@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, parse_qs
 
 sys.path.insert(0, str(Path(__file__).parent / "codex_runtime"))
 from manager_oauth import adapter, help_confirmation as help
@@ -57,7 +57,11 @@ class HelpTests(unittest.TestCase):
         def request(method, url, **kw):
             seen.append((method, url, kw))
             self.assertFalse(kw["allow_redirects"])
-            if "/auth/login?" in url: return response(302, headers={"location": auth})
+            if "/auth/login?" in url:
+                landing = parse_qs(urlsplit(url).query)["redirectTo"][0]
+                self.assertEqual(urlsplit(landing).path, "/auth/login-success")
+                self.assertEqual(parse_qs(urlsplit(landing).query)["returnTo"], [urlsplit(help.PAGE).path])
+                return response(302, headers={"location": auth})
             if url == auth: return response(302, headers={"location": help.AUTH + "/choose-an-account"})
             if url.endswith("/choose-an-account"):
                 return response(text='<script>us_wrong</script><button name="session_id" value="us_other">other@example.com</button><button name="session_id" value="us_child"><div>Example Name</div><span>'+EMAIL+'</span></button>')
@@ -65,7 +69,8 @@ class HelpTests(unittest.TestCase):
                 self.assertEqual(json.loads(kw["data"]), {"session_id": "us_child"})
                 self.assertEqual(kw["headers"]["openai-sentinel-token"], "fixture-sentinel")
                 return response(body={"continue_url": callback}, text=json.dumps({"continue_url": callback}))
-            if url == callback: return response(302, headers={"location": help.PAGE})
+            if url == callback: return response(302, headers={"location": help.HELP + "/auth/login-success?returnTo=%2Fen%2Fcollections%2F3742473-chatgpt"})
+            if "/auth/login-success?" in url: return response(302, headers={"location": help.PAGE})
             if url == help.PAGE: return response()
             if url.endswith("/me"): return response(body={"email": EMAIL})
             if url == help.CHAT:
