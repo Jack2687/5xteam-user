@@ -33,6 +33,8 @@ type proRestockRuntime struct {
 	quotaPlans       map[int64]string
 	quotaBinding     string
 	lastSnapshot     restock.Snapshot
+	liveSnapshot     restock.Snapshot // Collected data, separate from the last evaluated sample.
+	monitorState     proRestockMonitorState
 	decision         restock.Decision
 	exitConfirmation int
 	confirmation     int
@@ -100,6 +102,12 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	if e := validateRestockTarget(c, p); e != nil {
 		return snap, e
 	}
+	// Local profile reads can wait for the store lock. Do them before taking
+	// the upstream concurrency sample so they do not consume its freshness.
+	profiles, e := s.store.ProRestockProfiles()
+	if e != nil {
+		return snap, e
+	}
 	groups, e := s.sub2.Groups(ctx, p.Sub2, password)
 	if e != nil {
 		return snap, e
@@ -164,22 +172,14 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 		snap.LoadValid = false
 		snap.Error = "Sub2 报告并发采集不完整，暂停新增并等待重新采集"
 	}
-	profiles, e := s.store.ProRestockProfiles()
-	if e != nil {
-		return snap, e
-	}
-	emails := make([]string, 0, len(profiles))
-	for _, v := range profiles {
-		emails = append(emails, v.Email)
-	}
-	cards, e := s.store.ProActivationCards(emails)
-	if e != nil {
-		return snap, e
-	}
 	byID := map[int64]model.MailAccountProfile{}
+	monitored := make(map[int64]bool, len(accounts))
+	for _, a := range accounts {
+		monitored[a.ID] = true
+	}
 	duplicates := map[int64]bool{}
 	for _, v := range profiles {
-		if v.Sub2AccountID <= 0 || v.PushStatus != "completed" || v.PushProvider != "sub2" || v.DispositionStarted() || v.SpaceMergedOnce || v.RemoveStatus == "completed" || v.RemoveStatus == "team_removed" {
+		if !monitored[v.Sub2AccountID] || v.PushStatus != "completed" || v.PushProvider != "sub2" || v.DispositionStarted() || v.SpaceMergedOnce || v.RemoveStatus == "completed" || v.RemoveStatus == "team_removed" {
 			continue
 		}
 		matched := false
@@ -206,6 +206,14 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	}
 	for id := range duplicates {
 		delete(byID, id)
+	}
+	emails := make([]string, 0, len(byID))
+	for _, v := range byID {
+		emails = append(emails, v.Email)
+	}
+	cards, e := s.store.ProActivationCards(emails)
+	if e != nil {
+		return snap, e
 	}
 	s.proRestock.mu.Lock()
 	if s.proRestock.quotaBinding != snap.Binding {
@@ -284,6 +292,7 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 		snap.Accounts = append(snap.Accounts, v)
 	}
 	s.proRestock.mu.Unlock()
+	now = time.Now()
 	if now.Sub(snap.At) > time.Duration(c.FreshSeconds)*time.Second || snap.At.After(now.Add(5*time.Second)) {
 		snap.Valid = false
 		snap.Error = "Sub2 快照时间过期或服务器时钟不一致"

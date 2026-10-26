@@ -211,6 +211,11 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	if !c.Enabled || c.Mode != "auto" || c.Version != d.Version {
 		return nil, errors.New("配置版本或运行模式已变化")
 	}
+	// Live evaluations can wait for the store/admission lock. Recheck their
+	// real sample time at the reservation boundary, without renewing its age.
+	if sample := d.Snapshot; d.DemandKnown && (!sample.Valid || !sample.LoadValid || sample.At.IsZero() || time.Since(sample.At) > time.Duration(c.FreshSeconds)*time.Second || sample.At.After(time.Now().Add(5*time.Second))) {
+		return nil, errors.New("事务复核：监控快照过期或不完整，等待重新采集")
+	}
 	if err := takeoverPurchaseGate(tx, d.Snapshot.TakeoverToken, time.Now()); err != nil {
 		return nil, err
 	}

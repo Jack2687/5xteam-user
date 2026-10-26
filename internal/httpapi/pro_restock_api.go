@@ -89,6 +89,10 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 	}
 	s.proRestock.mu.Lock()
 	d, snap := s.proRestock.decision, s.proRestock.lastSnapshot
+	monitor := s.proRestock.monitorState
+	if live := s.proRestock.liveSnapshot; live.ID != "" && live.GroupID == c.GroupID && live.Binding == restockBinding(p) {
+		snap = live
+	}
 	for _, t := range s.proRestock.tasks {
 		if t.DecisionID == "" {
 			tasks = append(tasks, t)
@@ -132,7 +136,7 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 	if provider == "" {
 		provider = c.EffectiveCardProvider(now, p.AutoCardProvider())
 	}
-	writeAPI(w, 200, map[string]any{"takeover": map[string]any{"config": tc, "state": ts}, "config": c, "inherited": p, "snapshot": snap, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": provider, "purchase_timetable": timetable, "no_restock_demand": demand, "current_purchase": purchase, "daily_ejh_merge_run": dailyRun}, "")
+	writeAPI(w, 200, map[string]any{"takeover": map[string]any{"config": tc, "state": ts}, "config": c, "inherited": p, "snapshot": snap, "monitor": monitor, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": provider, "purchase_timetable": timetable, "no_restock_demand": demand, "current_purchase": purchase, "daily_ejh_merge_run": dailyRun}, "")
 }
 func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	c := restock.DefaultConfig()

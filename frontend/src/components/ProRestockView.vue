@@ -11,6 +11,7 @@ import ProForceMergeStatus from './ProForceMergeStatus.vue'
 import ProExitStatus from './ProExitStatus.vue'
 import ProFallbackPanel from './ProFallbackPanel.vue'
 import {forecastDetails,concurrencyDetails} from '../restockForecast'
+import {restockMonitorStatus} from '../restockMonitor'
 import {restockTaskActive,restockTaskProgress,restockTaskRows,restockTaskTimeline} from '../restockTasks'
 const props=defineProps({defaultPageSize:{type:Number,default:10}})
 const pageSize=ref(props.defaultPageSize || 10),recordTotal=ref(0)
@@ -49,10 +50,11 @@ watch([taskFilter,taskSearch,taskPageSize],()=>taskPage.value=1)
 watch(()=>taskRows.value.length,()=>taskPage.value=Math.min(taskPage.value,Math.max(1,Math.ceil(taskRows.value.length/taskPageSize.value))))
 watch(()=>props.defaultPageSize,value=>{taskPageSize.value=value||10;pageSize.value=value||10;page.value=1})
 watch(tasks,rows=>{if(detail.value?.email){const task=rows.find(t=>t.id===detail.value.id);if(task)detail.value={...task}}})
-const stale=computed(()=>!snap.value.at||clock.value+clockOffset.value-new Date(snap.value.at).getTime()>1000*(state.value?.config?.fresh_seconds||20))
-const monitorUnavailable=computed(()=>stale.value||!snap.value.valid||!snap.value.load_valid)
+const monitorStatus=computed(()=>restockMonitorStatus(state.value||{},clock.value+clockOffset.value))
+const monitorUnavailable=computed(()=>monitorStatus.value.unavailable)
 const noRestockActive=computed(()=>!!state.value?.no_restock_active)
-const liveDecision=computed(()=>({...d.value,snapshot:snap.value,config:state.value?.config||d.value.config}))
+// A newly collected sample must not make the previous forecast look current.
+const liveDecision=computed(()=>({...d.value,snapshot:d.value.snapshot?.id&&d.value.snapshot.id!==snap.value.id?d.value.snapshot:snap.value,config:state.value?.config||d.value.config}))
 const concurrencyReport=computed(()=>concurrencyDetails(snap.value,monitorUnavailable.value,clock.value+clockOffset.value,state.value?.config||{}))
 const forecastReport=computed(()=>forecastDetails(liveDecision.value,clock.value+clockOffset.value))
 function noRestockWindows(config={}){
@@ -192,12 +194,13 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
  <p v-if="!state" class="empty">正在读取补货状态…</p>
  <template v-else>
  <ProTakeoverPanel :data="state.takeover" :push-settings="state.inherited?.sub2" :monitor-group="state.config?.group_id" compact/>
- <div class="runbar"><span><b>{{!state.config.enabled?'新增已手动暂停':noRestockActive?'每日禁补时段 · 暂停新增':monitorUnavailable?'采集异常 · 新增暂停 / 自动重试中':'后台监控已启用'}}</b> · {{state.config.mode==='auto'?'自动执行':'观察模式'}} · 配置 v{{state.config.version}}</span><span>监控组 #{{state.config.group_id||'未选择'}} · 快照 {{fmt(snap.at)}}</span></div>
+ <div class="runbar"><span><b>{{!state.config.enabled?'新增已手动暂停':noRestockActive?'每日禁补时段 · 暂停新增':monitorUnavailable?monitorStatus.title+' · 暂停新增':monitorStatus.running?'后台监控更新中':'后台监控已启用'}}</b> · {{state.config.mode==='auto'?'自动执行':'观察模式'}} · 配置 v{{state.config.version}}</span><span>监控组 #{{state.config.group_id||'未选择'}} · 快照 {{fmt(snap.at)}}<template v-if="monitorStatus.age!==null"> · {{Math.floor(monitorStatus.age)}} 秒前</template></span></div>
  <ProRestockTimetable :timetable="state.purchase_timetable" :config="state.config" :demand="state.no_restock_demand" :purchase="state.current_purchase" :decision="state.decision" :now="clock+clockOffset"/>
  <p v-if="inherited.scheduled_enabled" class="notice warn">原定时任务仍已启用，会按原固定数量策略开通。同池同时使用时，新补货不能阻止原任务补号。</p>
  <div id="pro-fallback-config-slot" v-show="tab==='fallback'"></div>
  <section v-show="tab==='dashboard'">
-  <div v-if="monitorUnavailable" class="notice warn">{{snap.error||'尚无有效快照，请先选择监控分组并检查连接。'}}<span v-if="stale&&snap.accounts?.length"> 当前显示历史数据，已过有效期。</span><p v-if="state.config.enabled">新增补货暂时停止，每轮采集结束后等待 {{state.config.check_seconds}} 秒重试；成功后自动恢复判断。也可点击“立即重试”。已提交的全自动 Pro 流程继续执行。</p><p v-else>可点击“立即重试”检查连接和数据；成功后仍保留手动暂停状态。</p></div>
+  <div v-if="monitorUnavailable" class="notice warn"><b>{{monitorStatus.title}}</b> · {{monitorStatus.message}}<p v-if="monitorStatus.lastSuccess">最近成功快照：{{fmt(monitorStatus.lastSuccess)}}<template v-if="monitorStatus.totalSeconds"> · 上轮用时 {{monitorStatus.totalSeconds.toFixed(1)}} 秒</template></p><p v-if="state.config.enabled">新增补货暂时停止，已提交的全自动 Pro 流程继续执行。<template v-if="monitorStatus.running">本轮正在更新，完成后自动重新判断。</template><template v-else>后台自动重试<template v-if="monitorStatus.retry!==null">（{{monitorStatus.retry>0?monitorStatus.retry+' 秒后':'等待调度'}}）</template>，也可点击“立即重试”。</template></p><p v-else>可点击“立即重试”更新数据；成功后仍保留手动暂停状态。</p></div>
+  <p v-else-if="monitorStatus.running" class="notice" role="status">{{monitorStatus.message}}</p>
   <div class="kpis"><article><span>当前可用账号</span><strong>{{d.usable??'—'}}<small> / {{snap.accounts?.length??0}}</small></strong><p>按 Sub2 实际组归属与可调度状态</p></article><article><span>并发容量</span><strong>{{concurrencyReport.percent}}</strong><p>{{concurrencyReport.used??'—'}} 已用 / {{concurrencyReport.capacity??'—'}} 容量</p><p class="capacity-basis">原始 {{concurrencyReport.reportedCapacity??'—'}} × {{concurrencyReport.capacityPercent}}%</p><p class="kpi-rule" :class="{inactive:!state.config.concurrency_enabled}" title="有效容量 × 触发比例向下取整；已用达到该数量或账号侧出现等待，连续确认后评估补货">{{state.config.concurrency_enabled ? `≥ ${concurrencyReport.triggerCount??'—'} 并发（${state.config.trigger_percent}%）· 连续 ${state.config.confirmations} 次` : '规则已关闭'}}</p><p v-if="d.waiting>0">等待 {{d.waiting}}</p></article><article><span>预计支撑时间</span><strong class="medium">{{forecastReport.supply}}</strong><p class="kpi-rule" :class="{inactive:!state.config.time_enabled}" :title="state.config.early ? '已开启按就绪耗时提前补货，实际提前量见预测详情' : '按已保存的时间阈值评估补货'">{{state.config.time_enabled ? `≤ ${state.config.trigger_minutes} 分钟触发${state.config.early ? ' · 可提前' : ''}` : '规则已关闭'}}</p><p class="money-summary">{{forecastReport.summary}}</p><button @click="forecastOpen=!forecastOpen" :aria-expanded="forecastOpen">{{forecastOpen?'收起预测详情':'查看预测详情'}}</button></article><article><ProForceMergeStatus :decision="d" :config="state.config" :unavailable="monitorUnavailable" :now="clock+clockOffset" compact/></article><article><ProExitStatus :decision="d" :config="state.config" :unavailable="monitorUnavailable" compact @details="showDetail(d)"/></article><article><span>正在补充</span><strong>{{active.length}}<small> / {{state.config.max_inflight}}</small></strong><p>{{d.batch_wait?.message || "整批推送并刷新监控后，再评估下一批"}}</p></article><div id="pro-fallback-card-slot"></div></div>
   <article class="panel rate-panel"><div><h2>当前每分钟消耗</h2><strong>{{forecastReport.rateText}}</strong><p>最近 {{forecastReport.windowMinutes}} 分钟 · 账号费用</p><form class="rate-window-form" @submit.prevent="saveWindow"><label>计算窗口<input v-model.number="windowDraft" type="number" min="1" max="60" step="1" required aria-label="消耗计算窗口（分钟）" title="1～60 分钟，默认 3 分钟" :disabled="busy" @input="windowEdited=true"/>分钟</label><button type="submit" :disabled="busy||windowDraft===(state.config.money_window_minutes??3)">{{savingWindow?'保存中…':'保存'}}</button></form></div><button @click="forecastOpen=!forecastOpen" :aria-expanded="forecastOpen">{{forecastOpen?'收起消耗明细':'查看消耗明细'}}</button></article>
   <ProForecastDetails v-if="forecastOpen" :decision="liveDecision" :now="clock+clockOffset"/>

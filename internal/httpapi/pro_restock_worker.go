@@ -197,7 +197,13 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		sort.Float64s(durations)
 		lead = durations[min(len(durations)-1, int(math.Ceil(float64(len(durations))*.9))-1)]
 	}
-	for _, profile := range s.store.MailAccountsByManagementScope("pro") {
+	// Reconciliation only needs workflow state. The mailbox list decrypts every
+	// credential (including large session payloads) under the shared store lock.
+	profiles, err := s.store.ProRestockProfiles()
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, profile := range profiles {
 		if seen[profile.Email] || profile.ProRestockTaskID != "" {
 			continue
 		}
@@ -333,7 +339,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 
 var errProRestockBusy = errors.New("正在采集或更新补货配置，请稍后重试")
 
-func (s *Server) tickProRestock(ctx context.Context, force bool) error {
+func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr error) {
 	if !s.proRestock.tick.TryLock() {
 		return errProRestockBusy
 	}
@@ -347,8 +353,6 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 		s.sampleRestockMoneyBetweenChecks(c, now)
 		return nil
 	}
-	// Retry after the configured interval, even when a failed request was slow.
-	defer func() { s.proRestock.next = time.Now().Add(time.Duration(c.CheckSeconds) * time.Second) }()
 	tasks, e := s.store.ProRestockTasks()
 	if e != nil {
 		return e
@@ -362,6 +366,16 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if !force && !c.Enabled && !active && !c.DemandActive(now) {
 		return nil
 	}
+	started := time.Now()
+	var snap restock.Snapshot
+	s.beginRestockCollection(started)
+	defer func() {
+		finished := time.Now()
+		// Successful rounds use a start-to-start cadence, without concurrent
+		// rounds or catch-up bursts. Failures retain the full retry delay.
+		s.proRestock.next = nextRestockCheck(started, finished, c.CheckSeconds, resultErr == nil && restockSnapshotFresh(c, snap, finished))
+		s.finishRestockCollection(finished, s.proRestock.next, resultErr)
+	}()
 	p, password, _, e := s.store.ProSettings()
 	if e != nil {
 		return e
@@ -380,12 +394,13 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 			return e
 		}
 	}
-	var snap restock.Snapshot
+	s.setRestockMonitorPhase("collecting")
 	if s.proRestock.monitor != nil {
 		snap, e = s.proRestock.monitor(sampleCtx, c, p, password)
 	} else {
 		snap, e = s.collectProRestock(sampleCtx, c, p, password)
 	}
+	cancel()
 	if e != nil {
 		snap.Valid = false
 		snap.Error = e.Error()
@@ -407,6 +422,9 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if snap.Binding == "" {
 		snap.Binding = restockBinding(p)
 	}
+	// Publish completed collection before slower reconciliation. Do not replace
+	// lastSnapshot: confirmations and exit demand must compare distinct samples.
+	s.publishRestockCollection(snap)
 	if c.DemandActive(time.Now()) {
 		gateCtx, gateCancel := context.WithTimeout(ctx, 15*time.Second)
 		gate := s.sampleRestockDemand(gateCtx, c, p, snap)
@@ -427,22 +445,24 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if e != nil {
 		return e
 	}
+	s.setRestockMonitorPhase("evaluating")
 	batchWaiting := restock.WaitForBatch(snap, tasks) != nil
+	sampleFresh := restockSnapshotFresh(c, snap, time.Now())
 	s.proRestock.mu.Lock()
-	if batchWaiting || c.Version != s.proRestock.lastVersion || snap.Binding != s.proRestock.lastSnapshot.Binding || snap.TakeoverToken != s.proRestock.lastSnapshot.TakeoverToken || !snap.Valid || !snap.LoadValid {
+	if batchWaiting || c.Version != s.proRestock.lastVersion || snap.Binding != s.proRestock.lastSnapshot.Binding || snap.TakeoverToken != s.proRestock.lastSnapshot.TakeoverToken || !sampleFresh {
 		s.proRestock.confirmation = 0
 		s.proRestock.exitConfirmation = 0
 	}
 	snap.ExitDemand = restock.ObserveExitDemand(c, snap, s.proRestock.lastSnapshot, time.Now())
 	fresh := snap.At.After(s.proRestock.lastSample)
 	if fresh {
-		if !batchWaiting && restock.Pressure(c, snap) {
+		if sampleFresh && !batchWaiting && restock.Pressure(c, snap) {
 			s.proRestock.confirmation++
 		} else {
 			s.proRestock.confirmation = 0
 		}
 		exit := restock.ForecastExits(c, snap, tasks, p.Sub2.AccountConcurrency, lead, time.Now())
-		if !batchWaiting && c.ExitEnabled && exit.Valid && exit.Pressure {
+		if sampleFresh && !batchWaiting && c.ExitEnabled && exit.Valid && exit.Pressure {
 			s.proRestock.exitConfirmation++
 		} else {
 			s.proRestock.exitConfirmation = 0
@@ -482,6 +502,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	if tc.Role == "receiver" && ts.Phase == "recovering" {
 		evalConfig.Reserve = max(c.Reserve, tc.ReturnMinAccounts)
 	}
+	now = time.Now()
 	d := restock.Evaluate(evalConfig, snap, tasks, limits, confirm, p.Sub2.AccountConcurrency, lead, now)
 	if takeoverBlock != "" {
 		d.Suggested, d.Reason = 0, takeoverBlock
@@ -541,6 +562,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) error {
 	}
 	s.proRestock.mu.Lock()
 	s.proRestock.lastSnapshot = snap
+	s.proRestock.liveSnapshot = snap
 	s.proRestock.decision = d
 	s.proRestock.tasks = append([]restock.Task{}, tasks...)
 	record := force || d.Started > 0 || s.proRestock.lastReason != d.Reason || now.Sub(s.proRestock.lastRecord) >= 30*time.Second

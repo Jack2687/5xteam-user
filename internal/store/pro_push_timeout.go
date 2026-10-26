@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -114,24 +116,47 @@ func captureProOrderTimeout(tx *sql.Tx, email string) error {
 
 // Complete profile scan with error propagation: a read failure is never an empty pool.
 func (s *Store) ProRestockProfiles() ([]model.MailAccountProfile, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro'")
+	// Copy a consistent set under the store lock, then decode outside it.
+	// Monitoring never needs encrypted mailbox/session credentials.
+	type profileRow struct{ raw, updated string }
+	read := func() ([]profileRow, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		rows, err := s.db.Query("SELECT profile,updated_at FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro'")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var result []profileRow
+		for rows.Next() {
+			var row profileRow
+			if err := rows.Scan(&row.raw, &row.updated); err != nil {
+				return nil, err
+			}
+			result = append(result, row)
+		}
+		return result, rows.Err()
+	}
+	rows, err := read()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []model.MailAccountProfile{}
-	for rows.Next() {
-		var raw string
+	for _, row := range rows {
 		var p model.MailAccountProfile
-		if err = rows.Scan(&raw); err != nil {
+		if err = json.Unmarshal([]byte(row.raw), &p); err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal([]byte(raw), &p); err != nil {
-			return nil, err
+		if p.CreatedAt.IsZero() {
+			p.CreatedAt, _ = parseTime(row.updated)
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return strings.ToLower(out[i].Email) < strings.ToLower(out[j].Email)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }

@@ -23,7 +23,7 @@
     "test:pro-vm": "node scripts/check-pro-vm.mjs",
     "test:pro-cost": "node scripts/check-pro-cost.mjs",
     "test:pro-takeover": "node scripts/check-pro-takeover.mjs",
-    "test:pro-restock": "node scripts/check-pro-push-duration.mjs && node scripts/check-restock-tasks.mjs && node scripts/check-pro-restock-requests.mjs && node scripts/check-pro-restock-timetable.mjs",
+    "test:pro-restock": "node scripts/check-restock-monitor.mjs && node scripts/check-pro-push-duration.mjs && node scripts/check-restock-tasks.mjs && node scripts/check-pro-restock-requests.mjs && node scripts/check-pro-restock-timetable.mjs",
     "test:pro-fallback": "node scripts/check-pro-fallback.mjs",
     "test:quality-groups": "node scripts/check-quality-groups.mjs",
     "test:quality-vm": "node scripts/check-quality-vm.mjs",
