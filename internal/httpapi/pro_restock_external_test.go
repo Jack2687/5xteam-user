@@ -137,6 +137,9 @@ func TestRestockSettledRiskFailureReleasesOnlyFinishedWork(t *testing.T) {
 					if (active == 0) != settled {
 						t.Fatalf("tasks=%+v settled=%v", tasks, settled)
 					}
+					if settled && (len(tasks) != 1 || !tasks[0].PaymentRiskPending) {
+						t.Fatal("failed workflow lost its durable one-time replacement", tasks)
+					}
 				}
 				p, _, _ := st.MailAccountCredential(email)
 				if !p.ProAuto.PaymentReviewRequired || p.ProAuto.OrderID != o.ID || p.IsProDead() {

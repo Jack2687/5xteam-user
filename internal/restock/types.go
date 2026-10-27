@@ -202,6 +202,8 @@ type Snapshot struct {
 	Accounts            []Account   `json:"accounts"`
 }
 type Task struct {
+	PaymentRiskPending  bool                    `json:"payment_risk_pending,omitempty"`
+	PaymentRiskSource   string                  `json:"payment_risk_source,omitempty"`
 	BalanceFallbackFrom string                  `json:"balance_fallback_from,omitempty"`
 	PurchaseRoute       *model.ProPurchaseRoute `json:"purchase_route,omitempty"`
 	TakeoverToken       string                  `json:"takeover_token,omitempty"`
@@ -238,6 +240,16 @@ type Task struct {
 	// cannot be recycled as the replacement for another original lifecycle.
 	ForceMergeAssigned bool `json:"force_merge_assigned,omitempty"`
 	ForceMergeTracked  bool `json:"force_merge_tracked,omitempty"`
+}
+
+// A confirmed failed payment gets one replacement, pinned to the same pool.
+func PaymentRiskPending(s Snapshot, tasks []Task) bool {
+	for _, t := range tasks {
+		if t.PaymentRiskPending && t.Binding == s.Binding && t.GroupID == s.GroupID {
+			return true
+		}
+	}
+	return false
 }
 
 func (t Task) Active() bool {

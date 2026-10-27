@@ -48,6 +48,68 @@ func TestProMergeV2RecoveryCompletesTailWithoutReinvite(t *testing.T) {
 	}
 }
 
+func TestProMergeV2InvitationRecoveryCheckpointsAndFreshLogin(t *testing.T) {
+	f, p, ctx := mergeV2RecoveryFixture(t)
+	calls := 0
+	f.s.proMergeV2Login = func(ctx context.Context, _ string) (map[string]any, error) {
+		calls++
+		if calls == 1 {
+			args := map[string]any{"team_id": p.ProMergeV2.TeamID}
+			if _, err := f.s.mergeV2Checkpoint(ctx, f.email, p.ProMergeV2.TeamID, "merge_v2_accepting", args); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.s.mergeV2Checkpoint(ctx, f.email, p.ProMergeV2.TeamID, "merge_v2_accepting", args); err == nil {
+				t.Fatal("duplicate acceptance allowed")
+			}
+			if _, err := f.s.mergeV2Checkpoint(ctx, f.email, p.ProMergeV2.TeamID, "merge_v2_invite_accepted", args); err != nil {
+				t.Fatal(err)
+			}
+			return map[string]any{"success": false, "error_code": "team_invitation_accepted"}, nil
+		}
+		return mockMergeV2Submit(ctx)
+	}
+	result, err := f.s.loginProMergeV2(ctx, p, "sub2api", func(context.Context, time.Duration) error { return nil })
+	if err != nil || result["success"] != true || calls != 2 {
+		t.Fatal(result, err, calls)
+	}
+	latest, _, _ := f.s.store.MailAccountCredential(f.email)
+	if latest.ProMergeV2.InviteAcceptedAt == nil || latest.ProMergeV2.InviteAcceptAttemptedAt == nil {
+		t.Fatal("invitation checkpoint lost")
+	}
+}
+
+func TestProMergeV2InvitationAcceptanceHonorsStopAndTarget(t *testing.T) {
+	for _, kind := range []string{"stop", "target", "uninvited", "submitted"} {
+		t.Run(kind, func(t *testing.T) {
+			f, p, ctx := mergeV2RecoveryFixture(t)
+			args := map[string]any{"team_id": p.ProMergeV2.TeamID}
+			_, err := f.s.store.UpdateProAccount(f.email, func(p *model.MailAccountProfile) {
+				switch kind {
+				case "stop":
+					p.ProAuto.StopRequested = true
+				case "target":
+					args["team_id"] = "wrong"
+				case "uninvited":
+					p.ProMergeV2.Steps["invite"] = "pending"
+				case "submitted":
+					now := time.Now()
+					p.ProMergeV2.SubmittedAt = &now
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.s.mergeV2Checkpoint(ctx, f.email, p.ProMergeV2.TeamID, "merge_v2_accepting", args); err == nil {
+				t.Fatal("unsafe invitation acceptance")
+			}
+			latest, _, _ := f.s.store.MailAccountCredential(f.email)
+			if latest.ProMergeV2.InviteAcceptAttemptedAt != nil {
+				t.Fatal("rejected mutation changed checkpoint")
+			}
+		})
+	}
+}
+
 func TestProMergeV2TeamRecoveryBudgetAndSuccess(t *testing.T) {
 	for _, recover := range []bool{false, true} {
 		t.Run(map[bool]string{false: "exhausted", true: "recovered"}[recover], func(t *testing.T) {

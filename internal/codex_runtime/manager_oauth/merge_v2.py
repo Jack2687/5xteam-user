@@ -1,6 +1,6 @@
 """Pro-only Team login and export/deactivate; original login mechanics stay shared."""
 import time
-from urllib.parse import urlsplit, urljoin
+from urllib.parse import urlsplit, urljoin, quote
 
 from . import bridge, upstream
 from .adapter import ProjectProtocolLogin
@@ -65,10 +65,69 @@ class TeamProtocolLogin(ProjectProtocolLogin):
 
     def _chatgpt_web_session(self):
         session = super()._chatgpt_web_session()
-        self.validate_team(session)
+        try:
+            self.validate_team(session)
+        except upstream.LoginFlowError as exc:
+            if exc.code != "team_session_mismatch":
+                raise
+            # Identity is checked before this error. A personal session alone
+            # never authorizes export; confirm membership before a fresh login.
+            self.recover_invited_membership(session)
+            raise
         self.team_session_at = time.monotonic()
         self.team_session = session
         return session
+
+    def recover_invited_membership(self, session):
+        token = session.get("access_token") or session.get("accessToken") or ""
+        bridge.protect_code(token)
+        if not self.proxy_url:
+            raise RuntimeError("合并空间2.0必须使用登录代理")
+        headers = {"Authorization": "Bearer " + token, "Origin": "https://chatgpt.com",
+                   "Referer": "https://chatgpt.com/", "Accept": "application/json"}
+
+        def member():
+            url = "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27?timezone_offset_min=-480"
+            resp = self.request(url, headers=self.headers(url, headers), timeout=45)
+            data = resp.json()
+            accounts = data.get("accounts") if isinstance(data, dict) else None
+            if resp.status != 200 or not isinstance(accounts, dict):
+                raise upstream.LoginFlowError("目标团队成员关系查询失败，保留邀请，不提交停用",
+                                              code="team_membership_unknown", retryable=False, status=resp.status)
+            target = accounts.get(self.target_team)
+            present = isinstance(target, dict) and (target.get("account") or {}).get("id", self.target_team) == self.target_team
+            self.trace("team_membership", "检查子号目标团队成员关系", target_member=present)
+            return present
+
+        if member():
+            return
+        # The host validates the completed invitation, stop state, target and a
+        # durable once-only checkpoint. Process restart cannot resend acceptance.
+        bridge.call("merge_v2_accepting", team_id=self.target_team)
+        url = "https://chatgpt.com/backend-api/accounts/" + quote(self.target_team, safe="") + "/invites/accept"
+        accepted = False
+        try:
+            resp = self.web_session.request("POST", url,
+                headers=self.headers(url, {**headers, "chatgpt-account-id": self.target_team}),
+                json={}, timeout=45, allow_redirects=False)
+            try:
+                data = resp.json()
+            except (ValueError, TypeError):
+                data = {}
+            accepted = 200 <= resp.status_code < 300 and isinstance(data, dict) and data.get("success") is True
+            bridge.emit("merge_v2_team", "invite_accept_response", "接受已有目标团队邀请返回",
+                        http_status=resp.status_code, details={"invitation_accepted": accepted})
+        except Exception as exc:
+            bridge.emit("merge_v2_team", "invite_accept_exception", "接受邀请连接中断，仅读取成员关系核实",
+                        level="warning", details={"error_type": type(exc).__name__, "error": bridge.redact(exc)[:500]})
+        if not accepted:
+            accepted = member()
+        if not accepted:
+            raise upstream.LoginFlowError("接受邀请结果待核实；保留原团队，不重复接受邀请或提交停用",
+                                          code="team_invitation_unknown", retryable=False)
+        bridge.call("merge_v2_invite_accepted", team_id=self.target_team)
+        raise upstream.LoginFlowError("已接受目标团队邀请，需要重新登录获取团队会话",
+                                      code="team_invitation_accepted", retryable=False)
 
     def validate_team(self, session):
         token = session.get("access_token") or session.get("accessToken") or ""

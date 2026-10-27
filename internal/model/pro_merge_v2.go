@@ -4,22 +4,24 @@ import "time"
 
 // A separate durable workflow: acceptance is not proof of a refund.
 type ProMergeV2 struct {
-	Status       string                      `json:"status"`
-	Stage        string                      `json:"stage"`
-	Steps        map[string]string           `json:"steps"`
-	Manual       map[string]ProStageOverride `json:"manual,omitempty"`
-	AdminID      string                      `json:"admin_id"`
-	TeamID       string                      `json:"team_id"`
-	SeatType     string                      `json:"seat_type"`
-	UserID       string                      `json:"user_id,omitempty"`
-	Error        string                      `json:"error,omitempty"`
-	Message      string                      `json:"message,omitempty"`
-	StartedAt    time.Time                   `json:"started_at"`
-	UpdatedAt    time.Time                   `json:"updated_at"`
-	SubmittedAt  *time.Time                  `json:"submitted_at,omitempty"`
-	AcceptedAt   *time.Time                  `json:"accepted_at,omitempty"`
-	CompletedAt  *time.Time                  `json:"completed_at,omitempty"`
-	AutoResumeAt *time.Time                  `json:"auto_resume_at,omitempty"`
+	InviteAcceptAttemptedAt *time.Time                  `json:"invite_accept_attempted_at,omitempty"`
+	InviteAcceptedAt        *time.Time                  `json:"invite_accepted_at,omitempty"`
+	Status                  string                      `json:"status"`
+	Stage                   string                      `json:"stage"`
+	Steps                   map[string]string           `json:"steps"`
+	Manual                  map[string]ProStageOverride `json:"manual,omitempty"`
+	AdminID                 string                      `json:"admin_id"`
+	TeamID                  string                      `json:"team_id"`
+	SeatType                string                      `json:"seat_type"`
+	UserID                  string                      `json:"user_id,omitempty"`
+	Error                   string                      `json:"error,omitempty"`
+	Message                 string                      `json:"message,omitempty"`
+	StartedAt               time.Time                   `json:"started_at"`
+	UpdatedAt               time.Time                   `json:"updated_at"`
+	SubmittedAt             *time.Time                  `json:"submitted_at,omitempty"`
+	AcceptedAt              *time.Time                  `json:"accepted_at,omitempty"`
+	CompletedAt             *time.Time                  `json:"completed_at,omitempty"`
+	AutoResumeAt            *time.Time                  `json:"auto_resume_at,omitempty"`
 }
 
 func (p MailAccountProfile) MergeV2Started() bool { return p.ProMergeV2 != nil }

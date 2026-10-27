@@ -162,6 +162,44 @@ class MergeV2ProtocolTests(unittest.TestCase):
             f.validate_team(session("wrong-team","wrong@example.com"))
         self.assertNotIsInstance(caught.exception,upstream.LoginFlowError)
 
+    def test_personal_session_accepts_existing_invite_then_requires_new_login(self):
+        f=self.flow()
+        with patch.object(f,"get_session",return_value=session("personal")),patch.object(f,"get_session_cookie",return_value=""),patch.object(f,"request",return_value=upstream.ProtocolResponse(200,"https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27",{},'{"accounts":{}}')) as reads,patch.object(f.web_session,"request",return_value=self.response()) as accept,patch.object(merge_v2.bridge,"call") as rpc,self.assertRaises(upstream.LoginFlowError) as caught:
+            f._chatgpt_web_session()
+        self.assertEqual(caught.exception.code,"team_invitation_accepted")
+        self.assertFalse(caught.exception.retryable)
+        self.assertEqual(accept.call_count,1)
+        self.assertTrue(accept.call_args.args[1].endswith('/accounts/target-team/invites/accept'))
+        self.assertEqual(accept.call_args.kwargs['headers']['chatgpt-account-id'],'target-team')
+        self.assertEqual(accept.call_args.kwargs['json'],{})
+        self.assertEqual([c.args[0] for c in rpc.call_args_list],['merge_v2_accepting','merge_v2_invite_accepted'])
+        self.assertEqual(reads.call_count,1)
+
+    def test_joined_member_never_accepts_again_and_identity_failure_never_recovers(self):
+        for value in [session('personal'),session('personal','someone@example.com')]:
+            f=self.flow()
+            with patch.object(f,'get_session',return_value=value),patch.object(f,'get_session_cookie',return_value=''),patch.object(f,'request',return_value=upstream.ProtocolResponse(200,'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27',{},'{"accounts":{"target-team":{"account":{"id":"target-team"}}}}')) as reads,patch.object(f.web_session,'request') as mutation,patch.object(merge_v2.bridge,'call') as rpc,self.assertRaises(RuntimeError):
+                f._chatgpt_web_session()
+            mutation.assert_not_called();rpc.assert_not_called()
+            self.assertEqual(reads.call_count,1 if value['user']['email']=='child@example.com' else 0)
+
+    def test_invite_timeout_only_reads_membership_and_never_exports_or_resends(self):
+        for joined in [False,True]:
+            f=self.flow()
+            bodies=['{"accounts":{}}','{"accounts":{"target-team":{}}}' if joined else '{"accounts":{}}']
+            responses=[upstream.ProtocolResponse(200,'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27',{},b) for b in bodies]
+            with patch.object(f,'get_session',return_value=session('personal')),patch.object(f,'get_session_cookie',return_value=''),patch.object(f,'request',side_effect=responses),patch.object(f.web_session,'request',side_effect=TimeoutError('timeout')) as mutation,patch.object(merge_v2.bridge,'call') as rpc,self.assertRaises(upstream.LoginFlowError) as caught:
+                f._chatgpt_web_session()
+            self.assertEqual(caught.exception.code,'team_invitation_accepted' if joined else 'team_invitation_unknown')
+            mutation.assert_called_once()
+            self.assertNotIn('merge_v2_submitting',[c.args[0] for c in rpc.call_args_list])
+
+    def test_stop_or_previous_invite_checkpoint_prevents_acceptance(self):
+        f=self.flow()
+        with patch.object(f,'request',return_value=upstream.ProtocolResponse(200,'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27',{},'{"accounts":{}}')),patch.object(f.web_session,'request') as mutation,patch.object(merge_v2.bridge,'call',side_effect=RuntimeError('stopped or already attempted')),self.assertRaises(RuntimeError):
+            f.recover_invited_membership(session('personal'))
+        mutation.assert_not_called()
+
     def test_adapter_returns_mismatch_code_without_export_or_internal_retry(self):
         def login(flow):
             flow.validate_team(session("personal"))

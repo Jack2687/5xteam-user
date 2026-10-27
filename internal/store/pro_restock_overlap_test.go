@@ -63,6 +63,9 @@ func TestRestockOverlapReservationAcrossRounds(t *testing.T) {
 			t.Fatalf("round %d: want %d, got %+v", round, want, d)
 		}
 		if d.Suggested > 0 {
+			// This fixture advances a synthetic clock by minutes. Live decision
+			// freshness is covered separately against the actual wall clock.
+			d.DemandKnown = false
 			added, e := s.ReserveProRestock(d, "", d.Inflight)
 			if e != nil || len(added) != want {
 				t.Fatal(added, e)
@@ -315,6 +318,8 @@ func TestRestockOverlapReadyDeduplicatesUpstreamAccountAndReturnsOldHistory(t *t
 			// Exercise history older than ProRestockTasks' normal 48-hour window.
 			d.At = now.Add(-72 * time.Hour)
 			d.Snapshot.At = d.At
+			// Seed historical records, not a live admission decision.
+			d.DemandKnown = false
 			tasks, err := s.ReserveProRestock(d, "", 0)
 			if err != nil || len(tasks) != 2 {
 				t.Fatal(tasks, err)

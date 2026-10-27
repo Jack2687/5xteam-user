@@ -208,8 +208,23 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 					t.ETA = nil
 					if order.PaymentReviewBlocksRestock() {
 						t.Status, t.Message = "attention", gptpay.PaymentReviewMessage
+						if t.PaymentRiskSource != "" {
+							if _, riskErr := s.store.FinishProRestockPaymentRisk(*t); riskErr != nil {
+								return nil, 0, riskErr
+							}
+							t.Message = "替补账号再次支付风控，自动补货已暂停；付款结算仍待核实"
+						}
 					} else if order.PaymentReviewRequired() {
 						t.Message = gptpay.PaymentReviewRestockMessage
+						paused, riskErr := s.store.FinishProRestockPaymentRisk(*t)
+						if riskErr != nil {
+							return nil, 0, riskErr
+						}
+						if paused {
+							t.Message = "替补账号再次支付风控，自动补货已暂停；原账号和订单保留待人工核实"
+						} else {
+							t.PaymentRiskPending = true
+						}
 					}
 				} else if order.Status == "success" && profile.ProAuto.Steps["oauth"] != "completed" && (profile.ProAuto.Status == "interrupted" || profile.ProAuto.Status == "failed") {
 					s.queueRestockPaidRecovery(profile, p)
@@ -293,7 +308,33 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		}
 		// Historical completed manual failures must not become new blocking
 		// tasks on upgrade. Only a workflow stopped for review holds admission.
-		review := profile.ProAuto.PaymentReviewRequired && orderErr == nil && order.PaymentReviewBlocksRestock()
+		review := profile.ProAuto.PaymentReviewRequired && orderErr == nil && order.PaymentReviewRequired()
+		if !running && review && !order.PaymentReviewBlocksRestock() && profile.ProAuto.RestockBinding == snap.Binding {
+			// A current manual/scheduled full-auto failure gets the same durable
+			// one-time replacement policy, without claiming historical failures.
+			id := "external-risk:" + order.ID
+			known := false
+			for _, task := range tasks {
+				known = known || task.ID == id
+			}
+			if !known {
+				task := restock.Task{ID: id, Email: profile.Email, OrderID: order.ID, Binding: snap.Binding, GroupID: c.GroupID,
+					ManagedExternally: true, Status: "failed", Stage: "recharge", CreatedAt: profile.ProAuto.StartedAt, UpdatedAt: now}
+				if _, err := s.store.FinishProRestockPaymentRisk(task); err != nil {
+					return nil, 0, err
+				}
+				persisted, err := s.store.ProRestockTasks()
+				if err != nil {
+					return nil, 0, err
+				}
+				for _, saved := range persisted {
+					if saved.ID == id {
+						tasks = append(tasks, saved)
+					}
+				}
+			}
+			continue
+		}
 		if !running && !review && (orderErr != nil || order.Status == "failed") && profile.ProAuto.OrderID == "" && profile.ProAuto.Steps["recharge"] != "completed" && profile.ProAuto.Steps["oauth"] != "completed" && profile.PushStatus != "completed" {
 			continue
 		}
@@ -483,6 +524,11 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 		snap.DemandGate = &gate
 	}
 	tasks, lead, e := s.restockTasks(snap, p, c)
+	if e != nil {
+		return e
+	}
+	// Reconciliation can durably pause admission after a second risk rejection.
+	c, e = s.store.ProRestockConfig()
 	if e != nil {
 		return e
 	}

@@ -42,6 +42,7 @@ func TestPaymentReviewRestockRequiresDefiniteSupplierFailure(t *testing.T) {
 		func(o *Order) { o.Remote.SettlementStatus = "" },
 		func(o *Order) { o.Remote.SettlementStatus = "pending" },
 		func(o *Order) { o.Provider = "cmsnav"; v := false; o.Remote.Retryable = &v },
+		func(o *Order) { v := false; o.Remote.Retryable = &v },
 	} {
 		o := base
 		change(&o)

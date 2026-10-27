@@ -187,6 +187,10 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		d.EmptyGroupNeed = max(0, c.EmptyGroupCount-groupInflight)
 	}
 	need := max(d.TimeNeed, d.ConcurrencyNeed, d.ReserveNeed, d.EmptyGroupNeed, d.ForceMergeNeed, d.ExitNeed)
+	riskReplacement := PaymentRiskPending(s, tasks)
+	if riskReplacement {
+		need = 1
+	}
 	d.Trace.NetNeed = need
 	if need == 0 {
 		if len(s.Accounts) == 0 && c.EmptyGroupCount > 0 && groupInflight > 0 {
@@ -222,7 +226,10 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 		d.Trace.Caps = append(d.Trace.Caps, DecisionCap{"day_budget", remaining})
 	}
 	d.Trace.HardLimit = &hard
-	strictMinimum := !c.AllowSmall && !d.EmptyGroupOnly()
+	if riskReplacement {
+		hard = min(hard, 1)
+	}
+	strictMinimum := !c.AllowSmall && !d.EmptyGroupOnly() && !riskReplacement
 	d.Trace.StrictMinimum = strictMinimum
 	if strictMinimum && hard < c.MinBatch {
 		return block("在途、池容量或预算余量不足最小批量")
@@ -239,6 +246,9 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	d.Reason = "时间、并发、退出前补货、备用、空分组与强制合并接替净缺口取最大值，各规则已扣除适用在途"
 	if d.EmptyGroupOnly() {
 		d.Reason = "监控分组为 0 个账号，按空分组启动数量补货；已扣除同组全部在途"
+	}
+	if riskReplacement {
+		d.Reason = "原账号支付风控且订单已确认失败，仅安排一个新账号替补；替补再次风控将暂停自动补货"
 	}
 	if !c.Enabled {
 		d.Reason = "总开关关闭，仅展示建议"

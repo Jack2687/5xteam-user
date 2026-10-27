@@ -17,6 +17,7 @@ func (s *Store) initializeProRestock() error {
  CREATE TABLE IF NOT EXISTS pro_restock_tasks(id TEXT PRIMARY KEY,email TEXT NOT NULL COLLATE NOCASE,status TEXT NOT NULL,created_at TEXT NOT NULL,cost INTEGER NOT NULL,payload TEXT NOT NULL);
  CREATE UNIQUE INDEX IF NOT EXISTS pro_restock_account ON pro_restock_tasks(email) WHERE status NOT IN ('ready','failed','cancelled');
  CREATE TABLE IF NOT EXISTS pro_restock_replacements(source TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE);
+ CREATE TABLE IF NOT EXISTS pro_restock_payment_risk(task_id TEXT PRIMARY KEY,replacement_id TEXT UNIQUE,paused INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS pro_restock_decisions(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_restock_snapshot(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_daily_ejh_merge_runs(day TEXT PRIMARY KEY,payload TEXT NOT NULL);
@@ -66,7 +67,7 @@ func (s *Store) SaveProRestockConfig(c restock.Config) (restock.Config, error) {
 	return c, err
 }
 func (s *Store) ProRestockTasks() ([]restock.Task, error) {
-	return s.proRestockTasksWhere("status NOT IN ('ready','failed','cancelled') OR created_at>?1 OR json_extract(payload,'$.updated_at')>?1 OR EXISTS(SELECT 1 FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id)", formatTime(time.Now().Add(-48*time.Hour)))
+	return s.proRestockTasksWhere("status NOT IN ('ready','failed','cancelled') OR created_at>?1 OR json_extract(payload,'$.updated_at')>?1 OR EXISTS(SELECT 1 FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id) OR EXISTS(SELECT 1 FROM pro_restock_payment_risk WHERE task_id=pro_restock_tasks.id AND replacement_id IS NULL)", formatTime(time.Now().Add(-48*time.Hour)))
 }
 func (s *Store) ProRestockDecisionTasks(id string) ([]restock.Task, error) {
 	return s.proRestockTasksWhere("json_extract(payload,'$.decision_id')=?", id)
@@ -74,7 +75,7 @@ func (s *Store) ProRestockDecisionTasks(id string) ([]restock.Task, error) {
 func (s *Store) proRestockTasksWhere(where string, arg any) ([]restock.Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT json_set(payload,'$.force_merge_source',coalesce((SELECT source FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id),'')) FROM pro_restock_tasks WHERE "+where+" ORDER BY created_at", arg)
+	rows, err := s.db.Query("SELECT json_set(payload,'$.force_merge_source',coalesce((SELECT source FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id),''),'$.payment_risk_pending',json(CASE WHEN EXISTS(SELECT 1 FROM pro_restock_payment_risk WHERE task_id=pro_restock_tasks.id AND replacement_id IS NULL AND paused=0) THEN 'true' ELSE 'false' END),'$.payment_risk_source',coalesce((SELECT task_id FROM pro_restock_payment_risk WHERE replacement_id=pro_restock_tasks.id),'')) FROM pro_restock_tasks WHERE "+where+" ORDER BY created_at", arg)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +162,7 @@ func restockLimits(q proCapacityQuery, now time.Time) (restock.Limits, error) {
 		return l, err
 	}
 	// Consecutive failures since the last ready task or explicit breaker reset.
-	err = q.QueryRow(`SELECT count(*) FROM pro_restock_tasks WHERE coalesce(json_extract(payload,'$.stage'),'')<>'dead' AND (status IN ('failed','attention','unknown') OR json_extract(payload,'$.stopped_failure')=1) AND created_at>coalesce((SELECT max(created_at) FROM pro_restock_tasks WHERE status='ready'),'') AND created_at>coalesce((SELECT reset_at FROM pro_restock_clock WHERE id=1),'')`).Scan(&l.Failures)
+	err = q.QueryRow(`SELECT count(*) FROM pro_restock_tasks WHERE coalesce(json_extract(payload,'$.stage'),'')<>'dead' AND NOT EXISTS(SELECT 1 FROM pro_restock_payment_risk WHERE task_id=pro_restock_tasks.id) AND (status IN ('failed','attention','unknown') OR json_extract(payload,'$.stopped_failure')=1) AND created_at>coalesce((SELECT max(created_at) FROM pro_restock_tasks WHERE status='ready'),'') AND created_at>coalesce((SELECT reset_at FROM pro_restock_clock WHERE id=1),'')`).Scan(&l.Failures)
 	if err != nil {
 		return l, err
 	}
@@ -269,7 +270,11 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 		return nil, err
 	}
 	stats := restock.ForceMergeSummary(c, d.Snapshot, persisted, d.At)
-	if d.ForceMergeNeed > 0 {
+	riskSource, err := pendingPaymentRisk(tx, d.Snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if d.ForceMergeNeed > 0 && riskSource == "" {
 		need := max(d.TimeNeed, d.ConcurrencyNeed, d.ReserveNeed, d.EmptyGroupNeed, d.ExitNeed, len(stats.Sources))
 		if need == 0 {
 			return nil, errors.New("接替已由原任务覆盖，未重复预留")
@@ -280,6 +285,9 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 		d.Suggested = min(d.Suggested, need)
 	}
 	n := min(d.Suggested, c.MaxBatch, c.MaxInflight-max(active, existingInflight), c.HourLimit-l.HourCount, c.DayLimit-l.DayCount, c.PoolLimit-len(d.Snapshot.Accounts)-existingInflight)
+	if riskSource != "" {
+		n = min(n, 1)
+	}
 	if c.HourBudget > 0 {
 		n = min(n, int(max(int64(0), c.HourBudget-l.HourCost)/max(int64(1), c.UnitCost)))
 	}
@@ -293,7 +301,7 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	if l.Failures >= c.FailureLimit || (l.LastBatch != nil && d.At.Sub(*l.LastBatch) < time.Duration(cooldown)*time.Second) {
 		n = 0
 	}
-	strictMinimum := !c.AllowSmall && !d.EmptyGroupOnly()
+	strictMinimum := !c.AllowSmall && !d.EmptyGroupOnly() && riskSource == ""
 	if n < 1 || (strictMinimum && n < c.MinBatch) {
 		return nil, errors.New("事务复核：冷却、在途或预算不允许新增")
 	}
@@ -323,6 +331,13 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	for i, email := range emails {
 		t := restock.Task{ID: fmt.Sprintf("%s-%d", d.ID, i+1), Plan: d.Snapshot.NewPlan, DecisionID: d.ID, Email: email, Version: c.Version, GroupID: c.GroupID, Binding: d.Snapshot.Binding, Status: "reserved", Stage: "queued", Cost: c.UnitCost, CreatedAt: d.At, UpdatedAt: d.At, Stages: map[string]time.Time{"reserved": d.At}}
 		t.TakeoverToken = d.Snapshot.TakeoverToken
+		t.PaymentRiskSource = riskSource
+		if riskSource != "" {
+			t.Message = "支付风控后的一次替补；若本账号再次支付风控，将暂停自动补货"
+			if _, err = tx.Exec(`UPDATE pro_restock_payment_risk SET replacement_id=? WHERE task_id=? AND replacement_id IS NULL`, t.ID, riskSource); err != nil {
+				return nil, err
+			}
+		}
 		t.EmptyGroupStartup = d.EmptyGroupOnly()
 		t.CardProvider, t.StrictCardProvider, t.PurchaseRoute = provider, strict, route
 		t.ForceMergeTracked = true

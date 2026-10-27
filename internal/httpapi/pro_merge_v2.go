@@ -64,7 +64,7 @@ func (s *Server) mergeV2Checkpoint(ctx context.Context, email, team string, meth
 		// Validate under the same store lock as the durable checkpoint. A concurrent
 		// stop or second submit must not slip between a read and this mutation.
 		// Late responses still record accepted facts after a stop.
-		if method == "merge_v2_ready" || method == "merge_v2_submitting" {
+		if method == "merge_v2_ready" || method == "merge_v2_submitting" || method == "merge_v2_accepting" {
 			if ctx.Err() != nil || p.ProAuto.StopRequested {
 				checkpointErr = context.Canceled
 				return
@@ -82,6 +82,24 @@ func (s *Server) mergeV2Checkpoint(ctx context.Context, email, team string, meth
 			m.Steps = map[string]string{}
 		}
 		switch method {
+		case "merge_v2_accepting":
+			if m.Steps["invite"] != "completed" {
+				checkpointErr = errors.New("尚未成功发送目标团队邀请")
+				return
+			}
+			if m.InviteAcceptAttemptedAt != nil {
+				checkpointErr = errors.New("已尝试接受邀请，先核实团队成员关系，禁止重复提交")
+				return
+			}
+			now := time.Now()
+			m.InviteAcceptAttemptedAt, m.UpdatedAt = &now, now
+		case "merge_v2_invite_accepted":
+			if m.InviteAcceptAttemptedAt == nil || args["team_id"] != team {
+				checkpointErr = errors.New("缺少目标团队邀请接受检查点")
+				return
+			}
+			now := time.Now()
+			m.InviteAcceptedAt, m.UpdatedAt = &now, now
 		case "merge_v2_ready":
 			userID, _ := args["user_id"].(string)
 			if strings.TrimSpace(userID) == "" {
