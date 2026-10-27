@@ -38,7 +38,10 @@ func waitProAutoFinished(t *testing.T, s *Server, email string) model.MailAccoun
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if !s.proAutomationRunning(email) {
+		s.proAutoMu.Lock()
+		preparing := len(s.proRestockStartJobs) > 0
+		s.proAutoMu.Unlock()
+		if !preparing && !s.proAutomationRunning(email) {
 			p, _, err := s.store.MailAccountCredential(email)
 			if err != nil {
 				t.Fatal(err)

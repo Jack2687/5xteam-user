@@ -15,6 +15,11 @@ import (
 )
 
 func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c restock.Config) ([]restock.Task, float64, error) {
+	// The tick is the only launcher. Capture ownership before reading tasks so
+	// a preparation finishing during this read cannot be overwritten by stale data.
+	s.proAutoMu.Lock()
+	preparationActive := s.proRestockStartJobs["restock-preparation-worker"] != nil
+	s.proAutoMu.Unlock()
 	tasks, e := s.store.ProRestockTasks()
 	if e != nil {
 		return nil, 0, e
@@ -35,6 +40,14 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			if t.ReadyAt != nil && t.SubmittedAt != nil && t.Binding == snap.Binding {
 				durations = append(durations, restockObservedLead(*t))
 			}
+			continue
+		}
+		// Card preparation owns this task until it returns. Monitoring must not
+		// overwrite its submitting/waiting state while the issuer is slow.
+		s.proAutoMu.Lock()
+		preparing := s.proRestockStartJobs[t.ID] != nil
+		s.proAutoMu.Unlock()
+		if preparationActive || preparing {
 			continue
 		}
 		profile, _, err := s.store.MailAccountCredential(t.Email)
@@ -500,9 +513,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 	if e != nil {
 		return e
 	}
-	if c.Enabled && c.Mode == "auto" && limits.Failures < c.FailureLimit && ctx.Err() == nil && s.proSIWCBlock() == "" {
-		s.continueProRestockCardImports(ctx, c, p)
-	}
+	resumeImports := c.Enabled && c.Mode == "auto" && limits.Failures < c.FailureLimit && ctx.Err() == nil && s.proSIWCBlock() == ""
 	s.observeTakeoverRecovery(c, snap, tasks)
 	tc, _, te := s.store.ProTakeoverConfig()
 	ts, tse := s.store.ProTakeoverState()
@@ -578,9 +589,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 	}
 	// Every reserved member belongs to an already committed batch. Continue
 	// that batch independently of fluctuating demand or missing money samples.
-	if purchaseErr == nil && takeoverBlock == "" && c.Enabled && c.Mode == "auto" && !d.NoRestockActive && d.DemandKnown && limits.Failures < c.FailureLimit && ctx.Err() == nil {
-		s.dispatchProRestock(ctx, c, p, snap)
-	}
+	dispatch := purchaseErr == nil && takeoverBlock == "" && c.Enabled && c.Mode == "auto" && !d.NoRestockActive && d.DemandKnown && limits.Failures < c.FailureLimit && ctx.Err() == nil
 	s.proRestock.mu.Lock()
 	s.proRestock.lastSnapshot = snap
 	s.proRestock.liveSnapshot = snap
@@ -598,6 +607,9 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 	if record {
 		_ = s.store.SaveProRestockDecision(d)
 		_ = s.store.PurgeProRestock(c.RetentionDays)
+	}
+	if resumeImports || dispatch {
+		s.queueRestockPreparation(ctx, c, p, snap, resumeImports, dispatch)
 	}
 	return nil
 }

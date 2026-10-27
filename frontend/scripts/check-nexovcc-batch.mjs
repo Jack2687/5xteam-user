@@ -11,6 +11,28 @@ import * as finance from '../src/nexovcc-finance.js'
 import { cardUsage } from '../src/card-status.js'
 
 const code=readFileSync(new URL('../src/components/NexovccManagementView.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
+for(const count of [1,3,17,100]){
+ const requests=[]
+ const context=vm.createContext({sortCardsByReturnState,applyPaymentPolicies,cardOrigin,...helpers,...finance,ref,reactive,computed,watch,crypto:webcrypto,
+  defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},onMounted(){},onBeforeUnmount(){},clearTimeout(){},setTimeout:fn=>queueMicrotask(fn),formatTime:v=>v,
+  async api(url,options={}){
+   if(url==='/api/nexovcc/dashboard')return {cards:[],cases:[],operations:[],products:[],balance:{},groups:[],finance:{}}
+   if(url==='/api/nexovcc/job')return {id:'open-batch',status:'completed',card_total:count,card_done:count,message:`开卡成功 ${count}/${count} 张`}
+   assert.equal(url,'/api/nexovcc/run')
+   requests.push(JSON.parse(JSON.stringify(options.body)))
+   return {id:'open-batch',status:'running'}
+  }
+ })
+ vm.runInContext(code+';globalThis.view={batchOpen,message,job,running};',context)
+ await context.view.batchOpen({confirm:true,count,template_id:'chosen-template'})
+ assert.equal(requests.length,1,'browser must submit the whole count once')
+ assert.equal(requests[0].count,count)
+ assert.equal(requests[0].template_id,'chosen-template')
+ assert.equal(requests[0].action,'open')
+ assert.equal(requests[0].confirm,true)
+ assert.equal(context.view.job.value.card_done,count)
+ assert.equal(context.view.running.value,false)
+}
 for(const action of ['withdraw_all','cancel','withdraw_cancel']){
  const requests=[];let polls=0
  const rows=[]

@@ -216,8 +216,8 @@ async function batchOpen(d){
  const batchGeneration=stopGeneration
  const count=Number(d.count);if(!Number.isInteger(count)||count<1||count>100||!d.template_id){show('请选择模板，数量须为 1～100','error');return}
  if(!d.confirm){show('请确认开卡将扣除账户资金','error');return}
- dialog.value=null;batch.value={running:true,done:0,total:count,title:'批量开卡'};busy.value=true
- try{for(let i=0;i<count;i++){if(i>0){job.value={status:'running',message:`准备开下一张卡 · 等待 ${cfg.batch_interval_seconds||3} 秒`};await new Promise(resolve=>setTimeout(resolve,(cfg.batch_interval_seconds||3)*1000));if(disposed||batchGeneration!==stopGeneration||apiBlocked.value)return}if(batchGeneration!==stopGeneration||apiBlocked.value)return;const j=await run({action:'open',template_id:d.template_id,request_id:requestID()});if(!j)return;if(j.operation?.status!=='succeeded')throw new Error(j.operation?.error||'原开卡结果待核实，已停止后续开卡');batch.value.done++}show('开卡完成，OAI 卡已加入 Pro 银行卡列表')}
+ dialog.value=null;busy.value=true
+ try{const j=await run({action:'open',template_id:d.template_id,count,request_id:requestID()});if(j)show(j.message,j.status==='completed'?'success':'info')}
  catch(e){if(batchGeneration===stopGeneration){show(e.message,'error');await recoverProgress()}}finally{if(batchGeneration===stopGeneration){busy.value=false;if(batch.value)batch.value.running=false}}
 }
 async function batchCards(d){

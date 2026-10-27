@@ -118,6 +118,22 @@ func TestProRestockBatchDrainsBeforeNewDemand(t *testing.T) {
 				if err := s.tickProRestock(context.Background(), true); err != nil {
 					t.Fatal(err)
 				}
+				// Production schedules the next tick independently. This test
+				// advances one completed preparation at a time, without waiting
+				// for the deliberately blocked account workflow.
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					s.proAutoMu.Lock()
+					preparing := len(s.proRestockStartJobs) > 0
+					s.proAutoMu.Unlock()
+					if !preparing {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("preparation did not settle")
+					}
+					time.Sleep(time.Millisecond)
+				}
 			}
 			busy := func(n int) {
 				s.proMergeMu.Lock()

@@ -5,6 +5,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { createLatestRequest } from '../src/latestRequest.js'
 import { forecastDetails, concurrencyDetails } from '../src/restockForecast.js'
 import { restockMonitorStatus } from '../src/restockMonitor.js'
+import { restockDisplay } from '../src/restockDisplay.js'
 import { restockTaskActive, restockTaskProgress, restockTaskRows, restockTaskTimeline } from '../src/restockTasks.js'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -15,7 +16,7 @@ function fixture() {
   let mounted, unmounted, timerID = 0
   const context = vm.createContext({
     defineProps:()=>({defaultPageSize:50}), ref, reactive, computed, watch, createLatestRequest, forecastDetails, concurrencyDetails, nextTick: tick,
-    restockTaskActive, restockTaskProgress, restockTaskRows, restockTaskTimeline, restockMonitorStatus,
+    restockTaskActive, restockTaskProgress, restockTaskRows, restockTaskTimeline, restockMonitorStatus, restockDisplay,
     window: {confirm:()=>true},
     document: {activeElement: {focus() {}}},
     onMounted(fn) { mounted = fn }, onUnmounted(fn) { unmounted = fn },

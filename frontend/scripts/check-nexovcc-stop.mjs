@@ -19,7 +19,7 @@ const ctx=vm.createContext({sortCardsByReturnState,applyPaymentPolicies,cardOrig
   if(url==='/api/nexovcc/control'){paused=options.body.action==='stop';return {paused}}
   if(url==='/api/nexovcc/job')return {id:'control',status:paused?'stopped':'completed',paused}
   if(url==='/api/nexovcc/dashboard')return {control:{paused}}
-  if(url==='/api/nexovcc/run')return {id:'open',status:'completed',operation:{status:'succeeded'}}
+  if(url==='/api/nexovcc/run')return {id:'open',status:options.body.action==='open'?'running':'completed',card_total:options.body.count,operation:{status:'succeeded'}}
   throw Error(url)
  }
 })

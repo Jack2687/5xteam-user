@@ -102,6 +102,7 @@ type nexovccInput struct {
 	CardCategory     string   `json:"card_category,omitempty"`
 	CardIDs          []string `json:"card_ids,omitempty"`
 	TemplateID       string   `json:"template_id"`
+	Count            int      `json:"count,omitempty"`
 	Amount           string   `json:"amount"`
 	Remark           string   `json:"remark"`
 	Confirm          bool     `json:"confirm"`
@@ -305,6 +306,10 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, "批量操作须选择 1～100 张卡，并提供有效请求编号")
 		return
 	}
+	if in.Count != 0 && (in.Action != "open" || in.Count < 1 || in.Count > 100 || in.TemplateID == "" || !nexovcc.ValidRequestID(in.RequestID)) {
+		writeAPI(w, 400, nil, "批量开卡须选择模板、填写 1～100 张和有效请求编号")
+		return
+	}
 	if in.CardCategory != "" && (in.Action != "card_finance" || in.CardID != "" || (in.CardCategory != "normal" && in.CardCategory != "normal_pending")) {
 		writeAPI(w, 400, nil, "请选择有效的卡片同步分类")
 		return
@@ -371,7 +376,7 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 503, nil, "服务正在关闭")
 		return
 	}
-	ctx, cancel := context.WithTimeout(operationCtx, max(15*time.Minute, time.Duration(len(in.CardIDs))*2*time.Minute))
+	ctx, cancel := context.WithTimeout(operationCtx, max(15*time.Minute, time.Duration(max(len(in.CardIDs), in.Count))*3*time.Minute))
 	if !in.AutomaticRefresh {
 		ctx = nexovcc.WithImmediateRequests(ctx)
 	}
@@ -386,6 +391,10 @@ func (s *Server) runNexovcc(w http.ResponseWriter, r *http.Request) {
 		defer s.nexovcc.wg.Done()
 		defer cancel()
 		defer s.nexovcc.mu.Unlock()
+		if in.Action == "open" && in.Count > 0 {
+			s.batchOpenNexovccLocked(ctx, in)
+			return
+		}
 		if len(in.CardIDs) > 0 {
 			s.batchNexovccLocked(ctx, in)
 			return
