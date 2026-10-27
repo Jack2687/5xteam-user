@@ -224,7 +224,7 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 			return card, secret, e
 		}
 		if !matches[card.ID] {
-			return card, secret, fmt.Errorf("银行卡与本次分时套餐模板不匹配")
+			return card, secret, fmt.Errorf("银行卡与本次套餐模板不匹配")
 		}
 	}
 	err = s.store.ReserveProCard(email, card.ID, enforceMaximum, taskID)

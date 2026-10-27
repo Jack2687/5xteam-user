@@ -843,7 +843,7 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 		if err != nil {
 			return op, err
 		}
-		if pro.PurchaseRoute != nil && (t.ID != pro.PurchaseRoute.TemplateID || t.PlanCode != pro.PurchaseRoute.PlanCode) {
+		if pro.PurchaseRoute != nil && (t.ID != pro.PurchaseRoute.TemplateID || !pro.PurchaseRoute.MatchesTemplatePlan(t.PlanCode)) {
 			return op, fmt.Errorf("环球模板适用套餐已变化，未开卡")
 		}
 	}

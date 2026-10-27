@@ -64,7 +64,7 @@ func (s *Server) validatePurchaseTemplate(r *model.ProPurchaseRoute) error {
 			return err
 		}
 		for _, t := range cfg.Templates {
-			if t.ID == r.TemplateID && t.PlanCode == r.PlanCode && cardplatform.IsOAI(t.Platform) {
+			if t.ID == r.TemplateID && r.MatchesTemplatePlan(t.PlanCode) && cardplatform.IsOAI(t.Platform) {
 				return nil
 			}
 		}
@@ -74,7 +74,7 @@ func (s *Server) validatePurchaseTemplate(r *model.ProPurchaseRoute) error {
 			return err
 		}
 		for _, t := range cfg.Templates {
-			if t.ID == r.TemplateID && t.PlanCode == r.PlanCode && cardplatform.IsOAI(t.Platform) {
+			if t.ID == r.TemplateID && r.MatchesTemplatePlan(t.PlanCode) && cardplatform.IsOAI(t.Platform) {
 				return nil
 			}
 		}

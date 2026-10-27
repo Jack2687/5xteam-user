@@ -260,7 +260,9 @@ func TestEJHAutoOpeningClosedHistoryThroughEntrypoints(t *testing.T) {
 			// respect the reserved card and task instead of buying a second card.
 			ctx, stop := context.WithCancel(context.Background())
 			defer stop()
+			started := make(chan struct{})
 			s.proAutoHooks = &proAutomationHooks{Session: func(context.Context, string, func(string, map[string]any) (any, error)) error {
+				close(started)
 				<-ctx.Done()
 				return errors.New("fixture stops before payment")
 			}}
@@ -295,6 +297,12 @@ func TestEJHAutoOpeningClosedHistoryThroughEntrypoints(t *testing.T) {
 				if err != nil || len(tasks) != 1 || !tasks[0].Active() {
 					t.Fatalf("inflight task lost or duplicated: %+v %v", tasks, err)
 				}
+			}
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				tasks, _ := s.store.ProRestockTasks()
+				t.Fatalf("background card preparation did not reach login: %+v", tasks)
 			}
 			profile, _, err := s.store.MailAccountCredential(email)
 			if err != nil || !s.proAutomationRunning(email) || issued.Load() != 1 || paid.Load() != 0 {

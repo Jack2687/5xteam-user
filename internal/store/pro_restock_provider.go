@@ -30,6 +30,11 @@ func restockCardProvider(q proCapacityQuery, c restock.Config, now time.Time) (s
 	if w, ok := p.PurchaseWindow(now); ok {
 		provider = w.CardProvider
 	}
+	route, err := readProPurchase(q, c, now)
+	if err != nil {
+		return "", false, err
+	}
+	routed = routed || route != nil
 	return c.EffectiveCardProvider(now, provider), routed || c.CardSchedule(now).Provider != "", nil
 }
 

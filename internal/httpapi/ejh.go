@@ -855,7 +855,7 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 			template = t
 		}
 	}
-	if pro.PurchaseRoute != nil && template.PlanCode != pro.PurchaseRoute.PlanCode {
+	if pro.PurchaseRoute != nil && !pro.PurchaseRoute.MatchesTemplatePlan(template.PlanCode) {
 		return gptpay.Card{}, fmt.Errorf("EJH 模板适用套餐已变化，未开卡")
 	}
 	input := template.Input(time.Now())

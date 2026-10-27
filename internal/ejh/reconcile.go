@@ -9,15 +9,16 @@ import (
 // TradeAt normalizes issuer timestamps. Some issuer channels report tradeTime
 // in UTC without an offset while createdAt is Shanghai time. Only correct the
 // eight-hour offset when the issuer's own recording time corroborates it.
-func TradeAt(t Trade) time.Time {
-	parse := func(s string) time.Time {
-		if v, e := time.Parse(time.RFC3339Nano, s); e == nil {
-			return v
-		}
-		v, _ := time.ParseInLocation("2006-01-02 15:04:05", s, time.FixedZone("CST", 8*3600))
+func parseTradeTime(s string) time.Time {
+	if v, e := time.Parse(time.RFC3339Nano, s); e == nil {
 		return v
 	}
-	at, recorded := parse(t.TradeTime), parse(t.CreatedAt)
+	v, _ := time.ParseInLocation("2006-01-02 15:04:05", s, time.FixedZone("CST", 8*3600))
+	return v
+}
+
+func TradeAt(t Trade) time.Time {
+	at, recorded := parseTradeTime(t.TradeTime), parseTradeTime(t.CreatedAt)
 	if at.IsZero() {
 		return recorded
 	}
@@ -28,6 +29,46 @@ func TradeAt(t Trade) time.Time {
 		}
 	}
 	return at
+}
+
+// Delayed issuer ingestion can exceed TradeAt's standalone timezone window.
+// Recover only an otherwise impossible return-before-authorization timestamp,
+// corroborated by a unique same-card authorization whose UTC offset is known.
+// Raw issuer evidence is retained; these times are used only for reconciliation.
+func returnTradeTimes(trades []TradeRecord) map[string]time.Time {
+	authorizations := map[string][]TradeRecord{}
+	for _, t := range trades {
+		if t.Trade.Type == "1" && ChargeUsable(t.Trade) && t.Trade.AuthCode != "" {
+			k := chargeKey(t)
+			authorizations[k] = append(authorizations[k], t)
+		}
+	}
+	times := map[string]time.Time{}
+	for _, t := range trades {
+		at := TradeAt(t.Trade)
+		times[t.ID] = at
+		raw, recorded := parseTradeTime(t.Trade.TradeTime), parseTradeTime(t.Trade.CreatedAt)
+		if !ReturnReceived(t.Trade) || t.Trade.AuthCode == "" || strings.Contains(t.Trade.TradeTime, "T") || raw.IsZero() || recorded.IsZero() || !at.Equal(raw) {
+			continue
+		}
+		candidates := authorizations[chargeKey(t)]
+		if len(candidates) != 1 {
+			continue
+		}
+		p := candidates[0].Trade
+		original, originalRaw := TradeAt(p), parseTradeTime(p.TradeTime)
+		if strings.Contains(p.TradeTime, "T") || originalRaw.IsZero() || !original.Equal(originalRaw.Add(8*time.Hour)) || p.CardCurrency != t.Trade.CardCurrency || p.OrderNo != t.Trade.OrderNo {
+			continue
+		}
+		if p.Merchant != "" && t.Trade.Merchant != "" && !strings.EqualFold(strings.TrimSpace(p.Merchant), strings.TrimSpace(t.Trade.Merchant)) {
+			continue
+		}
+		corrected := raw.Add(8 * time.Hour)
+		if raw.Before(original) && !corrected.Before(original) && !corrected.After(recorded) {
+			times[t.ID] = corrected
+		}
+	}
+	return times
 }
 
 func chargeKey(t TradeRecord) string {
@@ -215,13 +256,20 @@ func AutoReconcile(cases []Case, trades []TradeRecord, now time.Time) {
 			returns = append(returns, t)
 		}
 	}
-	sortTrades(returns)
+	returnTimes := returnTradeTimes(trades)
+	sort.Slice(returns, func(i, j int) bool {
+		a, b := returnTimes[returns[i].ID], returnTimes[returns[j].ID]
+		if a.Equal(b) {
+			return returns[i].ID < returns[j].ID
+		}
+		return a.Before(b)
+	})
 	tradeIndex := map[string]int{}
 	for i, t := range trades {
 		tradeIndex[t.ID] = i
 	}
 	for _, rt := range returns {
-		at := TradeAt(rt.Trade)
+		at := returnTimes[rt.ID]
 		if rt.OrderID != "" || !ReturnReceived(rt.Trade) || at.IsZero() || usedReturns[chargeKey(rt)] {
 			continue
 		}

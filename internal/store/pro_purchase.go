@@ -23,14 +23,30 @@ func ResolveProPurchase(p model.ProSettings, pay gptpay.Settings, c restock.Conf
 	}
 	p.CardProvider = c.EffectiveCardProvider(now, provider)
 	if !matched {
-		return p, pay, nil
+		// Default (including uncovered scheduled hours) is a purchase intent too.
+		// Pin its template so existing cards cannot cross 5x / 20x boundaries.
+		w.PlanCode = pay.PlanCode
+		w.BalanceFallbackEnabled = p.BalanceFallbackEnabled
+	} else {
+		pay.PlanCode, pay.CreditQuantity = w.PlanCode, 0
 	}
 	id := p.PlanTemplate(p.CardProvider, w.PlanCode)
+	legacyTemplate := !matched && id == ""
+	if !matched && id == "" {
+		id = p.EJHTemplateID
+		if p.CardProvider == "nexovcc" {
+			id = p.NexovccTemplateID
+		}
+		// Legacy manual-card setups without an issuer template retain their path.
+		if id == "" {
+			return p, pay, nil
+		}
+	}
 	if id == "" {
 		return p, pay, fmt.Errorf("分时开通缺少 %s 的 %s 模板，请在银行卡与补卡中设置", p.CardProvider, w.PlanCode)
 	}
-	pay.PlanCode, pay.CreditQuantity = w.PlanCode, 0
-	r := &model.ProPurchaseRoute{CardProvider: p.CardProvider, TemplateID: id, PlanCode: w.PlanCode, PaymentProvider: pay.Provider, Country: pay.Country}
+	r := &model.ProPurchaseRoute{CardProvider: p.CardProvider, TemplateID: id, PlanCode: w.PlanCode, PaymentProvider: pay.Provider, Country: pay.Country, CreditQuantity: pay.CreditQuantity}
+	r.LegacyTemplate = legacyTemplate
 	r.BalanceFallbackEnabled, r.BalanceFallbackProvider = w.BalanceFallbackEnabled, w.BalanceFallbackProvider
 	if r.BalanceFallbackProvider == "" {
 		r.BalanceFallbackProvider = "ejh"
@@ -61,11 +77,11 @@ func readProPurchase(q proCapacityQuery, c restock.Config, now time.Time) (*mode
 	if err = json.Unmarshal([]byte(raw), &p); err != nil {
 		return nil, err
 	}
-	if _, matched := p.PurchaseWindow(now); !matched {
-		return nil, nil
-	}
 	var pay gptpay.Settings
 	if err = q.QueryRow(`SELECT profile FROM gptpay_settings WHERE id=1`).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if err = json.Unmarshal([]byte(raw), &pay); err != nil {
@@ -79,7 +95,7 @@ func SameProPurchase(a, b *model.ProPurchaseRoute) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.CardProvider == b.CardProvider && a.TemplateID == b.TemplateID &&
+	return a.CardProvider == b.CardProvider && a.TemplateID == b.TemplateID && a.LegacyTemplate == b.LegacyTemplate &&
 		a.BalanceFallbackEnabled == b.BalanceFallbackEnabled && a.BalanceFallbackProvider == b.BalanceFallbackProvider && a.BalanceFallbackTemplate == b.BalanceFallbackTemplate &&
 		a.PlanCode == b.PlanCode && a.PaymentProvider == b.PaymentProvider &&
 		a.Country == b.Country && a.CreditQuantity == b.CreditQuantity &&

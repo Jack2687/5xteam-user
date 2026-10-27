@@ -18,6 +18,7 @@ type ProPurchaseWindow struct {
 
 // Non-secret purchase intent, pinned before a workflow starts spending.
 type ProPurchaseRoute struct {
+	LegacyTemplate          bool    `json:"legacy_template,omitempty"`
 	BalanceFallbackEnabled  bool    `json:"balance_fallback_enabled"`
 	BalanceFallbackProvider string  `json:"balance_fallback_provider,omitempty"`
 	BalanceFallbackTemplate string  `json:"balance_fallback_template,omitempty"`
@@ -28,6 +29,12 @@ type ProPurchaseRoute struct {
 	Country                 string  `json:"country"`
 	CreditQuantity          int     `json:"credit_quantity"`
 	Sub2GroupIDs            []int64 `json:"sub2_group_ids,omitempty"`
+}
+
+// Unclassified legacy defaults still bind the exact configured template.
+// An explicit classification always wins and cannot cross plan boundaries.
+func (r *ProPurchaseRoute) MatchesTemplatePlan(plan string) bool {
+	return plan == r.PlanCode || r.LegacyTemplate && plan == ""
 }
 
 func purchaseMinute(s string) (int, error) {

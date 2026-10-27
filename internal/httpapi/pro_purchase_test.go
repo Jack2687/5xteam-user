@@ -6,12 +6,94 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
 )
+
+func TestProPurchaseDefaultRejectsOldPlanBeforeReservation(t *testing.T) {
+	for _, provider := range []string{"ejh", "nexovcc"} {
+		t.Run(provider, func(t *testing.T) {
+			var s *Server
+			var email string
+			if provider == "ejh" {
+				s, _, _, email = allocationFixture(t)
+			} else {
+				s, _, email, _ = restockWindowIntegration(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected payment") })
+			}
+			st := s.store
+			setPlan := func(plan string) {
+				if provider == "ejh" {
+					cfg, _, _ := st.EJHSettings()
+					cfg.Templates[0].PlanCode = plan
+					if _, err := st.SaveEJHSettings(cfg, ""); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					cfg, credentials, _ := st.NexovccSettings()
+					cfg.Templates[0].PlanCode = plan
+					if _, err := st.SaveNexovccSettings(cfg, credentials, false); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			p, _, _, _ := st.ProSettings()
+			p.CardProvider, p.PurchaseScheduleEnabled = provider, false
+			if _, err := st.SaveProSettings(p, "", ""); err != nil {
+				t.Fatal(err)
+			}
+			setPlan("pro5")
+			old, err := s.ensureProviderCard(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			setPlan("pro20")
+			pay, _, _ := st.GPTPaySettings()
+			selected, _, err := s.resolveProPurchase(p, pay, restock.DefaultConfig(), time.Now())
+			if err != nil || selected.PurchaseRoute == nil {
+				t.Fatal("default route missing", err)
+			}
+			cards, err := s.automaticProCards(selected, true)
+			if err != nil || len(cards) != 0 {
+				t.Fatal("old 5x card offered for 20x", len(cards), err)
+			}
+			ctx := context.WithValue(context.Background(), proPurchaseContextKey{}, selected.PurchaseRoute)
+			if _, _, err = s.reserveProStartCard(ctx, email, old.ID, false, false); err == nil || !strings.Contains(err.Error(), "模板") {
+				t.Fatal("mismatched card reserved")
+			}
+			policy, err := st.ProRestockConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy.NoRestockEnabled = false
+			policy.Enabled, policy.Mode, policy.GroupID = true, "auto", 1
+			policy, err = st.SaveProRestockConfig(policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			tasks, err := st.ReserveProRestock(restock.Decision{ID: "default-template-guard", At: now, Version: policy.Version, Suggested: 1, Snapshot: restock.Snapshot{NewPlan: restockPlan(pay.Provider, pay.PlanCode, pay.Country, pay.CreditQuantity)}}, "", 0)
+			if err != nil || len(tasks) != 1 {
+				t.Fatal("reserve restock intent", err)
+			}
+			task := tasks[0]
+			task.Status, task.SubmittedAt = "submitting", &now
+			if err = st.ClaimProRestockDispatch(task); err != nil {
+				t.Fatal(err)
+			}
+			if err = st.ReserveProCard(task.Email, old.ID, false, task.ID); err == nil || !strings.Contains(err.Error(), "模板") {
+				t.Fatal("transaction allowed wrong template", err)
+			}
+			c, _, err := st.GPTPayCard(old.ID)
+			if err != nil || c.PendingAccounts != 0 {
+				t.Fatal("rejected card retained reservation", err)
+			}
+		})
+	}
+}
 
 func activePurchaseWindow(provider, plan string) model.ProPurchaseWindow {
 	now := time.Now().In(time.FixedZone("CST", 8*3600))
@@ -20,7 +102,7 @@ func activePurchaseWindow(provider, plan string) model.ProPurchaseWindow {
 
 func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 	for _, provider := range []string{"ejh", "nexovcc"} {
-		for _, trigger := range []string{"restock", "scheduled"} {
+		for _, trigger := range []string{"restock", "scheduled", "restock-default", "scheduled-default"} {
 			for _, plan := range []string{"pro5", "pro20"} {
 				t.Run(provider+"/"+trigger+"/"+plan, func(t *testing.T) {
 					var s *Server
@@ -59,7 +141,11 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 					p.PurchaseScheduleEnabled = true
 					p.PurchaseWindows = []model.ProPurchaseWindow{activePurchaseWindow(provider, plan)}
 					p.PurchaseWindows[0].ExtraSub2GroupIDs = []int64{15, 1, 15}
-					remote, pushes := purchaseSub2Fixture(t, []int64{1, 15})
+					groups := []int64{1, 15}
+					if strings.HasSuffix(trigger, "-default") {
+						groups = []int64{1}
+					}
+					remote, pushes := purchaseSub2Fixture(t, groups)
 					p.Sub2.URL = remote.URL
 					p.EJHPlanTemplates = map[string]string{plan: "allocation"}
 					p.NexovccPlanTemplates = map[string]string{plan: "template"}
@@ -68,6 +154,17 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 						p.CardProvider = "nexovcc"
 					} else {
 						p.CardProvider = "ejh"
+					}
+					expectedGroups := []int64{1, 15}
+					if strings.HasSuffix(trigger, "-default") {
+						p.PurchaseScheduleEnabled = false
+						p.CardProvider = provider
+						expectedGroups = []int64{1}
+						payment, _, _ := st.GPTPaySettings()
+						payment.PlanCode = plan
+						if _, err = st.SaveGPTPaySettings(payment, ""); err != nil {
+							t.Fatal(err)
+						}
 					}
 					if _, err = st.SaveProSettings(p, "", ""); err != nil {
 						t.Fatal(err)
@@ -97,7 +194,7 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 					}, Push: s.performProPush, Quota: func(context.Context, string, bool) (model.MailAccountProfile, error) {
 						return model.MailAccountProfile{}, errors.New("fixture stops at quota")
 					}}
-					if trigger == "restock" {
+					if strings.HasPrefix(trigger, "restock") {
 						windowTick(t, s)
 					} else {
 						s.tickProSchedule(true)
@@ -106,7 +203,7 @@ func TestProPurchaseScheduledAndRestockFullFlow(t *testing.T) {
 					if profile.ProAuto.Status != "waiting_quota" || profile.ProAuto.PlanCode != plan {
 						t.Fatal("workflow plan", profile.ProAuto)
 					}
-					if pushes.Load() != 1 || !slices.Equal(profile.ProAuto.Sub2PushGroupIDs, []int64{1, 15}) || profile.ProAuto.RestockBinding != restockBinding(p) {
+					if pushes.Load() != 1 || !slices.Equal(profile.ProAuto.Sub2PushGroupIDs, expectedGroups) || profile.ProAuto.RestockBinding != restockBinding(p) {
 						t.Fatal("push groups or monitoring binding changed", pushes.Load(), profile.ProAuto)
 					}
 					orders, _, err := st.GPTPayOrders(10, 0, email)

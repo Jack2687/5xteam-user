@@ -244,7 +244,7 @@ func (s *Store) ReserveProCard(email, cardID string, enforceMaximum bool, restoc
 				return e
 			}
 			if !matches[card.ID] {
-				return errors.New("银行卡不属于本次分时开通模板")
+				return errors.New("银行卡不属于本次套餐的开通模板")
 			}
 		}
 		if !RestockCardMatches(card, task.CardProvider, task.StrictCardProvider) {

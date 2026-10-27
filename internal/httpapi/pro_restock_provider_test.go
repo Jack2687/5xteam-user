@@ -36,7 +36,11 @@ func providerClaim(t *testing.T, s *Server, provider string) (context.Context, r
 	allocationAccount(t, s, email)
 	c := providerWindow(t, s, provider)
 	now := time.Now()
-	tasks, err := s.store.ReserveProRestock(restock.Decision{ID: "window-claim", At: now, Version: c.Version, Suggested: 1}, "", 0)
+	pay, _, err := s.store.GPTPaySettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := s.store.ReserveProRestock(restock.Decision{ID: "window-claim", At: now, Version: c.Version, Suggested: 1, Snapshot: restock.Snapshot{NewPlan: restockPlan(pay.Provider, pay.PlanCode, pay.Country, pay.CreditQuantity)}}, "", 0)
 	if err != nil || len(tasks) != 1 {
 		t.Fatal(tasks, err)
 	}

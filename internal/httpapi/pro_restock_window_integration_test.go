@@ -224,6 +224,15 @@ func TestProRestockWindowNoNewCardsStillUsesOldestEligible(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					// Eligible issuer cards carry their original opening-template evidence.
+					op := nexovcc.Operation{ID: "fixture-open-" + serial, Action: "open", TemplateID: "template", PlanCode: "pro20", CardID: card.ID, Status: "submitted", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+					if err = s.store.BeginNexovccOperation(op); err != nil {
+						t.Fatal(err)
+					}
+					op.Status = "succeeded"
+					if err = s.store.SaveNexovccOperation(op); err != nil {
+						t.Fatal(err)
+					}
 					if serial == "oldest" {
 						want = card.ID
 					}

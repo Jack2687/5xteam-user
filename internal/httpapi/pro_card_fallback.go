@@ -67,6 +67,7 @@ func (s *Server) ensureProviderCardWithFallback(ctx context.Context, checks ...f
 		route = &model.ProPurchaseRoute{CardProvider: selected.AutoCardProvider(), PlanCode: pay.PlanCode, PaymentProvider: pay.Provider, Country: pay.Country, CreditQuantity: pay.CreditQuantity}
 	}
 	next := *route
+	next.LegacyTemplate = false
 	next.CardProvider = other
 	next.TemplateID = template
 	if next.TemplateID == "" {
