@@ -14,6 +14,15 @@ import (
 )
 
 func TestNexovccRefundDescriptorsAcrossDashboardAndPro(t *testing.T) {
+	checkNexovccRefundDashboardAndPro(t, false)
+}
+
+func TestNexovccSettlementCurrencyRefundAcrossDashboardAndPro(t *testing.T) {
+	checkNexovccRefundDashboardAndPro(t, true)
+}
+
+func checkNexovccRefundDashboardAndPro(t *testing.T, settledUSD bool) {
+	t.Helper()
 	s, _ := nexFixtureServer(t)
 	s.nexovcc.transport = func(context.Context, nexovcc.Request) (nexovcc.Response, error) {
 		t.Fatal("cached refund accounting must not request the issuer")
@@ -49,6 +58,14 @@ func TestNexovccRefundDescriptorsAcrossDashboardAndPro(t *testing.T) {
 		}
 		if err = s.store.SaveNexovccFinance(f); err != nil {
 			t.Fatal(err)
+		}
+	}
+	// Existing PHP payment associations must survive the issuer changing its
+	// settlement/refund representation to USD on the next complete snapshot.
+	if settledUSD {
+		for _, i := range []int{0, 2} {
+			f.Trades[i].MerchantCurrency = "USD"
+			f.Trades[i].MerchantAmount = f.Trades[i].Amount
 		}
 	}
 	if err = s.store.SaveNexovccFinance(f); err != nil {

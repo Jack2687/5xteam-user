@@ -448,9 +448,24 @@ func standalonePayment(rows []Trade) (Trade, int64, bool) {
 		}
 		if pending.Status != "PENDING" || settled.Status != "COMPLETE" ||
 			pending.Serial != settled.Serial || pending.Authorization != settled.Authorization ||
-			pending.Currency != settled.Currency || pending.MerchantCurrency != settled.MerchantCurrency ||
+			pending.Currency != settled.Currency ||
 			pending.At.IsZero() || settled.At.Before(pending.At) {
 			return Trade{}, 0, false
+		}
+		if pending.MerchantCurrency != settled.MerchantCurrency {
+			// The issuer may replace the original merchant currency (e.g. PHP)
+			// with the card's USD settlement amount. Only accept that explicit
+			// representation, with the same authorization and merchant. Refunds
+			// still have to match the settled currency and a unique payment below.
+			original, originalErr := Cents(pending.MerchantAmount)
+			amount, amountErr := Cents(settled.Amount)
+			merchantAmount, merchantErr := Cents(settled.MerchantAmount)
+			if pending.MerchantCurrency == "" || originalErr != nil || original <= 0 ||
+				settled.MerchantCurrency != "USD" || settled.Currency != "USD" ||
+				amountErr != nil || merchantErr != nil || amount <= 0 || merchantAmount != amount ||
+				normalizedMerchant(pending.Merchant) == "" || normalizedMerchant(pending.Merchant) != normalizedMerchant(settled.Merchant) {
+				return Trade{}, 0, false
+			}
 		}
 		// Authorization and settlement describe one payment, not two purchases.
 		payment = settled

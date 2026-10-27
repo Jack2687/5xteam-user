@@ -11,8 +11,19 @@ import (
 )
 
 func TestNexovccReopenRebuildsHistoricalRefundMatches(t *testing.T) {
-	for _, category := range []string{"normal", "normal_pending", "closed-manual-returned"} {
-		t.Run(category, func(t *testing.T) {
+	for _, tc := range []struct {
+		category   string
+		settledUSD bool
+	}{
+		{"normal", false}, {"normal_pending", false}, {"closed-manual-returned", false},
+		{"normal", true}, {"normal_pending", true}, {"closed-manual-returned", true},
+	} {
+		category := tc.category
+		name := category
+		if tc.settledUSD {
+			name += "-usd-settlement"
+		}
+		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			s, err := Open(dir)
 			if err != nil {
@@ -27,6 +38,12 @@ func TestNexovccReopenRebuildsHistoricalRefundMatches(t *testing.T) {
 			var f nexovcc.Finance
 			if err = json.Unmarshal(raw, &f); err != nil {
 				t.Fatal(err)
+			}
+			if tc.settledUSD {
+				for _, i := range []int{0, 2} {
+					f.Trades[i].MerchantCurrency = "USD"
+					f.Trades[i].MerchantAmount = f.Trades[i].Amount
+				}
 			}
 			for i := range f.Trades {
 				f.Trades[i].Serial = card.Serial
