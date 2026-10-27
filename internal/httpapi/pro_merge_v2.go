@@ -326,13 +326,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 			return s.mergeV2Checkpoint(ctx, email, admin.TeamAccountID, method, args)
 		}}
 		loginCtx := context.WithValue(ctx, mergeV2LoginKey{}, opts)
-		login := s.proMergeV2Login
-		if login == nil {
-			login = func(ctx context.Context, email string) (map[string]any, error) {
-				return s.executeOpenAILoginContext(ctx, email, "chatgpt_at", func(message string) { s.auditProEvent(p, "merge_v2_login", "running", settings.Provider, message, nil) }, nil)
-			}
-		}
-		result, loginErr := login(loginCtx, email)
+		result, loginErr := s.loginProMergeV2(loginCtx, p, settings.Provider, waitProAuto)
 		if (loginErr != nil || result["success"] != true) && isDeadOAuthResult(result, oauthErrorText(result, loginErr)) {
 			dead, deadErr := s.markProDead(email, "merge_v2_login", oauthErrorText(result, loginErr))
 			if deadErr != nil {

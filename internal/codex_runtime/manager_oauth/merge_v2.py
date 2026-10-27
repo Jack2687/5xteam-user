@@ -15,23 +15,33 @@ class TeamProtocolLogin(ProjectProtocolLogin):
         self.target_team = payload["merge_v2"]["team_id"]
         self.team_session_at = None
         self.team_session = None
+        self.workspace_selected = False
+
+    def trace(self, event, message, **details):
+        # Only structural evidence, never an AT, cookie or callback query.
+        bridge.emit("merge_v2_team", event, message, details=details)
 
     def submit_workspace_and_org(self, referer_url):
         # Never pick the first/default workspace. The server validates membership.
+        self.trace("workspace_select", "选择邀请对应的目标团队")
         url = "https://auth.openai.com/api/accounts/workspace/select"
         resp = self.request(url, method="POST", json_data={"workspace_id": self.target_team},
                             headers=self.headers(url, {"Accept": "application/json", "Origin": "https://auth.openai.com", "Referer": referer_url}), timeout=45)
         if resp.status in {301, 302, 303, 307, 308} and resp.location():
+            self.workspace_selected = True
             return urljoin(url, resp.location())
         if resp.status != 200:
             raise RuntimeError(f"选择目标团队失败：HTTP {resp.status}")
         next_url = self.extract_continue_url(resp.json())
         if not next_url:
             raise RuntimeError("选择目标团队未返回后续地址，停止以免使用错误空间")
+        self.workspace_selected = True
         return self.normalize_auth_url(next_url)
 
     def follow_callback(self, callback_url):
         current = self.normalize_auth_url(callback_url)
+        self.trace("callback_start", "检查团队登录回调路径",
+                   workspace_page=self.is_workspace_or_consent_url(current))
         for _ in range(18):
             parsed = urlsplit(current)
             if parsed.scheme != "https" or parsed.hostname not in {"chatgpt.com", "auth.openai.com"}:
@@ -41,11 +51,15 @@ class TeamProtocolLogin(ProjectProtocolLogin):
                 current = urljoin(current, resp.location())
                 parsed = urlsplit(current)
                 if parsed.hostname == "chatgpt.com" and not parsed.path.startswith("/api/auth/"):
+                    self.trace("callback_complete", "登录回调结束，等待校验实际团队会话",
+                               workspace_selected=self.workspace_selected)
                     return
                 continue
             if resp.status == 200 and parsed.hostname == "auth.openai.com" and self.is_workspace_or_consent_url(current):
                 current = self.submit_workspace_and_org(current)
                 continue
+            self.trace("callback_complete", "登录回调结束，等待校验实际团队会话",
+                       workspace_selected=self.workspace_selected)
             return
         raise RuntimeError("团队登录跳转超过上限")
 
@@ -62,16 +76,23 @@ class TeamProtocolLogin(ProjectProtocolLogin):
         auth = claims.get("https://api.openai.com/auth") or {}
         token_team = auth.get("chatgpt_account_id")
         session_team = (session.get("account") or {}).get("id")
-        # The actual AT must carry the target; a requested workspace is not evidence.
-        if token_team != self.target_team or (session_team and session_team != self.target_team):
-            raise RuntimeError("登录凭据未切换到受邀团队，禁止提交导出停用")
         user = session.get("user") or {}
         email = user.get("email") or (claims.get("https://api.openai.com/profile") or {}).get("email") or claims.get("email")
+        matches = dict(at_team_present=bool(token_team), at_team_matches=token_team == self.target_team,
+                       session_team_present=bool(session_team), session_team_matches=session_team == self.target_team,
+                       email_matches=bool(email) and email.casefold() == str(self.payload.get("email") or "").casefold(),
+                       workspace_selected=self.workspace_selected)
+        self.trace("team_validation", "核对登录凭据的目标团队与子号身份", **matches)
         if not email or email.casefold() != str(self.payload.get("email") or "").casefold():
             raise RuntimeError("团队会话邮箱与子号不一致或无法确认")
         user_id = auth.get("chatgpt_user_id") or user.get("id")
         if not user_id:
             raise RuntimeError("团队会话缺少子号用户 ID")
+        # The Go merge workflow owns a separate, bounded recovery budget. Do not
+        # let generic network retries multiply or immediately repeat this error.
+        if token_team != self.target_team or (session_team and session_team != self.target_team):
+            raise upstream.LoginFlowError("登录凭据未切换到受邀团队，禁止提交导出停用",
+                                          code="team_session_mismatch", retryable=False)
         return token, user_id
 
     def submit_export(self, session):

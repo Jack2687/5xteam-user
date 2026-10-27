@@ -123,5 +123,52 @@ class MergeV2ProtocolTests(unittest.TestCase):
         self.assertEqual(flows[0].payload["_totp_secret"],"JBSWY3DPEHPK3PXP")
         self.assertIs(original.login,adapter.ProjectProtocolLogin.login)
 
+    def test_mismatch_has_distinct_non_network_recovery_code_and_safe_evidence(self):
+        f=self.flow()
+        for value in [session("personal"), {**session(), "account":{"id":"other-team"}}, session("")]:
+            with self.subTest(value=value), patch.object(merge_v2.bridge,"emit") as emit, self.assertRaises(upstream.LoginFlowError) as caught:
+                f.validate_team(value)
+            self.assertEqual(caught.exception.code,"team_session_mismatch")
+            self.assertFalse(caught.exception.retryable)
+            details=emit.call_args.kwargs["details"]
+            self.assertTrue(details["email_matches"])
+            self.assertTrue(all(isinstance(v,bool) for v in details.values()))
+            self.assertNotIn(value["accessToken"],json.dumps(details))
+            self.assertNotIn("other-team",json.dumps(details))
+
+    def test_wrong_identity_does_not_enter_team_recovery(self):
+        f=self.flow()
+        with self.assertRaises(RuntimeError) as caught:
+            f.validate_team(session("wrong-team","wrong@example.com"))
+        self.assertNotIsInstance(caught.exception,upstream.LoginFlowError)
+
+    def test_adapter_returns_mismatch_code_without_export_or_internal_retry(self):
+        def login(flow):
+            flow.validate_team(session("personal"))
+        with patch.object(merge_v2.TeamProtocolLogin,"login",login),patch.object(merge_v2.TeamProtocolLogin,"submit_export") as submit,patch.object(merge_v2.bridge,"call") as rpc:
+            result=adapter.run({"email":"child@example.com","credential_mode":"chatgpt_at","proxy":"http://proxy.invalid:8080","merge_v2":{"team_id":"target-team"},"login_mode":"password_totp","gpt_password":"fixture","totp_secret":"JBSWY3DPEHPK3PXP"})
+        self.assertEqual(result["error_code"],"team_session_mismatch")
+        self.assertFalse(result["retryable"])
+        submit.assert_not_called();rpc.assert_not_called()
+
+    def test_direct_callback_mismatch_then_new_workspace_session(self):
+        first=self.flow()
+        with patch.object(first,"request",return_value=upstream.ProtocolResponse(302,"https://chatgpt.com/api/auth/callback/openai",{"Location":"https://chatgpt.com/"},"{}")), patch.object(first,"get_session",return_value=session("personal")), patch.object(first,"get_session_cookie",return_value=""), patch.object(first.web_session,"request") as export:
+            first.follow_callback("https://chatgpt.com/api/auth/callback/openai?code=private-code")
+            with self.assertRaises(upstream.LoginFlowError): first._chatgpt_web_session()
+            export.assert_not_called()
+        second=self.flow()
+        self.assertIsNot(first.web_session,second.web_session)
+        responses=[upstream.ProtocolResponse(200,"https://auth.openai.com/workspace",{},"{}"),upstream.ProtocolResponse(200,"https://auth.openai.com/api/accounts/workspace/select",{},json.dumps({"continue_url":"https://chatgpt.com/api/auth/callback/openai?code=other-code"})),upstream.ProtocolResponse(302,"https://chatgpt.com/api/auth/callback/openai",{"Location":"https://chatgpt.com/"},"{}")]
+        with patch.object(second,"request",side_effect=responses) as request, patch.object(second,"get_session",return_value=session()),patch.object(second,"get_session_cookie",return_value=""):
+            second.follow_callback("https://auth.openai.com/workspace")
+            value=second._chatgpt_web_session()
+        self.assertEqual(request.call_args_list[1].kwargs["json_data"],{"workspace_id":"target-team"})
+        self.assertTrue(second.workspace_selected)
+        self.assertLess(time.monotonic()-second.team_session_at,120)
+        with patch.object(second.web_session,"request",return_value=self.response()) as export,patch.object(merge_v2.bridge,"call",return_value=True):
+            self.assertTrue(second.submit_export(value)["success"])
+            export.assert_called_once()
+
 
 if __name__=="__main__":unittest.main()
