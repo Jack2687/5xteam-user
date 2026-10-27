@@ -24,6 +24,7 @@ func TestProRetryOriginalPayment(t *testing.T) {
 		creates                      int32
 	}{
 		{"paid", "success", "original-remote", "success", true, 0},
+		{"paid login fails", "success", "original-remote", "success", true, 0},
 		{"review becomes paid", "manual_review", "original-remote", "success", true, 0},
 		{"still reviewing", "manual_review", "original-remote", "manual_review", false, 0},
 		{"still processing", "processing", "original-remote", "processing", false, 0},
@@ -67,9 +68,22 @@ func TestProRetryOriginalPayment(t *testing.T) {
 			}
 			s.proAutoHooks = &proAutomationHooks{Session: func(ctx context.Context, email string, rpc func(string, map[string]any) (any, error)) error {
 				logins.Add(1)
+				assertRecoveryStage := func() {
+					t.Helper()
+					current, _, _ := st.MailAccountCredential(email)
+					progress := current.ProStages()
+					if current.ProAuto.Stage != "oauth" || progress.Steps["login"] != "completed" || progress.Steps["recharge"] != "completed" || progress.Steps["oauth"] != "running" || current.ProAuto.OrderID != o.ID || current.ProAuto.ID != "existing-flow" {
+						t.Errorf("paid recovery went back to purchase/login stages: %+v", current.ProAuto)
+					}
+				}
+				assertRecoveryStage()
+				if tc.name == "paid login fails" {
+					return fmt.Errorf("fixture recovery login failed")
+				}
 				if _, err := rpc("pro_recharge", map[string]any{"session": map[string]any{"access_token": proAutoToken(email, "recovered")}}); err != nil {
 					return err
 				}
+				assertRecoveryStage()
 				_, err := rpc("pro_tokens", map[string]any{"tokens": map[string]any{"access_token": proAutoToken(email, "after"), "refresh_token": "recovered-rt"}})
 				return err
 			}, Push: func(ctx context.Context, email string) (model.MailAccountProfile, error) {
@@ -87,6 +101,12 @@ func TestProRetryOriginalPayment(t *testing.T) {
 					t.Fatalf("%d %s", rec.Code, rec.Body.String())
 				}
 				p = waitProAutoFinished(t, s, email)
+				if tc.name == "paid login fails" {
+					if p.ProAuto.Status != "failed" || p.ProAuto.Stage != "oauth" || p.ProAuto.Steps["login"] != "completed" || p.ProAuto.Steps["recharge"] != "completed" || p.ProAuto.OrderID != o.ID || logins.Load() != 1 || pushes.Load() != 0 || creates.Load() != 0 {
+						t.Fatalf("paid login failure lost completed purchase: %+v", p.ProAuto)
+					}
+					return
+				}
 				if p.ProAuto.Status != "completed" || p.ProAuto.OrderID != o.ID || p.ProAuto.ID != "existing-flow" || p.ProAuto.Steps["login"] != "completed" || logins.Load() != 1 || pushes.Load() != 1 || merges.Load() != 1 {
 					t.Fatalf("recovery failed: %+v", p.ProAuto)
 				}

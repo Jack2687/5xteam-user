@@ -14,6 +14,10 @@ import (
 type proRestockRecoveryKey struct{}
 type proPaidRecoveryKey struct{}
 
+func isProPaidRecovery(ctx context.Context) bool {
+	return ctx.Value(proPaidRecoveryKey{}) != nil || ctx.Value(proRestockRecoveryKey{}) != nil
+}
+
 // Recovery can establish a new login session, but it has no payment permission.
 func (s *Server) confirmRestockPaidSession(ctx context.Context, p model.MailAccountProfile, taskID string, args map[string]any) (any, error) {
 	if p.ProRestockTaskID != taskID || p.ProAuto.OrderID == "" {
@@ -33,13 +37,7 @@ func (s *Server) confirmProPaidSession(p model.MailAccountProfile, args map[stri
 	if err != nil || info.Email != p.Email || info.AccountID != paid.Input.Session.Account.ID {
 		return nil, errors.New("恢复登录账号或空间与已付款订单不一致")
 	}
-	if err = s.autoProUpdate(p.Email, "login", "completed", "恢复登录身份与原订单一致"); err != nil {
-		return nil, err
-	}
-	if err = s.autoProUpdate(p.Email, "recharge", "completed", "复核原订单成功；恢复授权，不重新付款"); err != nil {
-		return nil, err
-	}
-	if err = s.autoProUpdate(p.Email, "oauth", "running", "重新建立登录会话后恢复新授权"); err != nil {
+	if err = s.autoProUpdate(p.Email, "oauth", "running", "恢复登录身份与原成功订单一致，仅继续获取 RT/AT，不重新付款"); err != nil {
 		return nil, err
 	}
 	return map[string]any{"status": "success"}, nil
@@ -78,6 +76,16 @@ func (s *Server) queueRestockPaidRecovery(p model.MailAccountProfile, settings m
 		v.ProAuto.RestockRecoveries++
 		v.ProAuto.RestockRecoveryAt = &now
 		v.ProAuto.Status = "running"
+		v.ProAuto.Stage = "oauth"
+		if v.ProAuto.Steps == nil {
+			v.ProAuto.Steps = map[string]string{}
+		}
+		v.ProAuto.Steps["login"], v.ProAuto.Steps["recharge"], v.ProAuto.Steps["oauth"] = "completed", "completed", "pending"
+		v.ProAuto.RetryAt = nil
+		for _, stage := range []string{"login", "recharge", "oauth"} {
+			delete(v.ProManualStages, stage)
+			delete(v.ProStageOverrides, stage)
+		}
 		v.ProAuto.Error = fmt.Sprintf("恢复已付款订单的授权，第 %d 次", v.ProAuto.RestockRecoveries)
 	})
 	if err != nil {

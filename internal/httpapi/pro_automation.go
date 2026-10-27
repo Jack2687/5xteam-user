@@ -533,11 +533,16 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 				p.ProAuto.Steps = map[string]string{}
 			}
 			if paidRecovery {
+				p.ProAuto.Steps["login"] = "completed"
 				p.ProAuto.Steps["recharge"] = "completed"
-				delete(p.ProManualStages, "recharge")
-				delete(p.ProStageOverrides, "recharge")
+				p.ProAuto.Stage, p.ProAuto.Steps["oauth"] = "oauth", "pending"
+				p.ProAuto.RetryAt = nil
+				for _, stage := range []string{"login", "recharge", "oauth"} {
+					delete(p.ProManualStages, stage)
+					delete(p.ProStageOverrides, stage)
+				}
 			}
-			if !resume {
+			if !resume && !paidRecovery {
 				p.ProAuto.Stage = "login"
 				p.ProAuto.Steps["login"] = "pending"
 			}
@@ -645,7 +650,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 			}
 		}
 		stage, message := "login", "记录第一步登录的 GPT 客户端与出口；供应商开通不参与一致性对比"
-		if method == "pro_tokens" {
+		if method == "pro_tokens" || isProPaidRecovery(ctx) {
 			stage, message = "oauth", "记录第三步获取凭证的 GPT 客户端与出口；IP 检测结果不阻断全自动流程"
 		}
 		s.auditProEvent(p, stage, "running", "pro_auto", message, map[string]any{
@@ -835,7 +840,7 @@ func (s *Server) runProContinuousSession(ctx context.Context, email string, rpc 
 		return err
 	}
 	selection := selectOAuthLogin(s.store.AutoRotationSettings().OAuthLoginMode, c)
-	payload := map[string]any{"email": email, "proxy": proxy, "pickup_url": c.PickupURL, "stdio_rpc": true}
+	payload := map[string]any{"email": email, "proxy": proxy, "pickup_url": c.PickupURL, "stdio_rpc": true, "paid_recovery": isProPaidRecovery(ctx)}
 	profile, _, e := s.store.MailAccountCredential(email)
 	if e != nil {
 		return e
@@ -856,7 +861,11 @@ func (s *Server) runProContinuousSession(ctx context.Context, email string, rpc 
 	if err != nil {
 		return err
 	}
-	s.auditProEvent(p, "login", "running", "pro_auto", "建立连续登录客户端与代理会话；从首次登录前记录出口，IP 不一致不阻断任务", map[string]any{
+	stage, message := "login", "建立连续登录客户端与代理会话；从首次登录前记录出口，IP 不一致不阻断任务"
+	if isProPaidRecovery(ctx) {
+		stage, message = "oauth", "为原账号建立恢复授权会话；原订单已成功，不重新开通或付款"
+	}
+	s.auditProEvent(p, stage, "running", "pro_auto", message, map[string]any{
 		"automation_id": p.ProAuto.ID, "session_id": p.ProAuto.ID, "proxy_name": lease.label, "diagnostic_only": true,
 	})
 	python := workflow.FindPython()

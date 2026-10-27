@@ -89,6 +89,12 @@ func TestProRestockWindowFullFlowAndPaidRecovery(t *testing.T) {
 				if current != email {
 					t.Error("switched account")
 				}
+				if isProPaidRecovery(ctx) {
+					p, _, _ := st.MailAccountCredential(current)
+					if p.ProAuto.Stage != "oauth" || p.ProAuto.Steps["login"] != "completed" || p.ProAuto.Steps["recharge"] != "completed" {
+						t.Error("restock recovery reset the completed login/purchase stages")
+					}
+				}
 				if err := windowRecharge(s, current, rpc); err != nil {
 					return err
 				}

@@ -189,7 +189,10 @@ def run(payload, rpc):
         claims = upstream.jwt_payload(initial["access_token"])
         flow.paid_account_id = (claims.get("https://api.openai.com/auth") or {}).get("chatgpt_account_id") or (initial.get("account") or {}).get("id", "")
         bridge.protect_code(initial["access_token"])
-        bridge.emit("recharge", "session_held", "使用首次登录 AT 交由 GPTPay 开通；GPT 会话保留，供应商连接不参与一致性对比")
+        if payload.get("paid_recovery"):
+            bridge.emit("oauth", "session_held", "使用原账号登录 AT 核验原成功订单，仅恢复授权；不提交开通或付款")
+        else:
+            bridge.emit("recharge", "session_held", "使用首次登录 AT 交由 GPTPay 开通；GPT 会话保留，供应商连接不参与一致性对比")
         # This RPC blocks without closing the curl Session or proxy lease.
         # No bank/API-key data enters the Python login process.
         result = bridge.call("pro_recharge", session=initial, **flow.exit_details())

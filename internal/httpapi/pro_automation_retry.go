@@ -17,7 +17,11 @@ func (s *Server) runProProvisioning(ctx context.Context, email string, cfg gptpa
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		if err = s.autoProUpdate(email, "login", "running", "开始 Pro 全自动流程，建立连续登录会话"); err != nil {
+		stage, message := "login", "开始 Pro 全自动流程，建立连续登录会话"
+		if isProPaidRecovery(ctx) {
+			stage, message = "oauth", "原订单已开通，仅重新登录原账号恢复 RT/AT 授权，不重新开通或付款"
+		}
+		if err = s.autoProUpdate(email, stage, "running", message); err != nil {
 			return err
 		}
 		sessionCtx, stop := context.WithTimeout(ctx, time.Duration(cfg.SessionTimeoutMinutes)*time.Minute)
@@ -36,7 +40,7 @@ func (s *Server) runProProvisioning(ctx context.Context, email string, cfg gptpa
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if ctx.Value(proPaidRecoveryKey{}) != nil || ctx.Value(proRestockRecoveryKey{}) != nil {
+		if isProPaidRecovery(ctx) {
 			return err
 		}
 		p, _, readErr := s.store.MailAccountCredential(email)
@@ -85,7 +89,7 @@ func (s *Server) runProProvisioning(ctx context.Context, email string, cfg gptpa
 			return err
 		}
 		at := time.Now().Add(delay)
-		message := fmt.Sprintf("原账号重试 %d/%d，%d 秒后从登录继续；上次失败：%s", p.ProAuto.RetryAttempts+1, settings.RetryCount, settings.RetryIntervalSeconds, err)
+		message = fmt.Sprintf("原账号重试 %d/%d，%d 秒后从登录继续；上次失败：%s", p.ProAuto.RetryAttempts+1, settings.RetryCount, settings.RetryIntervalSeconds, err)
 		retried, retryErr := s.store.PrepareProAutoRetry(email, p.ProAuto, settings.RetryCount, at, message)
 		if retryErr != nil {
 			return fmt.Errorf("%w；未自动重试：%v", err, retryErr)
