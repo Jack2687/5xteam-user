@@ -19,7 +19,7 @@ type NexovccSharedFees struct {
 // Use all successful accounts, including deleted accounts, independently of UI
 // filters/pagination. A repeated successful order for the same account receives
 // its card share only once, consistently with the card's opened-account count.
-func allocateNexovccCardFees(q nexovccCaseQuery, cases []NexovccCase, finance nexovcc.Finance) error {
+func allocateNexovccCardFees(q nexovccCaseQuery, cases []NexovccCase, finance nexovcc.Finance, feeBasis ...[]NexovccCase) error {
 	serials := map[string]string{}
 	rows, err := q.Query(`SELECT id,serial FROM nexovcc_cards`)
 	if err != nil {
@@ -59,15 +59,20 @@ func allocateNexovccCardFees(q nexovccCaseQuery, cases []NexovccCase, finance ne
 		totals[f.Serial] = v
 	}
 	accounts := map[string]map[string]bool{}
-	for _, c := range cases {
+	basis := cases
+	if len(feeBasis) > 0 {
+		basis = feeBasis[0]
+	}
+	firstOrders := map[string]string{}
+	for _, c := range basis {
 		if c.PaymentStatus == "success" {
 			if accounts[c.CardID] == nil {
 				accounts[c.CardID] = map[string]bool{}
 			}
 			accounts[c.CardID][strings.ToLower(c.Email)] = true
+			firstOrders[c.CardID+"|"+strings.ToLower(c.Email)] = c.ID
 		}
 	}
-	assigned := map[string]bool{}
 	for i := len(cases) - 1; i >= 0; i-- {
 		c := &cases[i]
 		if c.PaymentStatus != "success" {
@@ -77,8 +82,7 @@ func allocateNexovccCardFees(q nexovccCaseQuery, cases []NexovccCase, finance ne
 		v := totals[serial]
 		a := &NexovccSharedFees{Count: len(accounts[c.CardID]), Ready: serial != "" && !finance.CardSyncedAt(serial).IsZero() && !v.invalid}
 		key := c.CardID + "|" + strings.ToLower(c.Email)
-		a.Applied = !assigned[key]
-		assigned[key] = true
+		a.Applied = firstOrders[key] == c.ID
 		if a.Ready && a.Count > 0 {
 			a.OpeningTotal, a.MonthlyTotal = nexovcc.SignedMoney(v.opening), nexovcc.SignedMoney(v.monthly)
 			a.Opening, a.Monthly = "0.00", "0.00"
@@ -92,4 +96,22 @@ func allocateNexovccCardFees(q nexovccCaseQuery, cases []NexovccCase, finance ne
 		c.SharedFees = a
 	}
 	return nil
+}
+
+// Lightweight allocation basis, ordered exactly like the full case list.
+func nexovccFeeBasis(q nexovccCaseQuery) ([]NexovccCase, error) {
+	rows, err := q.Query(`SELECT o.id,o.email,c.id FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id JOIN nexovcc_cards c ON c.card_key=u.card_key WHERE u.status='success' ORDER BY o.created_at DESC,o.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NexovccCase{}
+	for rows.Next() {
+		v := NexovccCase{PaymentStatus: "success"}
+		if err = rows.Scan(&v.ID, &v.Email, &v.CardID); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }

@@ -318,7 +318,7 @@ func (s *Store) MatchNexovccCase(id, groupID, reason string) error {
 	return fmt.Errorf("流水不存在、卡片不一致或交易信息不完整")
 }
 
-func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase) error {
+func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase, feeBasis ...[]NexovccCase) error {
 	// Recompute interpretations from the current cached evidence, including
 	// parser corrections, without waiting for another supplier request.
 	var financeRaw string
@@ -339,7 +339,7 @@ func (s *Store) enrichNexovccCasesQuery(q nexovccCaseQuery, cases []NexovccCase)
 	} else if err != sql.ErrNoRows {
 		return err
 	}
-	if err := allocateNexovccCardFees(q, cases, finance); err != nil {
+	if err := allocateNexovccCardFees(q, cases, finance, feeBasis...); err != nil {
 		return err
 	}
 	revenues := map[string]*float64{}

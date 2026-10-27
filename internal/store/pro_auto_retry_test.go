@@ -9,7 +9,7 @@ import (
 )
 
 func TestProAutoRetryPaymentAndStateGuards(t *testing.T) {
-	for _, scenario := range []string{"no_order", "failed", "success", "processing", "submission_unknown", "manual_review", "missing_order", "unlinked_success", "once_successful", "provider_blocked", "stopped", "stale_flow", "stale_attempt", "exhausted", "paid_stage"} {
+	for _, scenario := range []string{"no_order", "failed", "success", "processing", "submission_unknown", "manual_review", "missing_order", "unlinked_success", "once_successful", "provider_blocked", "payment_risk", "stopped", "stale_flow", "stale_attempt", "exhausted", "paid_stage"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := transferStore(t)
 			email := "retry@example.com"
@@ -28,15 +28,18 @@ func TestProAutoRetryPaymentAndStateGuards(t *testing.T) {
 				state.OrderID = "missing"
 			}
 			switch scenario {
-			case "failed", "success", "processing", "submission_unknown", "manual_review", "unlinked_success", "once_successful", "provider_blocked":
+			case "failed", "success", "processing", "submission_unknown", "manual_review", "unlinked_success", "once_successful", "provider_blocked", "payment_risk":
 				status := scenario
 				if scenario == "unlinked_success" {
 					status = "success"
 				}
-				if scenario == "once_successful" || scenario == "provider_blocked" {
+				if scenario == "once_successful" || scenario == "provider_blocked" || scenario == "payment_risk" {
 					status = "failed"
 				}
 				o := transferOrder(email, state.PaymentOrderID(), status)
+				if scenario == "payment_risk" {
+					o.Order.Error = "OpenAI 支付风控拦截"
+				}
 				if scenario == "provider_blocked" {
 					no := false
 					o.Order.Provider, o.Order.Remote.Retryable = gptpay.CMSNav, &no

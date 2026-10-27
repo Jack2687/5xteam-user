@@ -77,6 +77,7 @@ func (s *Server) proAccountListWithCardsContext(ctx context.Context, items []mod
 	if err != nil {
 		return nil, err
 	}
+	effectiveSettings := map[string]model.ProSettings{}
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -84,8 +85,20 @@ func (s *Server) proAccountListWithCardsContext(ctx context.Context, items []mod
 		// Resolve account-specific targets before displaying quality and costs.
 		effective := config
 		if item.ProSIWC != nil || item.ProRestockTargetID != "" {
-			if v, _, _, e := s.proAccountPushSettings(item); e == nil {
-				effective = v
+			cacheKey := item.ProRestockTargetID
+			if item.ProSIWC != nil && item.ProSIWC.AccountID > 0 && item.ProSIWC.TargetID != "" {
+				cacheKey = "siwc:" + item.ProSIWC.TargetID
+			}
+			if item.VM2 != nil {
+				cacheKey += "|vm:" + item.VM2.ConnectionID
+			}
+			if cached, ok := effectiveSettings[cacheKey]; ok {
+				effective = cached
+			} else {
+				if v, _, _, e := s.proAccountPushSettings(item); e == nil {
+					effective = v
+				}
+				effectiveSettings[cacheKey] = effective
 			}
 		}
 		item.ProQuality = proQualityDisplay(item, quality, effective)
@@ -128,8 +141,16 @@ func (s *Server) proAccountListWithCardsContext(ctx context.Context, items []mod
 
 func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 	if paginationRequested(r) {
-		page := s.parsePagination(r)
-		items, total, summary, err := s.store.ProAccountsPageContext(r.Context(), r.URL.Query().Get("query"), r.URL.Query().Get("merge_state"), page.Limit, page.Offset)
+		reader, err := s.store.ProListReader(r.Context())
+		if err != nil {
+			writeAPI(w, 500, nil, "读取 Pro 账号失败")
+			return
+		}
+		defer reader.Close()
+		// Only pure local display helpers run against this read-only view.
+		view := &Server{store: reader}
+		page := view.parsePagination(r)
+		items, total, summary, err := reader.ProAccountsPageContext(r.Context(), r.URL.Query().Get("query"), r.URL.Query().Get("merge_state"), page.Limit, page.Offset)
 		if err != nil {
 			writeAPI(w, http.StatusInternalServerError, nil, "读取 Pro 账号失败: "+err.Error())
 			return
@@ -138,7 +159,7 @@ func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 		for i, item := range items {
 			profiles[i] = item.MailAccountProfile
 		}
-		rows, err := s.proAccountListWithCardsContext(r.Context(), profiles)
+		rows, err := view.proAccountListWithCardsContext(r.Context(), profiles)
 		if err != nil {
 			writeAPI(w, 500, nil, "读取开通银行卡失败")
 			return
@@ -146,7 +167,7 @@ func (s *Server) listProAccounts(w http.ResponseWriter, r *http.Request) {
 		for i := range rows {
 			rows[i].StateEnteredAt = items[i].StateEnteredAt
 		}
-		cfg, _, _, err := s.store.ProSettings()
+		cfg, _, _, err := reader.ProSettings()
 		if err != nil {
 			writeAPI(w, 500, nil, "读取全自动最后一步状态失败")
 			return

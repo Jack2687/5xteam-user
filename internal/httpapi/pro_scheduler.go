@@ -105,6 +105,11 @@ func (s *Server) reconcileProSchedule(run *model.ProScheduleRun) bool {
 			t.Error = ""
 			continue
 		}
+		if p.ProAuto.PaymentReviewRequired {
+			t.Status, t.Error = "attention", gptpay.PaymentReviewMessage
+			pending++
+			continue
+		}
 		if s.proAutomationRunning(t.Email) || p.ProAuto.Status == "waiting_quota" {
 			t.Status = "running"
 			pending++

@@ -97,6 +97,10 @@ func (s *Store) prepareProAutoRetry(email string, expected model.ProAutoState, l
 			err = errors.New("已有成功或待确认订单，禁止重新付款")
 			break
 		}
+		if first && order.PaymentReviewRequired() {
+			err = errors.New(gptpay.PaymentReviewMessage)
+			break
+		}
 		if first && order.RetryBlocked() {
 			err = errors.New("供应商禁止重试，请先核查原订单")
 			break

@@ -24,6 +24,7 @@ func TestProAutoSameAccountRetries(t *testing.T) {
 	}{
 		{"login_then_success", 2, 2, 1, true},
 		{"payment_then_success", 2, 2, 2, true},
+		{"payment_risk", 2, 1, 1, false},
 		{"exhausted", 2, 3, 0, false},
 		{"disabled", 0, 1, 0, false},
 		{"unknown_payment", 2, 1, 1, false},
@@ -45,6 +46,10 @@ func TestProAutoSameAccountRetries(t *testing.T) {
 				if tc.name == "unknown_payment" {
 					w.WriteHeader(503)
 					fmt.Fprint(w, `{"code":50301}`)
+					return
+				}
+				if tc.name == "payment_risk" {
+					fmt.Fprint(w, `{"code":0,"data":{"id":"risk-rejected","status":"failed","failureReason":"OpenAI 支付风控拦截，请稍后重试或更换卡。"}}`)
 					return
 				}
 				if tc.name == "payment_then_success" && n == 1 {
@@ -112,6 +117,20 @@ func TestProAutoSameAccountRetries(t *testing.T) {
 			}
 			if tc.name == "exhausted" && !strings.Contains(p.ProAuto.Error, "重试 2 次后仍失败") {
 				t.Fatal("retry exhaustion was hidden", p.ProAuto.Error)
+			}
+			if tc.name == "payment_risk" {
+				if !p.ProAuto.PaymentReviewRequired || p.IsProDead() || p.ProAuto.RetryAttempts != 0 || !strings.Contains(p.ProAuto.Error, "待核实") {
+					t.Fatal("risk rejection did not retain account for review", p.ProAuto)
+				}
+				cfg, _, _, _ := st.ProSettings()
+				tasks, _, err := s.restockTasks(restock.Snapshot{Binding: restockBinding(cfg), GroupID: 1}, cfg, restock.Config{GroupID: 1, LeadMinutes: 5, LeadSamples: 2})
+				if err != nil || len(tasks) != 1 || tasks[0].Status != "attention" || tasks[0].Predictable() {
+					t.Fatal("review was silently replaced or counted as capacity", tasks, err)
+				}
+				run := model.ProScheduleRun{ID: "risk-run", Status: "running", StartedAt: time.Now(), Tasks: []model.ProScheduleTask{{Email: email, Status: "running"}}}
+				if s.reconcileProSchedule(&run) || run.Tasks[0].Status != "attention" {
+					t.Fatal("schedule advanced past review", run)
+				}
 			}
 			orders, total, _ := st.GPTPayOrders(10, 0, email)
 			if total != tc.orders || tc.name == "payment_then_success" && orders[1].Status != "failed" {

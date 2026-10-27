@@ -6,6 +6,7 @@ import (
 )
 
 type ProAutoState struct {
+	PaymentReviewRequired bool `json:"payment_review_required,omitempty"`
 	// Base connection and effective groups are separate so extra memberships
 	// do not change the restock pool's identity or hide in-flight work.
 	Sub2PushGroupIDs     []int64              `json:"sub2_push_group_ids,omitempty"`

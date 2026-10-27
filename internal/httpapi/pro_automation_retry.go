@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"chatgpt-space-merge/internal/gptpay"
+	"chatgpt-space-merge/internal/model"
 )
 
 // Retry the pre-payment chain while retaining the account lock, worker slot
@@ -49,6 +50,19 @@ func (s *Server) runProProvisioning(ctx context.Context, email string, cfg gptpa
 		}
 		if p.IsProDead() {
 			return errProAccountDead
+		}
+		if p.ProAuto.OrderID != "" {
+			if order, _, e := s.store.GPTPayOrder(p.ProAuto.OrderID); e == nil && order.PaymentReviewRequired() {
+				_, saveErr := s.store.UpdateProAccount(email, func(current *model.MailAccountProfile) {
+					if current.ProAuto.ID == p.ProAuto.ID && current.ProAuto.OrderID == order.ID {
+						current.ProAuto.PaymentReviewRequired = true
+					}
+				})
+				if saveErr != nil {
+					return fmt.Errorf("%s；保存待核实状态失败：%v：%w", gptpay.PaymentReviewMessage, saveErr, err)
+				}
+				return fmt.Errorf("%s：%w", gptpay.PaymentReviewMessage, err)
+			}
 		}
 		// Read the current policy when scheduling each retry, not just when the
 		// workflow starts. A wait already scheduled keeps its published deadline.

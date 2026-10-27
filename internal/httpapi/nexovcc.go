@@ -35,7 +35,16 @@ func (s *Server) proFinancialCases(cases []ejh.Case) ([]proFinancialCase, error)
 	}
 	byID := map[string]store.NexovccCase{}
 	if needed {
-		rows, err := s.store.NexovccCases()
+		emails := make([]string, 0, len(cases))
+		seen := map[string]bool{}
+		for _, c := range cases {
+			email := strings.ToLower(strings.TrimSpace(c.Email))
+			if c.CardType == "nexovcc" && !seen[email] {
+				emails = append(emails, email)
+				seen[email] = true
+			}
+		}
+		rows, err := s.store.NexovccCasesForEmails(emails)
 		if err != nil {
 			return nil, err
 		}

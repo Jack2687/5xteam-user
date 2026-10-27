@@ -766,12 +766,35 @@ func (s *Store) NexovccCases() ([]NexovccCase, error) {
 	return s.nexovccCasesQuery(s.db)
 }
 
-func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
+// Pro list projections only hydrate cases belonging to the current page.
+func (s *Store) NexovccCasesForEmails(emails []string) ([]NexovccCase, error) {
+	if len(emails) == 0 {
+		return []NexovccCase{}, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.nexovccCasesQuery(s.db, emails)
+}
+
+func (s *Store) nexovccCasesQuery(q nexovccCaseQuery, emailSets ...[]string) ([]NexovccCase, error) {
+	where := ""
+	args := []any{}
+	if len(emailSets) > 0 {
+		marks := make([]string, len(emailSets[0]))
+		for i, email := range emailSets[0] {
+			marks[i] = "?"
+			args = append(args, strings.ToLower(strings.TrimSpace(email)))
+		}
+		if len(marks) == 0 {
+			return []NexovccCase{}, nil
+		}
+		where = " WHERE o.email IN (" + strings.Join(marks, ",") + ")"
+	}
 	merchantFees, err := proMerchantFeesByOrder(q)
 	if err != nil {
 		return nil, err
 	}
-	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,''),coalesce(oc.profile,'{}'),coalesce((SELECT profile FROM mail_accounts WHERE email=o.email),'{}'),coalesce((SELECT profile FROM pro_dead_accounts WHERE email=o.email),'null') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id LEFT JOIN pro_oai_confirmation_accounts oc ON oc.email=o.email JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0) ORDER BY o.created_at DESC,o.id DESC`)
+	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,''),coalesce(oc.profile,'{}'),coalesce((SELECT profile FROM mail_accounts WHERE email=o.email),'{}'),coalesce((SELECT profile FROM pro_dead_accounts WHERE email=o.email),'null') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id LEFT JOIN pro_oai_confirmation_accounts oc ON oc.email=o.email JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0)`+where+` ORDER BY o.created_at DESC,o.id DESC`, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -808,7 +831,17 @@ func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
 		return nil, e
 	}
 	rows.Close()
-	if e = s.enrichNexovccCasesQuery(q, out); e != nil {
+	var feeBasis [][]NexovccCase
+	if len(emailSets) > 0 {
+		// Financial allocation still uses every successful account on each card,
+		// including accounts outside this page and deleted accounts.
+		basis, err := nexovccFeeBasis(q)
+		if err != nil {
+			return nil, err
+		}
+		feeBasis = append(feeBasis, basis)
+	}
+	if e = s.enrichNexovccCasesQuery(q, out, feeBasis...); e != nil {
 		return nil, e
 	}
 	for i := range out {

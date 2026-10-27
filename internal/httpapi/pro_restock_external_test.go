@@ -18,6 +18,8 @@ func TestRestockExternalInflightTracksPaymentOutcome(t *testing.T) {
 		{"failed", "", false, false, false},
 		{"interrupted", "", false, false, false},
 		{"failed", "failed", false, true, false},
+		{"failed", "historical_risk", false, true, false},
+		{"failed", "risk_review", false, true, true},
 		{"failed", "submission_unknown", false, true, true},
 		{"stopped", "submission_unknown", false, true, true},
 		{"stopped", "success", false, true, true},
@@ -38,12 +40,17 @@ func TestRestockExternalInflightTracksPaymentOutcome(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err = st.CreateGPTPayOrder(gptpay.Order{ID: "pro-auto-external", Email: email, CardID: "test-card", Status: tc.payment, CreatedAt: time.Now()}, gptpay.Snapshot{Input: gptpay.CreateInput{CardSecret: secret}}); err != nil {
+				order := gptpay.Order{ID: "pro-auto-external", Email: email, CardID: "test-card", Status: tc.payment, CreatedAt: time.Now()}
+				if tc.payment == "historical_risk" || tc.payment == "risk_review" {
+					order.Status, order.Error = "failed", "OpenAI 支付风控拦截"
+				}
+				if err = st.CreateGPTPayOrder(order, gptpay.Snapshot{Input: gptpay.CreateInput{CardSecret: secret}}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if _, err = st.UpdateProAccount(email, func(v *model.MailAccountProfile) {
 				v.ProAuto = model.ProAutoState{ID: "external", Status: tc.status, StartedAt: time.Now(), RestockBinding: restockBinding(p)}
+				v.ProAuto.PaymentReviewRequired = tc.payment == "risk_review"
 				if tc.linked {
 					v.ProAuto.OrderID = "pro-auto-external"
 				}

@@ -73,6 +73,7 @@ func (s *Server) trackProStageResponse(w http.ResponseWriter, email, stage strin
 
 func proPaymentStage(order gptpay.Order) model.ProStageProgress {
 	status := "running"
+	message := order.Error
 	updatedAt := time.Now()
 	switch order.Status {
 	case "success":
@@ -84,10 +85,13 @@ func proPaymentStage(order gptpay.Order) model.ProStageProgress {
 		}
 	case "failed":
 		status = "failed"
+		if order.PaymentReviewRequired() {
+			status, message = "unknown", gptpay.PaymentReviewMessage+"："+order.Error
+		}
 	case "submission_unknown", "manual_review":
 		status = "unknown"
 	}
-	return model.ProStageProgress{ID: order.ID, Status: status, Error: order.Error, StartedAt: order.CreatedAt, UpdatedAt: updatedAt}
+	return model.ProStageProgress{ID: order.ID, Status: status, Error: message, StartedAt: order.CreatedAt, UpdatedAt: updatedAt}
 }
 
 func (s *Server) updateProPaymentStage(order gptpay.Order) {
