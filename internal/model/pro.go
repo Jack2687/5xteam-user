@@ -9,6 +9,7 @@ type ProAutoState struct {
 	// Base connection and effective groups are separate so extra memberships
 	// do not change the restock pool's identity or hide in-flight work.
 	Sub2PushGroupIDs     []int64              `json:"sub2_push_group_ids,omitempty"`
+	ProxyRetryAttempts   int                  `json:"proxy_retry_attempts,omitempty"`
 	RetryAttempts        int                  `json:"retry_attempts,omitempty"`
 	RetryAt              *time.Time           `json:"retry_at,omitempty"`
 	StopVersion          uint64               `json:"stop_version,omitempty"`
@@ -52,6 +53,7 @@ func (s ProAutoState) PaymentOrderID() string {
 // ProSettings is intentionally independent from Team rotation push settings.
 // Its providers are mutually exclusive through Provider.
 type ProSettings struct {
+	BalanceFallbackEnabled       bool                       `json:"balance_fallback_enabled"`
 	OAIConfirmationConcurrency   int                        `json:"oai_confirmation_concurrency"`
 	OAIInquiry                   ProOAIInquiry              `json:"oai_inquiry"`
 	OAIConfirmation              ProOAIConfirmationSettings `json:"oai_confirmation"`

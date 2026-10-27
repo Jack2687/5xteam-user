@@ -272,7 +272,18 @@ func (c *Client) login(ctx context.Context) error {
 	}
 	c.userID = text(m["user_id"])
 	if flag(m["is_bind_ga"]) || flag(m["need_verify"]) {
-		if _, e = c.call(ctx, "/api/verifyGoogleCode", map[string]any{"is_login": true, "user_id": c.userID}); e != nil {
+		_, e = c.call(ctx, "/api/verifyGoogleCode", map[string]any{"is_login": true, "user_id": c.userID})
+		var rejected *Error
+		if errors.As(e, &rejected) && rejected.Code == 10002 && !rejected.Unknown {
+			// Authentication only: retry once with the next TOTP interval. Never
+			// replay a card operation because an authentication code was rejected.
+			delay := time.Duration(31-c.now().Unix()%30) * time.Second
+			if waitErr := c.wait(ctx, delay); waitErr != nil {
+				return waitErr
+			}
+			_, e = c.call(ctx, "/api/verifyGoogleCode", map[string]any{"is_login": true, "user_id": c.userID})
+		}
+		if e != nil {
 			return fmt.Errorf("环球谷歌验证失败：%w", e)
 		}
 	}

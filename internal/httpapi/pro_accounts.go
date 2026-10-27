@@ -1271,6 +1271,9 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	if err != nil {
 		return profile, err
 	}
+	if profile.IsProDead() {
+		return profile, errProAccountDead
+	}
 	if profile.ManagementScope != "pro" {
 		return profile, errors.New("账号不在 Pro 管理中")
 	}

@@ -31,6 +31,14 @@ func ResolveProPurchase(p model.ProSettings, pay gptpay.Settings, c restock.Conf
 	}
 	pay.PlanCode, pay.CreditQuantity = w.PlanCode, 0
 	r := &model.ProPurchaseRoute{CardProvider: p.CardProvider, TemplateID: id, PlanCode: w.PlanCode, PaymentProvider: pay.Provider, Country: pay.Country}
+	r.BalanceFallbackEnabled, r.BalanceFallbackProvider = w.BalanceFallbackEnabled, w.BalanceFallbackProvider
+	if r.BalanceFallbackProvider == "" {
+		r.BalanceFallbackProvider = "ejh"
+		if r.CardProvider == "ejh" {
+			r.BalanceFallbackProvider = "nexovcc"
+		}
+	}
+	r.BalanceFallbackTemplate = p.PlanTemplate(r.BalanceFallbackProvider, w.PlanCode)
 	if len(w.ExtraSub2GroupIDs) > 0 && p.Provider != "sub2" {
 		return p, pay, fmt.Errorf("分时开通的额外推送分组仅支持 Sub2，请检查推送设置")
 	}
@@ -72,6 +80,7 @@ func SameProPurchase(a, b *model.ProPurchaseRoute) bool {
 		return a == nil && b == nil
 	}
 	return a.CardProvider == b.CardProvider && a.TemplateID == b.TemplateID &&
+		a.BalanceFallbackEnabled == b.BalanceFallbackEnabled && a.BalanceFallbackProvider == b.BalanceFallbackProvider && a.BalanceFallbackTemplate == b.BalanceFallbackTemplate &&
 		a.PlanCode == b.PlanCode && a.PaymentProvider == b.PaymentProvider &&
 		a.Country == b.Country && a.CreditQuantity == b.CreditQuantity &&
 		slices.Equal(a.Sub2GroupIDs, b.Sub2GroupIDs)

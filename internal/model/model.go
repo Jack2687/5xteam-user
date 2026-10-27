@@ -26,6 +26,7 @@ type Settings struct {
 // MailAccountProfile is the local mailbox projection used by registration.
 // Secrets are encrypted in Store and never returned by list APIs.
 type MailAccountProfile struct {
+	ProDead                    *ProDeadState                  `json:"pro_dead,omitempty"`
 	ProSIWC                    *ProSIWCState                  `json:"pro_siwc,omitempty"`
 	SIWCPresent                bool                           `json:"siwc_present"`
 	ProQuality                 ProQualityState                `json:"pro_quality"`

@@ -78,6 +78,9 @@ func (s *Server) startClaimedProRestock(ctx context.Context, t restock.Task, pay
 	if w.Code == http.StatusAccepted {
 		return
 	}
+	if current, e := s.store.ProRestockDispatchTask(t.ID); e == nil {
+		t = current
+	}
 	t.Status, t.ETA = "attention", nil
 	t.Message = "启动未获确认；保留原账号、预算与在途"
 	var reply struct {

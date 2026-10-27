@@ -77,7 +77,7 @@ async function changeProvider(event) {
   })
   event.target.value = settings.provider
 }
-const automation = reactive({ purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, auto_delete_enabled: false, auto_merchant_enabled:false,auto_merge_v2_enabled:false,merchant_success_fee_usd:'0.00', merchant_api_url:'https://refunds.llmrefund.com/v1/refunds', merchant_key_present:false, deletion_check_interval_seconds: 300, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
+const automation = reactive({ balance_fallback_enabled:false,purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, auto_delete_enabled: false, auto_merchant_enabled:false,auto_merge_v2_enabled:false,merchant_success_fee_usd:'0.00', merchant_api_url:'https://refunds.llmrefund.com/v1/refunds', merchant_key_present:false, deletion_check_interval_seconds: 300, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 automation.oai_confirmation=normalizeOAISettings()
 automation.oai_confirmation_concurrency=2
 automation.oai_inquiry={...defaultOAIInquiry}
@@ -94,7 +94,7 @@ function associated(card){return cardCases.value.filter(c=>cardHasCase(card,c)||
 function cardHint(card){return associated(card).slice(0,30).map(caseSummary).join('\n')||'暂无关联账号'}
 const purchasePlans = [{code:'pro5',label:'5x'},{code:'pro20',label:'20x'}]
 function matchingTemplates(provider,plan){ return (provider==='ejh'?ejhTemplates.value:nexovccTemplates.value).filter(t=>t.plan_code===plan) }
-function addPurchaseWindow(){ automation.purchase_windows.push({start:'17:00',end:'20:50',card_provider:automation.card_provider||'ejh',plan_code:'pro5',extra_sub2_group_ids:[]}) }
+function addPurchaseWindow(){ automation.purchase_windows.push({start:'17:00',end:'20:50',card_provider:automation.card_provider||'ejh',plan_code:'pro5',balance_fallback_enabled:false,balance_fallback_provider:'',extra_sub2_group_ids:[]}) }
 const purchaseGroups = ref([]), purchaseGroupsLoading = ref(false), purchaseGroupsError = ref(''), purchaseGroupsLoaded = ref(false)
 let purchaseGroupsController
 async function loadPurchaseGroups(force = false) {
@@ -269,6 +269,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <div class="catalog-status wide" aria-live="polite"><span v-if="catalogLoading">正在读取国家、货币与套餐…</span><span v-else-if="catalogError" class="danger-text">目录读取失败：{{ catalogError }}<span v-if="settings.provider === 'tokenseek'"> 当前显示文档选项，实际可购买套餐以账户报价为准。</span></span><span v-else-if="catalog">已读取 {{ availableCountries.length }} 个国家/地区。<span v-if="catalogSelectionInvalid" class="danger-text">请选择目录内的国家和可用套餐，并检查点数数量。</span></span><button class="btn ghost compact" type="button" :disabled="busy || catalogLoading" @click="loadCatalog">刷新国家与套餐</button></div>
 </div>
             <div class="config-divider"><h4>分时开通</h4><p>用于自动补货与定时全自动；手动开通自行选择。时段外使用默认套餐和卡台。</p></div>
+            <label class="toggle-row"><div><strong>时段外／手动开通允许备用卡台</strong><small>未命中分时时段时使用此设置；时段内按下方每个时段单独设置。仅明确余额不足时切换另一卡台同套餐 OAI 模板。</small></div><input v-model="automation.balance_fallback_enabled" type="checkbox"/><i></i></label>
             <label class="toggle-row"><div><strong>启用分时开通</strong><small>北京时间，支持跨天；每日禁补规则仍独立生效。</small></div><input v-model="automation.purchase_schedule_enabled" type="checkbox"/><i></i></label>
             <div v-for="(w,i) in automation.purchase_windows" :key="i" class="purchase-window">
               <div class="settings-fields">
@@ -277,6 +278,8 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
                 <label class="field"><span>卡台</span><select v-model="w.card_provider"><option value="ejh">EJH</option><option value="nexovcc">环球</option></select></label>
                 <label class="field"><span>开通套餐</span><select v-model="w.plan_code"><option value="pro5">5x</option><option value="pro20">20x</option></select><small>模板：{{purchaseTemplateName(w)}}</small></label>
               </div>
+              <label class="toggle-row"><div><strong>本时段余额不足时启用备用卡台</strong><small>保留套餐和推送分组；已开始的任务沿用启动时规则，付款结果未知时不切换。</small></div><input v-model="w.balance_fallback_enabled" type="checkbox"/><i></i></label>
+              <label v-if="w.balance_fallback_enabled" class="field"><span>备用卡台</span><select v-model="w.balance_fallback_provider"><option value="">自动选择另一卡台</option><option v-if="w.card_provider!=='ejh'" value="ejh">EJH</option><option v-if="w.card_provider!=='nexovcc'" value="nexovcc">环球</option></select><small>模板：{{purchaseTemplateName({...w,card_provider:w.balance_fallback_provider||(w.card_provider==='ejh'?'nexovcc':'ejh')})}}</small></label>
               <ProPurchaseGroups v-model="w.extra_sub2_group_ids" :groups="purchaseGroups" :base-ids="automation.sub2?.group_ids || []" :base-names="automation.sub2?.group_names || []" :enabled="automation.provider === 'sub2'" :loading="purchaseGroupsLoading" :error="purchaseGroupsError" @load="loadPurchaseGroups()" @refresh="loadPurchaseGroups(true)" />
               <button class="btn ghost compact danger-text" type="button" @click="automation.purchase_windows.splice(i,1)">删除时段</button>
             </div>

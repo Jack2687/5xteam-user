@@ -372,7 +372,8 @@ func ForecastExits(c Config, s Snapshot, tasks []Task, newSlots int, lead float6
 		point.LaterPending = later - pending
 		if f.Demand > 0 && f.Demand >= c.ConcurrencyTrigger(base) {
 			f.Pressure = true
-			point.Need = max(0, int(math.Ceil((float64(f.Demand)*100/float64(max(1, c.TargetPercent))-point.SizingCapacity)/c.EffectiveCapacity(newSlots))))
+			_, targetPercent := c.CapacityThresholds(base)
+			point.Need = max(0, int(math.Ceil((float64(f.Demand)*100/float64(max(1, targetPercent))-point.SizingCapacity)/c.EffectiveCapacity(newSlots))))
 			point.Gap = float64(f.Demand) > c.EffectiveCapacity(base+slots)
 			f.TransientGap = f.TransientGap || point.Gap
 			f.Emergency = f.Emergency || (point.Gap && (certain || f.DemandHeld))

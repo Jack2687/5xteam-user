@@ -84,7 +84,7 @@ export function summarizeInFlightPayments(cases=[],cards=[],operations=[],trades
  const groups=authorizationGroups(trades)
  const closedCards=new Set(cards.filter(c=>c.remote?.status==='2'||c.payment_policy?.mode==='payment_only').map(c=>c.id))
  const orders=new Map(),payments=new Map(),payment=new Map(),transaction=new Map(),settlement=new Map(),conversions=[]
- for(const row of cases)if(!row.payment_only&&['opened','waiting'].includes(row.state)&&!closedCards.has(row.ejh_card_id||row.card_id))orders.set(row.id||row,row)
+ for(const row of cases)if(!row.pro_dead&&!row.payment_only&&['opened','waiting'].includes(row.state)&&!closedCards.has(row.ejh_card_id||row.card_id))orders.set(row.id||row,row)
  let missingPayment=0,missingTransaction=0,missingSettlement=0,pendingSettlement=0,authorizations=0
  for(const row of orders.values()){
   let charge=row.charge

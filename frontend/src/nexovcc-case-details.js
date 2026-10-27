@@ -36,9 +36,9 @@ export function caseDetails(row, finance = {}) {
  if(!merchantPaid.length && group?.valid && group.merchant_currency && present(group.merchant_amount)) merchantPaid.push({currency:group.merchant_currency,amount:cents(group.merchant_amount)})
  return {...amounts,merchantPaid,merchantReturned,trades,relatedTrades,funds,feesReady,
   reversal:fee([2003,5004]),transaction:fee([2007,5008]),refundFee:fee([8888,5003]),otherFees:fee(feeKinds.filter(k=>![3003,5001,2003,5004,2007,5008,8888,5003].includes(k))),
-  cardLoss:group?.valid ? group.fully_returned ? amounts.difference : 0 : null,
-  settlement:group?.valid ? (group.settled && !group.fully_returned ? amounts.difference : 0)+cents(group.related_settlement) : null,
-  pending:row.payment_only?0:group?.valid ? amounts.closed ? 0 : Math.max(0,amounts.difference) : null,
+  cardLoss:group?.valid ? !row.pro_dead&&group.fully_returned ? amounts.difference : 0 : null,
+  settlement:group?.valid ? (!row.pro_dead && group.settled && !group.fully_returned ? amounts.difference : 0)+cents(group.related_settlement) : null,
+  pending:row.pro_dead||row.payment_only?0:group?.valid ? amounts.closed ? 0 : Math.max(0,amounts.difference) : null,
   returnedAt:validTime(group?.returned_at) ? group.returned_at : '',refundCompleted,
   provisional:!row.payment_only&&!amounts.closed,
   manualUnconfirmed:row.state==='returned' && (!group?.valid || !group.fully_returned),

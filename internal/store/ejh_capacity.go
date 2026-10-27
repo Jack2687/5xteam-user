@@ -84,6 +84,11 @@ func (s *Store) issuerSnapshotForPhysicalCard(q proCapacityQuery, key string) (*
 	return card, nil
 }
 func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
+	if dead, err := proCardDead(q, key); err != nil {
+		return err
+	} else if dead {
+		return fmt.Errorf("该卡关联死号，已永久禁用新的开通；仍可查询、提现或销卡")
+	}
 	c, e := s.issuerForPhysicalCard(q, key)
 	if e != nil {
 		return e

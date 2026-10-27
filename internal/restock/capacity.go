@@ -21,6 +21,7 @@ func (c Config) EffectiveCapacity(reported int) float64 {
 // Split before multiplying to retain exact integer rounding without overflow.
 func (c Config) ConcurrencyTrigger(reported int) int {
 	reported = max(0, reported)
-	percent := c.capacityPercent() * min(100, max(1, c.TriggerPercent))
+	trigger, _ := c.CapacityThresholds(reported)
+	percent := c.capacityPercent() * min(100, max(1, trigger))
 	return (reported/10000)*percent + (reported%10000)*percent/10000
 }

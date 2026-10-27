@@ -387,6 +387,7 @@ func (s *Store) nexovccIssuer(q proCapacityQuery, key string) (*gptpay.Card, err
 
 const nexovccOccupiedSQL = `(CASE
  WHEN u.status NOT IN ('success','failed') THEN 1
+ WHEN u.status='success' AND EXISTS(SELECT 1 FROM pro_dead_cards d WHERE d.card_key=u.card_key AND d.email=u.email) THEN 0
  WHEN u.status='success' AND ` + paymentOnlyReleasedSQL + ` THEN 0
  WHEN EXISTS(SELECT 1 FROM nexovcc_case_states s WHERE s.order_id=u.order_id AND s.state IN ('opened','waiting')) THEN 1
  WHEN EXISTS(SELECT 1 FROM nexovcc_case_states s WHERE s.order_id=u.order_id AND s.state IN ('returned','unopened')) THEN 0
@@ -570,7 +571,7 @@ func (s *Store) BeginNexovccOperation(op nexovcc.Operation, admission ...Nexovcc
 		}
 		if op.CapacityRecycle || op.AutoWithdraw {
 			var unpaid int
-			if e = tx.QueryRow(`SELECT count(*) FROM pro_card_usage u WHERE u.card_key=? AND u.status='success' AND NOT (`+paymentOnlyReleasedSQL+`) AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)`, key.String).Scan(&unpaid); e != nil {
+			if e = tx.QueryRow(`SELECT count(*) FROM pro_card_usage u WHERE u.card_key=? AND u.status='success' AND NOT EXISTS(SELECT 1 FROM pro_dead_cards d WHERE d.card_key=u.card_key AND d.email=u.email) AND NOT (`+paymentOnlyReleasedSQL+`) AND NOT EXISTS(SELECT 1 FROM nexovcc_case_matches m WHERE m.order_id=u.order_id AND m.returned=1)`, key.String).Scan(&unpaid); e != nil {
 				return e
 			}
 			if op.AutoWithdraw && unpaid > 0 {
@@ -730,6 +731,7 @@ func (s *Store) SaveNexovccOperation(op nexovcc.Operation) error {
 }
 
 type NexovccCase struct {
+	ProDead                *model.ProDeadState                  `json:"pro_dead,omitempty"`
 	ProOAIAvailableModes   []string                             `json:"pro_oai_available_modes,omitempty"`
 	ProOAIActionsAvailable bool                                 `json:"pro_oai_actions_available"`
 	ProOAIConfirmations    map[string]*model.ProOAIConfirmation `json:"pro_oai_confirmations,omitempty"`
@@ -769,7 +771,7 @@ func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,''),coalesce(oc.profile,'{}'),coalesce((SELECT profile FROM mail_accounts WHERE email=o.email),'{}') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id LEFT JOIN pro_oai_confirmation_accounts oc ON oc.email=o.email JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0) ORDER BY o.created_at DESC,o.id DESC`)
+	rows, e := q.Query(`SELECT o.id,o.email,c.id,json_extract(o.profile,'$.card_last4'),json_extract(o.profile,'$.plan_code'),u.status,coalesce(nullif(st.state,'auto'),CASE WHEN u.status<>'success' THEN 'unopened' WHEN r.order_id IS NOT NULL THEN 'waiting' ELSE 'opened' END),coalesce(st.reason,''),CASE WHEN st.state='waiting' THEN st.updated_at ELSE coalesce(r.released_at,'') END,coalesce(st.updated_at,''),coalesce(st.revision,0),o.created_at,coalesce(json_extract(o.profile,'$.card_name'),''),coalesce(json_extract(o.profile,'$.provider'),''),coalesce(json_extract(o.profile,'$.succeeded_at'),''),NOT EXISTS(SELECT 1 FROM mail_accounts ma WHERE ma.email=o.email AND json_extract(ma.profile,'$.management_scope')='pro'),coalesce(nullif(st.state,'auto'),''),coalesce(rm.removed_at,''),coalesce(oc.profile,'{}'),coalesce((SELECT profile FROM mail_accounts WHERE email=o.email),'{}'),coalesce((SELECT profile FROM pro_dead_accounts WHERE email=o.email),'null') FROM pro_card_usage u JOIN gptpay_orders o ON o.id=u.order_id LEFT JOIN pro_oai_confirmation_accounts oc ON oc.email=o.email JOIN nexovcc_cards c ON c.card_key=u.card_key LEFT JOIN nexovcc_case_states st ON st.order_id=o.id LEFT JOIN pro_card_order_releases r ON r.order_id=o.id LEFT JOIN nexovcc_case_removals rm ON rm.order_id=o.id AND rm.revision=coalesce(st.revision,0) ORDER BY o.created_at DESC,o.id DESC`)
 	if e != nil {
 		return nil, e
 	}
@@ -777,8 +779,8 @@ func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
 	out := []NexovccCase{}
 	for rows.Next() {
 		var v NexovccCase
-		var at, openedAt, oaiRaw, oaiAccountRaw string
-		if e = rows.Scan(&v.ID, &v.Email, &v.CardID, &v.Last4, &v.Plan, &v.PaymentStatus, &v.State, &v.Reason, &v.RequestedAt, &v.UpdatedAt, &v.Revision, &at, &v.CardName, &v.Provider, &openedAt, &v.Deleted, &v.ManualState, &v.RemovedAt, &oaiRaw, &oaiAccountRaw); e != nil {
+		var at, openedAt, oaiRaw, oaiAccountRaw, deadRaw string
+		if e = rows.Scan(&v.ID, &v.Email, &v.CardID, &v.Last4, &v.Plan, &v.PaymentStatus, &v.State, &v.Reason, &v.RequestedAt, &v.UpdatedAt, &v.Revision, &at, &v.CardName, &v.Provider, &openedAt, &v.Deleted, &v.ManualState, &v.RemovedAt, &oaiRaw, &oaiAccountRaw, &deadRaw); e != nil {
 			return nil, e
 		}
 		if e = json.Unmarshal([]byte(oaiRaw), &v.ProOAIConfirmations); e != nil {
@@ -791,6 +793,9 @@ func (s *Store) nexovccCasesQuery(q nexovccCaseQuery) ([]NexovccCase, error) {
 		v.ProOAIActionsAvailable = oaiAccount.ManagementScope == "pro" && (oaiAccount.ProAuto.OrderID == "" || oaiAccount.ProAuto.OrderID == v.ID)
 		if v.ProOAIActionsAvailable {
 			v.ProOAIAvailableModes = oaiAccount.OAIAvailableModes()
+		}
+		if e = json.Unmarshal([]byte(deadRaw), &v.ProDead); e != nil {
+			return nil, e
 		}
 		v.MerchantFeeUSD = merchantFees[v.ID]
 		v.CreatedAt, _ = time.Parse(time.RFC3339Nano, at)

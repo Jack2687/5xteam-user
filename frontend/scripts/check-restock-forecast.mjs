@@ -34,7 +34,7 @@ d=fixture();d.snapshot.accounts[0].shared=true
 assert.equal(forecastDetails(d,now).supply,'26.6 分钟','other push groups must not exclude monitored account')
 d.snapshot.accounts.push({id:2,ready:false,capacity:100,used:100},{id:4,ready:true,expires_at:at,capacity:100,used:100})
 d.snapshot.accounts[0].waiting=99
-assert.deepEqual(concurrencyDetails(d.snapshot,false,now,{capacity_percent:100}),{used:228,capacity:300,reportedCapacity:300,capacityPercent:100,triggerCount:null,percent:'76%'})
+assert.deepEqual(concurrencyDetails(d.snapshot,false,now,{capacity_percent:100}),{used:228,capacity:300,reportedCapacity:300,capacityPercent:100,triggerCount:null,triggerPercent:undefined,targetPercent:undefined,percent:'76%'})
 assert.equal(concurrencyDetails(d.snapshot,false,now).capacity,180,'legacy config must default to 60%')
 assert.equal(concurrencyDetails(d.snapshot,true,now).percent,'—')
 d.snapshot.accounts[0].capacity=0
@@ -57,7 +57,7 @@ console.log('Passed: window defaults, changed-window suppression and historical 
 
 // Actual capacity is scaled once; only the trigger occupancy is rounded down.
 const load={valid:true,load_valid:true,accounts:[{id:1,ready:true,capacity:40,used:16},{id:2,ready:true,capacity:40,used:17}]}
-assert.deepEqual(concurrencyDetails(load,false,now,{capacity_percent:60,trigger_percent:70}),{used:33,capacity:48,reportedCapacity:80,capacityPercent:60,triggerCount:33,percent:'68.8%'})
+assert.deepEqual(concurrencyDetails(load,false,now,{capacity_percent:60,trigger_percent:70}),{used:33,capacity:48,reportedCapacity:80,capacityPercent:60,triggerCount:33,triggerPercent:70,targetPercent:undefined,percent:'68.8%'})
 assert.equal(concurrencyDetails(load,false,now,{capacity_percent:80,trigger_percent:70}).capacity,64)
 assert.equal(concurrencyDetails(load,false,now,{capacity_percent:100,trigger_percent:70}).triggerCount,56)
 assert.equal(concurrencyDetails(load,true,now,{capacity_percent:60,trigger_percent:70}).triggerCount,null)

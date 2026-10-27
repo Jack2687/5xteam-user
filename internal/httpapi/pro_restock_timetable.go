@@ -11,14 +11,16 @@ import (
 )
 
 type proRestockPeriod struct {
-	HighDemand  bool   `json:"high_demand,omitempty"`
-	StartMinute int    `json:"start_minute"`
-	EndMinute   int    `json:"end_minute"`
-	Provider    string `json:"card_provider,omitempty"`
-	Plan        string `json:"plan_code,omitempty"`
-	Blocked     bool   `json:"blocked"`
-	Source      string `json:"source"`
-	Error       string `json:"error,omitempty"`
+	BalanceFallbackEnabled  bool   `json:"balance_fallback_enabled"`
+	BalanceFallbackProvider string `json:"balance_fallback_provider,omitempty"`
+	HighDemand              bool   `json:"high_demand,omitempty"`
+	StartMinute             int    `json:"start_minute"`
+	EndMinute               int    `json:"end_minute"`
+	Provider                string `json:"card_provider,omitempty"`
+	Plan                    string `json:"plan_code,omitempty"`
+	Blocked                 bool   `json:"blocked"`
+	Source                  string `json:"source"`
+	Error                   string `json:"error,omitempty"`
 }
 
 type proRestockTimetable struct {
@@ -81,6 +83,7 @@ func proRestockDailyTimetable(p model.ProSettings, pay gptpay.Settings, c restoc
 		} else {
 			selected, payment, err := store.ResolveProPurchase(p, pay, c, at)
 			period.Provider, period.Plan = selected.AutoCardProvider(), payment.PlanCode
+			period.BalanceFallbackEnabled, period.BalanceFallbackProvider, _ = selected.BalanceFallback()
 			if w, matched := p.PurchaseWindow(at); matched {
 				period.Source, period.Plan = "purchase", w.PlanCode
 			}

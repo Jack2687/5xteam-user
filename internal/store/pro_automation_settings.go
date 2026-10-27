@@ -81,6 +81,7 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 		return v, pay, errors.New("请先填写 API 商户密钥")
 	}
 	v.CardProvider = input.AutoCardProvider()
+	v.BalanceFallbackEnabled = input.BalanceFallbackEnabled
 	v.PurchaseScheduleEnabled, v.PurchaseWindows = input.PurchaseScheduleEnabled, input.PurchaseWindows
 	v.EJHPlanTemplates, v.NexovccPlanTemplates = input.EJHPlanTemplates, input.NexovccPlanTemplates
 	v.NexovccAutoOpen, v.NexovccTemplateID, v.NexovccDailyOpenLimit, v.NexovccDailyAmountLimit = input.NexovccAutoOpen, input.NexovccTemplateID, input.NexovccDailyOpenLimit, input.NexovccDailyAmountLimit

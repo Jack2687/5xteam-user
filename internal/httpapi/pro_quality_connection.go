@@ -56,6 +56,12 @@ func (s *Server) recheckProQualityFailure(ctx context.Context, p model.MailAccou
 	if message == "" {
 		message = "测试连接未成功完成"
 	}
+	if err == nil && isDeadOAuthResult(nil, probe.Error) && p.CanMarkProDead() {
+		if _, saveErr := s.markProDead(p.Email, "sub2_connection", probe.Error); saveErr != nil {
+			return state, saveErr
+		}
+		return state, errProAccountDead
+	}
 	message = redactSensitiveText(message)
 	if chars := []rune(message); len(chars) > 240 {
 		message = string(chars[:240]) + "…"

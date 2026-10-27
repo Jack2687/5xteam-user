@@ -16,7 +16,8 @@ const proManagedTimeSQL = `COALESCE(
 // The payment lookup uses the existing email index and never reads credentials.
 const proAccountsCTE = `WITH accounts AS (
 	SELECT email, profile, encrypted_credentials, updated_at,
-  CASE WHEN json_extract(profile,'$.pro_merge_v2.completed_at') IS NOT NULL THEN 'merge_v2'
+  CASE WHEN json_extract(profile,'$.pro_dead') IS NOT NULL THEN 'dead'
+  WHEN json_extract(profile,'$.pro_merge_v2.completed_at') IS NOT NULL THEN 'merge_v2'
   WHEN json_extract(profile,'$.pro_merchant.completed_at') IS NOT NULL THEN 'merchant'
   WHEN json_extract(profile,'$.pro_deactivation.accepted_at') IS NOT NULL OR json_extract(profile,'$.pro_deactivation.confirmed_at') IS NOT NULL THEN 'deleted'
   WHEN json_extract(profile,'$.space_merged_once')=1 THEN 'merged'
@@ -72,6 +73,8 @@ func proAccountsOrderSQL(state string) string {
 		return "merge_v2_at DESC, managed_at DESC, email ASC"
 	case "merchant":
 		return "merchant_at DESC, managed_at DESC, email ASC"
+	case "dead":
+		return "julianday(json_extract(profile,'$.pro_dead.at')) DESC, email ASC"
 	case "deleted":
 		return "deleted_at DESC, managed_at DESC, email ASC"
 	default:
@@ -90,6 +93,8 @@ func proAccountsEventTimeSQL(state string) string {
 		return "merge_v2_at"
 	case "merchant":
 		return "merchant_at"
+	case "dead":
+		return "julianday(json_extract(profile,'$.pro_dead.at'))"
 	case "deleted":
 		return "deleted_at"
 	default:
@@ -99,7 +104,7 @@ func proAccountsEventTimeSQL(state string) string {
 
 func normalizeProMergeFilter(value string) string {
 	switch value = strings.ToLower(strings.TrimSpace(value)); value {
-	case "unmerged", "in_progress", "merged", "deleted", "merchant", "merge_v2":
+	case "unmerged", "in_progress", "merged", "deleted", "merchant", "merge_v2", "dead":
 		return value
 	default:
 		return ""

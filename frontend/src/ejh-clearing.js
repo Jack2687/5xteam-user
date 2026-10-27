@@ -38,7 +38,7 @@ const matchesCase=(row,group)=>group.card_id===(row?.ejh_card_id||row?.card_id)&
 // A full capture with a recorded refund request is recoverable principal.
 // Small partial settlements remain expenses; no refund is invented from balance.
 export function clearingAwaitsRefund(row,group){
- return !row?.payment_only&&row?.state==='waiting'&&!!row.requested_at&&!String(row.requested_at).startsWith('0001')&&matchesCase(row,group)&&!group.invalid&&group.authorization>0n&&group.cleared===group.authorization&&group.refunded<group.cleared
+ return !row?.pro_dead&&!row?.payment_only&&row?.state==='waiting'&&!!row.requested_at&&!String(row.requested_at).startsWith('0001')&&matchesCase(row,group)&&!group.invalid&&group.authorization>0n&&group.cleared===group.authorization&&group.refunded<group.cleared
 }
 export function remainingAuthorization(row,groups){
  const c=row?.charge,card=row?.ejh_card_id||row?.card_id

@@ -178,6 +178,13 @@ func (s *Store) EJHBeginOperation(op ejh.Operation) error {
 		if card.Error != "" {
 			return fmt.Errorf("卡片资料待核实，不能销卡")
 		}
+		var uncertain bool
+		if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_card_usage u JOIN pro_card_identities i ON i.card_key=u.card_key WHERE i.card_id=? AND u.status NOT IN ('success','failed'))`, card.ID).Scan(&uncertain); err != nil {
+			return err
+		}
+		if uncertain {
+			return fmt.Errorf("该卡存在结果未确定的付款，核实原订单后才能销卡")
+		}
 		cases, err := s.ejhCasesQuery(tx, nil)
 		if err != nil {
 			return err
@@ -187,7 +194,7 @@ func (s *Store) EJHBeginOperation(op ejh.Operation) error {
 			if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_card_usage u WHERE u.order_id=? AND u.status='success' AND `+paymentOnlyReleasedSQL+`)`, c.ID).Scan(&released); err != nil {
 				return err
 			}
-			if released {
+			if released || (c.ProDead != nil && c.PaymentStatus == "success") {
 				continue
 			}
 			if (c.CardID == card.ID || c.EJHCardID == card.ID) && c.State != "returned" && c.State != "unopened" {
@@ -604,7 +611,7 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 	}
 	rows, e := q.Query(`SELECT c.profile,m.email,CASE WHEN k.card_type='ejh' THEN COALESCE(l.card_id,i.card_id,c.card_id) ELSE '' END,COALESCE(k.card_type,'other'),charge.sealed,o.profile,
         CASE WHEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_identity'),'')<>''
-        THEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_snapshot'),0) END,COALESCE(oc.profile,'{}'),COALESCE(m.profile,'{}') FROM ejh_cases c
+        THEN COALESCE(json_extract(m.profile,'$.user_cost_downstream_snapshot'),0) END,COALESCE(oc.profile,'{}'),COALESCE(m.profile,'{}'),COALESCE((SELECT profile FROM pro_dead_accounts WHERE email=c.email),'null') FROM ejh_cases c
         LEFT JOIN ejh_records charge ON charge.kind='trade' AND charge.id=json_extract(c.profile,'$.original_trade_id')
         LEFT JOIN gptpay_orders o ON o.id=c.id
 		LEFT JOIN mail_accounts m ON m.email=c.email
@@ -625,8 +632,8 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		var ejhCardID, cardType string
 		var chargeRaw, orderRaw sql.NullString
 		var consumption sql.NullFloat64
-		var oaiRaw, oaiAccountRaw string
-		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType, &chargeRaw, &orderRaw, &consumption, &oaiRaw, &oaiAccountRaw); e != nil {
+		var oaiRaw, oaiAccountRaw, deadRaw string
+		if e = rows.Scan(&raw, &exists, &ejhCardID, &cardType, &chargeRaw, &orderRaw, &consumption, &oaiRaw, &oaiAccountRaw, &deadRaw); e != nil {
 			return nil, e
 		}
 		var v ejh.Case
@@ -643,6 +650,9 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 		v.ProOAIActionsAvailable = oaiAccount.ManagementScope == "pro" && (oaiAccount.ProAuto.OrderID == "" || oaiAccount.ProAuto.OrderID == v.ID)
 		if v.ProOAIActionsAvailable {
 			v.ProOAIAvailableModes = oaiAccount.OAIAvailableModes()
+		}
+		if e = json.Unmarshal([]byte(deadRaw), &v.ProDead); e != nil {
+			return nil, e
 		}
 		v.MerchantFeeUSD = merchantFees[v.ID]
 		v.ConsumptionTotal = nil

@@ -17,7 +17,7 @@ const r=v=>props.masked?'---':t.value.ready?rmb(v):'—'
    <PaymentOnlySummary v-if="!serial" compact issuer="nexovcc" :data="data" :masked="masked"/>
   </div>
   <details class="cost-details" :open="!collapsible"><summary><span>费用与收支明细</span><small>API 收费、开卡费、手续费、付款与回款</small><span class="expand-label"></span></summary>
-  <div class="cost-row"><button @click="$emit('details',{type:'funds',kind:'api-merchant'})"><span>API 收费</span><b>{{usd(t.merchantFee)}} USD</b><small>{{r(t.merchantFee)}} R · 外部商户最终成功后记账</small></button>
+  <div class="cost-row"><button @click="$emit('details',{type:'accounts'})"><span>死号亏损</span><b>{{usd(t.deadLoss)}} USD</b><small>{{r(t.deadLoss)}} R · 已扣回款，不与清算重复</small></button><button @click="$emit('details',{type:'funds',kind:'api-merchant'})"><span>API 收费</span><b>{{usd(t.merchantFee)}} USD</b><small>{{r(t.merchantFee)}} R · 外部商户最终成功后记账</small></button>
    <button v-if="!serial" @click="$emit('details',{type:'recharges'})"><span>成功充值 / 实际到账</span><b>{{usd(t.gross)}} / {{usd(t.received)}} USD</b><small>充值费 {{usd(t.rechargeFee)}} USD / {{r(t.rechargeFee)}} R · 1%</small></button>
    <button @click="$emit('details',{type:'funds',kind:'3003'})"><span>开卡费</span><b>{{usd(t.opening)}} USD</b><small>{{r(t.opening)}} R</small></button>
    <button @click="$emit('details',{type:'funds',kind:'card-service'})"><span>卡服务费</span><b>{{usd(t.service)}} USD</b><small>{{r(t.service)}} R</small></button>

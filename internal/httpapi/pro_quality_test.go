@@ -136,6 +136,8 @@ func newProQualityFixture(t *testing.T, action string) *proQualityFixture {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(w, "data: {\"type\":\"test_start\",\"model\":\"gpt-6.1-sol\",\"data\":{\"custom_prompt\":true}}\n\n")
 			switch mode {
+			case "dead":
+				fmt.Fprint(w, "data: {\"type\":\"error\",\"error\":\"API returned 401: account_deactivated / You do not have an account because it has been deleted or deactivated\"}\n\n")
 			case "normal":
 				fmt.Fprint(w, "data: {\"type\":\"content\",\"text\":\"Hello\"}\n\ndata: {\"type\":\"test_complete\",\"success\":true}\n\n")
 			case "truncated":

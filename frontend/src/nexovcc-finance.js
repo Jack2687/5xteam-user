@@ -31,7 +31,7 @@ export function balanceCostAdjustments(data, serial='') {
  const result=[]
  for(const row of data.cards||[]){
   const card=row.card
-  if(!card||serial&&card.serial_no!==serial||card.error||isPaymentOnly(data,card.id))continue
+  if(!card||row.local?.dead_account||serial&&card.serial_no!==serial||card.error||isPaymentOnly(data,card.id))continue
   const s=card.serial_no,closed=card.status==='4'
   const balanceAt=time(card.balance_at),ledgerAt=time(f.card_at?f.card_at[s]:f.at)
   const funds=(f.funds||[]).filter(r=>r.serial_no===s),groups=(data.groups||[]).filter(g=>g.serial_no===s)
@@ -85,8 +85,10 @@ export function caseAmounts(row) {
  const shared=row.shared_fees
  const opening=shared?.ready?cents(shared.opening):null,monthly=shared?.ready?cents(shared.monthly):null
  const merchant=cents(row.merchant_fee_usd)
- const cost=known&&(!shared||shared.ready)?cents(g.cost)-(row.payment_only&&(g.fully_returned||g.settled)?Math.max(0,cents(g.difference)):0)+(opening||0)+(monthly||0)+merchant:null, revenue=row.revenue_r==null?null:cents(row.revenue_r)
- return {opening,monthly,merchant,sharedCount:shared?.count||0,sharedApplied:shared?.applied,paid:known?cents(g.payment):null,returned:known?cents(g.returned):null,difference:known?cents(g.difference):null,fees:known?cents(g.fees):null,cost,revenue,profit:cost===null||revenue===null?null:revenue-rCents(cost),closed:!!(g?.fully_returned||g?.settled)}
+ const deadLoss=row.pro_dead&&known?Math.max(0,cents(g.payment)-cents(g.returned)):0
+ const extraDead=row.pro_dead&&known&&!g.fully_returned&&!g.settled?deadLoss:0
+ const cost=known&&(!shared||shared.ready)?cents(g.cost)-(row.payment_only&&!row.pro_dead&&(g.fully_returned||g.settled)?Math.max(0,cents(g.difference)):0)+(opening||0)+(monthly||0)+merchant+extraDead:null, revenue=row.revenue_r==null?null:cents(row.revenue_r)
+ return {opening,monthly,merchant,deadLoss,sharedCount:shared?.count||0,sharedApplied:shared?.applied,paid:known?cents(g.payment):null,returned:known?cents(g.returned):null,difference:known?cents(g.difference):null,fees:known?cents(g.fees):null,cost,revenue,profit:cost===null||revenue===null?null:revenue-rCents(cost),closed:!!(g?.fully_returned||g?.settled)}
 }
 export function financeTotals(data,serial='') {
  const paymentOnly=paymentOnlySummary(data,'nexovcc',serial)
@@ -100,15 +102,17 @@ export function financeTotals(data,serial='') {
  const fees=Object.fromEntries(feeKinds.map(k=>[k,-sum(funds.filter(r=>r.kind===k&&r.currency==='USD'),r=>cents(r.amount))]))
  const gross=serial?0:sum(recharges,r=>cents(r.amount)),rechargeFee=serial?0:Math.round(gross/100)
  const valid=groups.filter(g=>g.valid),revenue=sum(cases,c=>cents(c.revenue_r))
- const cardLoss=sum(valid.filter(g=>g.fully_returned),g=>cents(g.difference))
- const settlement=sum(valid.filter(g=>g.settled&&!g.fully_returned),g=>cents(g.difference))
+ const deadGroups=new Set(cases.filter(c=>c.pro_dead).map(c=>c.match?.group?.id).filter(Boolean))
+ const deadLoss=sum(valid.filter(g=>deadGroups.has(g.id)),g=>Math.max(0,cents(g.payment)-cents(g.returned)))
+ const cardLoss=sum(valid.filter(g=>!deadGroups.has(g.id)&&g.fully_returned),g=>cents(g.difference))
+ const settlement=sum(valid.filter(g=>!deadGroups.has(g.id)&&g.settled&&!g.fully_returned),g=>cents(g.difference))
  const manualFees=sum(manualOtherFees(data,serial),r=>cents(r.amount))
  const adjustments=balanceCostAdjustments(data,serial),balanceDifference=sum(adjustments,r=>r.extra),balanceRecoveredPending=sum(adjustments,r=>r.pendingAdjustment)
  const merchantFee=sum((data.merchant_fees||[]).filter(r=>!serial||cardIDs.has(r.card_id)),r=>cents(r.amount))
- const cost=merchantFee+sum(funds.filter(r=>feeKinds.includes(r.kind)&&r.currency==='USD'),r=>-cents(r.amount))+cardLoss+settlement+rechargeFee+manualFees+balanceDifference-paymentOnly.costExcluded
+ const cost=merchantFee+sum(funds.filter(r=>feeKinds.includes(r.kind)&&r.currency==='USD'),r=>-cents(r.amount))+cardLoss+settlement+deadLoss+rechargeFee+manualFees+balanceDifference-paymentOnly.costExcluded
  const linked=new Set(cases.map(c=>c.match?.group?.id).filter(Boolean))
- return {paymentOnly,ready,gross,merchantFee,received:serial?0:sum(recharges,r=>cents(r.received)),rechargeFee,opening:fees[3003]+fees[5001],service:fees[3004]+fees[3005],reversal:fees[2003]+fees[5004],transaction:fees[2007]+fees[5008],otherFees:Object.entries(fees).filter(([k])=>![3003,3004,3005,5001,2003,5004,2007,5008].includes(Number(k))).reduce((s,[,v])=>s+v,0)+manualFees,manualFees,cardLoss,settlement,balanceDifference,balanceRecoveredPending,cost,revenue,profit:paymentOnly.missing?null:revenue-rCents(cost),
-  paid:sum(valid,g=>cents(g.payment)),returned:sum(valid,g=>cents(g.returned)),pending:Math.max(0,sum(valid.filter(g=>!g.fully_returned&&!g.settled),g=>Math.max(0,cents(g.difference)))-paymentOnly.pending),
+ return {paymentOnly,ready,gross,merchantFee,deadLoss,received:serial?0:sum(recharges,r=>cents(r.received)),rechargeFee,opening:fees[3003]+fees[5001],service:fees[3004]+fees[3005],reversal:fees[2003]+fees[5004],transaction:fees[2007]+fees[5008],otherFees:Object.entries(fees).filter(([k])=>![3003,3004,3005,5001,2003,5004,2007,5008].includes(Number(k))).reduce((s,[,v])=>s+v,0)+manualFees,manualFees,cardLoss,settlement,balanceDifference,balanceRecoveredPending,cost,revenue,profit:paymentOnly.missing?null:revenue-rCents(cost),
+  paid:sum(valid,g=>cents(g.payment)),returned:sum(valid,g=>cents(g.returned)),pending:Math.max(0,sum(valid.filter(g=>!deadGroups.has(g.id)&&!g.fully_returned&&!g.settled),g=>Math.max(0,cents(g.difference)))-paymentOnly.pending),
   unknownRevenue:cases.filter(c=>c.revenue_r==null).length,unmatchedCases:cases.filter(c=>!c.match).length,unmatched:groups.filter(g=>!paymentOnly.rows.some(p=>p.serial===g.serial_no)&&!g.non_pro&&!g.other_expense?.applied&&cents(g.payment)>0&&!linked.has(g.id)&&!linked.has(g.related_group_id)).length,unverified:groups.filter(g=>tradeGroupNeedsReview(data,g)&&!g.other_expense?.applied).length,
   staleReviews:(data.trade_reviews||[]).filter(r=>!r.voided&&!r.applied&&(!serial||(data.review_groups||[]).some(g=>g.id===r.group_id&&g.serial_no===serial))).length,
   foreign:funds.filter(r=>r.currency!=='USD').length+(serial?0:(f.recharges||[]).filter(r=>r.status==='1'&&r.currency!=='USD').length),

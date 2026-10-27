@@ -17,6 +17,9 @@ import (
 type proManualCardProviderKey struct{}
 
 func (s *Server) restockCardSettings(ctx context.Context, cfg model.ProSettings) (model.ProSettings, bool, error) {
+	if fallback, _ := ctx.Value(proBalanceFallbackKey{}).(*model.ProPurchaseRoute); fallback != nil {
+		return cfg.WithPurchaseRoute(fallback), true, nil
+	}
 	id, _ := ctx.Value(proRestockContextKey{}).(string)
 	if id == "" {
 		if route, _ := ctx.Value(proPurchaseContextKey{}).(*model.ProPurchaseRoute); route != nil {
@@ -119,6 +122,8 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 	}
 	if profile, _, e := s.store.MailAccountCredential(email); e != nil {
 		return card, secret, e
+	} else if profile.IsProDead() {
+		return card, secret, errProAccountDead
 	} else if profile.ProRestockTaskID != "" && profile.ProRestockTaskID != taskID {
 		return card, secret, fmt.Errorf("账号已由 Pro 自动补货领取，未购买新卡")
 	} else if (taskID != "" || enforceMaximum) && profile.ProAuto.StopRequested {
@@ -184,7 +189,13 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 		if !autoOpen {
 			return card, secret, fmt.Errorf("请选择银行卡，或启用自动补卡")
 		}
-		card, err = s.ensureProviderCard(ctx, admissionChecks...)
+		card, ctx, err = s.ensureProviderCardWithFallback(ctx, admissionChecks...)
+		if fallback, _ := ctx.Value(proBalanceFallbackKey{}).(*model.ProPurchaseRoute); fallback != nil {
+			taskProvider, strictProvider = fallback.CardProvider, true
+			if p, _, e := s.store.MailAccountCredential(email); e == nil {
+				s.auditProEvent(p, "card", "running", "pro_auto", "原卡台余额不足，切换备用卡台", map[string]any{"provider": taskProvider, "template_id": fallback.TemplateID, "plan_code": fallback.PlanCode})
+			}
+		}
 		if err != nil {
 			return card, secret, err
 		}

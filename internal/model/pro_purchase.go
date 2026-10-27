@@ -7,22 +7,27 @@ import (
 )
 
 type ProPurchaseWindow struct {
-	Start             string  `json:"start"`
-	End               string  `json:"end"`
-	CardProvider      string  `json:"card_provider"`
-	PlanCode          string  `json:"plan_code"`
-	ExtraSub2GroupIDs []int64 `json:"extra_sub2_group_ids,omitempty"`
+	BalanceFallbackEnabled  bool    `json:"balance_fallback_enabled"`
+	BalanceFallbackProvider string  `json:"balance_fallback_provider,omitempty"`
+	Start                   string  `json:"start"`
+	End                     string  `json:"end"`
+	CardProvider            string  `json:"card_provider"`
+	PlanCode                string  `json:"plan_code"`
+	ExtraSub2GroupIDs       []int64 `json:"extra_sub2_group_ids,omitempty"`
 }
 
 // Non-secret purchase intent, pinned before a workflow starts spending.
 type ProPurchaseRoute struct {
-	CardProvider    string  `json:"card_provider"`
-	TemplateID      string  `json:"template_id"`
-	PlanCode        string  `json:"plan_code"`
-	PaymentProvider string  `json:"payment_provider"`
-	Country         string  `json:"country"`
-	CreditQuantity  int     `json:"credit_quantity"`
-	Sub2GroupIDs    []int64 `json:"sub2_group_ids,omitempty"`
+	BalanceFallbackEnabled  bool    `json:"balance_fallback_enabled"`
+	BalanceFallbackProvider string  `json:"balance_fallback_provider,omitempty"`
+	BalanceFallbackTemplate string  `json:"balance_fallback_template,omitempty"`
+	CardProvider            string  `json:"card_provider"`
+	TemplateID              string  `json:"template_id"`
+	PlanCode                string  `json:"plan_code"`
+	PaymentProvider         string  `json:"payment_provider"`
+	Country                 string  `json:"country"`
+	CreditQuantity          int     `json:"credit_quantity"`
+	Sub2GroupIDs            []int64 `json:"sub2_group_ids,omitempty"`
 }
 
 func purchaseMinute(s string) (int, error) {
@@ -49,6 +54,9 @@ func (p ProSettings) ValidatePurchaseWindows() error {
 	}
 	seen := [1440]bool{}
 	for i, w := range p.PurchaseWindows {
+		if w.BalanceFallbackEnabled && w.BalanceFallbackProvider != "" && (w.BalanceFallbackProvider == w.CardProvider || (w.BalanceFallbackProvider != "ejh" && w.BalanceFallbackProvider != "nexovcc")) {
+			return fmt.Errorf("第 %d 个时段的备用卡台须与主卡台不同", i+1)
+		}
 		_, a := purchaseMinute(w.Start)
 		_, b := purchaseMinute(w.End)
 		if a != nil || b != nil || w.Start == w.End {
@@ -97,6 +105,20 @@ func (p ProSettings) PlanTemplate(provider, plan string) string {
 		return p.NexovccPlanTemplates[plan]
 	}
 	return p.EJHPlanTemplates[plan]
+}
+
+func (p ProSettings) BalanceFallback() (bool, string, string) {
+	other := "ejh"
+	if p.AutoCardProvider() == "ejh" {
+		other = "nexovcc"
+	}
+	if r := p.PurchaseRoute; r != nil {
+		if r.BalanceFallbackProvider != "" {
+			other = r.BalanceFallbackProvider
+		}
+		return r.BalanceFallbackEnabled, other, r.BalanceFallbackTemplate
+	}
+	return p.BalanceFallbackEnabled, other, ""
 }
 func (p ProSettings) WithPurchaseRoute(r *ProPurchaseRoute) ProSettings {
 	if r == nil {

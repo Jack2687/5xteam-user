@@ -77,6 +77,9 @@ func (s *Server) beginProAutomaticFinalStep(parent context.Context) (context.Con
 }
 
 func (s *Server) performProAutomaticFinalStep(ctx context.Context, email string, run func(context.Context, string) (model.MailAccountProfile, error)) (model.MailAccountProfile, error) {
+	if p, _, e := s.store.MailAccountCredential(email); e == nil && p.IsProDead() {
+		return p, errProAccountDead
+	}
 	finalCtx, finish, err := s.beginProAutomaticFinalStep(ctx)
 	if err != nil {
 		return model.MailAccountProfile{}, err

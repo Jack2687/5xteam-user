@@ -50,6 +50,24 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if profile.ProAuto.ID != "" {
 			t.OrderID = profile.ProAuto.OrderID
 		}
+		if finished, err := s.finishUnsubmittedRestockPreparation(t, profile); err != nil {
+			return nil, 0, err
+		} else if finished {
+			continue
+		}
+		if profile.IsProDead() && !s.proAutomationRunning(t.Email) {
+			if _, e := s.store.ActiveGPTPayOrder(t.Email); errors.Is(e, sql.ErrNoRows) {
+				t.Status, t.Stage, t.ETA = "failed", "dead", nil
+				t.UpdatedAt = now
+				t.Message = "已确认死号，不再计入供给；关联卡片禁止再次开通"
+				if err = s.store.SaveProRestockTask(*t); err != nil {
+					return nil, 0, err
+				}
+				continue
+			} else if e != nil {
+				return nil, 0, e
+			}
+		}
 		if profile.ProAuto.ID != "" {
 			t.CardID = profile.ProAuto.CardID
 		}

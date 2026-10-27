@@ -2,7 +2,10 @@
 import {computed} from 'vue'
 import {proPlanName} from '../gptpay'
 
-const props=defineProps({timetable:Object,config:Object,demand:Object,purchase:Object,decision:Object,now:Number})
+const props=defineProps({timetable:Object,config:Object,demand:Object,purchase:Object,decision:Object,now:Number,tasks:Array})
+const backup=computed(()=>props.purchase?.balance_fallback)
+const switched=computed(()=>(props.tasks||[]).filter(t=>t.balance_fallback_from&&!['ready','failed','cancelled'].includes(t.status)))
+const providerName=v=>({ejh:'EJH',nexovcc:'环球'})[v]||v
 const periods=computed(()=>props.timetable?.periods||[])
 const minute=computed(()=>{const d=new Date(props.now);return (d.getUTCHours()*60+d.getUTCMinutes()+480)%1440})
 const currentIndex=computed(()=>periods.value.findIndex(p=>p.start_minute>p.end_minute?minute.value>=p.start_minute||minute.value<p.end_minute:minute.value>=p.start_minute&&minute.value<p.end_minute))
@@ -36,6 +39,12 @@ const hint=computed(()=>!props.config?.enabled?'新增已暂停；以下为已�
    <span class="beijing-time">北京时间 {{beijingTime}}</span>
   </div>
   <div class="timetable-info"><span>{{hint}}</span><span v-if="next">{{time(current.end_minute%1440)}} 切换：{{rule(next)}}</span></div>
+  <div v-if="backup" class="backup-rule" role="status">
+   <b>余额不足备用卡台：{{backup.enabled?'已开启':'已关闭'}}</b>
+   <span v-if="backup.enabled">{{providerName(backup.card_provider)}} · {{proPlanName(backup.plan_code)}} · 模板 {{backup.template_id||'未配置'}}<template v-if="!backup.auto_open">（备用卡台自动开卡未开启）</template></span>
+   <small v-if="backup.enabled">仅当前卡台明确余额不足时切换，沿用本次套餐和推送分组。</small>
+   <p v-for="t in switched" :key="t.id">本批已切换：{{providerName(t.balance_fallback_from)}} → {{providerName(t.card_provider)}} · {{t.email}}</p>
+  </div>
   <div v-if="liveDemand" class="demand-summary" role="status" aria-live="polite">
    <p><b>总在线并发 {{liveDemand.valid?liveDemand.total_used:'—'}}</b><span>监控账号 {{liveDemand.valid?liveDemand.monitor_used:'—'}} ＋ 已勾选兜底账号 {{liveDemand.valid?liveDemand.fallback_used:'—'}}（已去重）</span></p>
    <p v-for="w in liveDemand.windows" :key="w.key"><span>{{w.start}}～{{w.end}} 放行条件：≥ {{w.threshold}} 并发</span><b>连续 {{liveDemand.valid?w.consecutive:0}} / {{w.confirmations}} 次</b></p>
@@ -46,13 +55,14 @@ const hint=computed(()=>!props.config?.enabled?'新增已暂停；以下为已�
   <ol v-if="periods.length" class="timetable-periods">
    <li v-for="(period,index) in periods" :key="period.start_minute" :class="{active:index===currentIndex,paused:period.blocked&&!(index===currentIndex&&liveDemand?.allowed)}" :aria-current="index===currentIndex?'time':undefined">
     <div class="period-time"><span>{{range(period)}}</span><span v-if="index===currentIndex" class="current-badge">当前</span></div>
-    <strong>{{index===currentIndex&&liveDemand?currentTitle:rule(period)}}</strong><small>{{period.error?'配置待完善':source(period)}}</small>
+    <strong>{{index===currentIndex&&liveDemand?currentTitle:rule(period)}}</strong><small>{{period.error?'配置待完善':source(period)}}</small><small v-if="!period.blocked">备用卡台：{{period.balance_fallback_enabled?providerName(period.balance_fallback_provider):'关闭'}}</small>
    </li>
   </ol>
  </section>
 </template>
 
 <style scoped>
+.backup-rule{display:flex;flex-wrap:wrap;gap:5px 14px;margin-top:10px;font-size:12px;line-height:1.6}.backup-rule b{color:var(--teal,#008786)}.backup-rule small,.backup-rule p{flex-basis:100%;margin:0}
 .demand-summary{margin-top:12px;padding-top:8px;border-top:1px solid var(--border,#dce7e9);font-size:12px}.demand-summary p{display:flex;flex-wrap:wrap;gap:8px 18px;margin:6px 0;line-height:1.6}.demand-summary span{color:var(--muted,#708a94)}
 
 .purchase-timetable{border:1px solid #cce2df;background:#edf7f5;border-radius:9px;padding:16px;margin:14px 0 18px;color:var(--ink,#234752)}

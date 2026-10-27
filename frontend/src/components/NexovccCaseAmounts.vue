@@ -32,7 +32,7 @@ const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(
   <p v-if="value.manualUnconfirmed" class="warning">人工标记已回款；流水尚未确认全额回款，金额仍按实际记录显示。</p>
   <p v-if="row.match&&!row.match.group.valid" class="warning">{{row.match.group.problem||'流水金额待核实'}}</p>
   <div class="fee-grid"><div v-for="item in feeRows" :key="item.label" class="fee-line"><span>{{item.label}}</span><button :disabled="item.scope==='card'?!row.card_id:!row.match" @click="$emit('details',{row,options:item.kind?{type:'funds',kind:item.kind,scope:item.scope}:{type:'trades'}})"><strong>{{money(item.amount)}} USD</strong><small>{{rmb(item.amount)}} R</small></button></div></div>
-  <div class="fee-line"><span>API 收费</span><strong>{{money(value.merchant)}} USD<small>{{rmb(value.merchant)}} R</small></strong></div>
+  <div v-if="row.pro_dead" class="fee-line"><span>死号亏损</span><strong>{{money(value.deadLoss)}} USD<small>{{rmb(value.deadLoss)}} R</small></strong></div><div class="fee-line"><span>API 收费</span><strong>{{money(value.merchant)}} USD<small>{{rmb(value.merchant)}} R</small></strong></div>
   <div class="result-row"><div><span>账号成本{{value.provisional?'（当前）':''}}</span><strong>{{rmb(value.cost)}} R<small>{{money(value.cost)}} USD</small></strong></div><div class="profit"><span>账号结余{{value.provisional?'（暂计）':''}}</span><strong :class="{negative:value.profit<0}">{{money(value.profit)}} R</strong></div></div>
   <small v-if="value.sharedCount" class="note">开卡费、月服务费按本卡已开通 {{value.sharedCount}} 个账号分摊，保留两位小数；尾差保留在总账。<template v-if="value.sharedApplied===false">本账号分摊已计入首次成功开通。</template></small>
   <small class="note">{{value.provisional?'回款完成后更新最终结余；':''}}充值手续费在总账扣除。1 USD = 6.7 R。</small>

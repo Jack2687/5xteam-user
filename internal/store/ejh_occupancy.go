@@ -69,6 +69,7 @@ func ejhSingleActive(q proCapacityQuery, key string) (bool, error) {
 // terminal orders; real return evidence is retained for restoring auto.
 const ejhOrderOccupiedSQL = `(CASE
  WHEN u.status NOT IN ('success','failed') THEN 1
+ WHEN u.status='success' AND EXISTS(SELECT 1 FROM pro_dead_cards d WHERE d.card_key=u.card_key AND d.email=u.email) THEN 0
  WHEN u.status='success' AND ` + paymentOnlyReleasedSQL + ` THEN 0
  WHEN EXISTS(SELECT 1 FROM ejh_case_states s WHERE s.order_id=u.order_id AND s.state IN ('opened','waiting')) THEN 1
  WHEN EXISTS(SELECT 1 FROM ejh_case_states s WHERE s.order_id=u.order_id AND s.state IN ('returned','unopened')) THEN 0

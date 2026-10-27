@@ -5,7 +5,7 @@ import { summarizeClearingCosts, uniqueTrades } from './ejh-clearing.js'
 const cents = v => /^\d{1,12}(\.\d{1,6})?$/.test(String(v ?? '')) ? Math.round(Number(v) * 100) : null
 export const paymentMoney = v => v == null ? '—' : (v / 100).toFixed(2)
 export function paymentPolicy(data, id) { return (data.payment_policies || []).find(p => p.card_id === id) }
-export function isPaymentOnly(data, id) { return paymentPolicy(data, id)?.mode === 'payment_only' }
+export function isPaymentOnly(data, id) { return !(data.cases||[]).some(c=>c.pro_dead&&(c.ejh_card_id||c.card_id)===id) && paymentPolicy(data, id)?.mode === 'payment_only' }
 
 // Project the accounting label only in card dashboards. Original states remain
 // available to operational guards; no issuer/Pro workflow state is rewritten.
@@ -20,7 +20,7 @@ export function applyPaymentPolicies(data) {
 export function paymentOnlySummary(data, provider, serial = '') {
  const rows = []
  for (const policy of data.payment_policies || []) {
-  if (policy.mode !== 'payment_only') continue
+  if (!isPaymentOnly(data,policy.card_id)) continue
   const wrapper = (data.cards || []).find(c => (c.card?.id || c.id) === policy.card_id)
   const card = wrapper?.card || wrapper
   if (serial && card?.serial_no !== serial) continue

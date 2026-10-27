@@ -179,7 +179,7 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 	}
 	duplicates := map[int64]bool{}
 	for _, v := range profiles {
-		if !monitored[v.Sub2AccountID] || v.PushStatus != "completed" || v.PushProvider != "sub2" || v.DispositionStarted() || v.SpaceMergedOnce || v.RemoveStatus == "completed" || v.RemoveStatus == "team_removed" {
+		if !monitored[v.Sub2AccountID] || v.PushStatus != "completed" || v.PushProvider != "sub2" || (!v.IsProDead() && (v.DispositionStarted() || v.SpaceMergedOnce || v.RemoveStatus == "completed" || v.RemoveStatus == "team_removed")) {
 			continue
 		}
 		matched := false
@@ -253,6 +253,11 @@ func (s *Server) collectProRestock(ctx context.Context, c restock.Config, p mode
 			v.ExpiresAt = &t
 		}
 		if local, ok := byID[a.ID]; ok {
+			if local.IsProDead() {
+				v.Ready = false
+				v.SupplyExcluded = true
+				v.Fault = false
+			}
 			applyRestockExitPolicy(&v, local, p)
 			if local.ProAuto.QuotaPlan != "" {
 				v.PurchasePlan = local.ProAuto.QuotaPlan

@@ -126,6 +126,11 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 	demand := c.DemandStatus(now)
 	selected, payment, routeErr := s.resolveProPurchase(p, pay, c, now)
 	purchase := map[string]any{"card_provider": selected.AutoCardProvider(), "plan_code": payment.PlanCode, "template_id": ""}
+	backupEnabled, backup, backupTemplate := selected.BalanceFallback()
+	if backupTemplate == "" {
+		backupTemplate = p.PlanTemplate(backup, payment.PlanCode)
+	}
+	purchase["balance_fallback"] = map[string]any{"enabled": backupEnabled, "card_provider": backup, "plan_code": payment.PlanCode, "template_id": backupTemplate, "auto_open": (backup == "ejh" && p.EJHAutoOpen) || (backup == "nexovcc" && p.NexovccAutoOpen)}
 	if selected.PurchaseRoute != nil {
 		purchase["template_id"] = selected.PurchaseRoute.TemplateID
 	}

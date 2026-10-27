@@ -289,6 +289,16 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	if mutate != nil {
 		mutate(&p)
 	}
+	if previous.ProDead != nil {
+		p.ProDead = previous.ProDead
+	}
+	if p.IsProDead() {
+		p.ChatGPTStatus = "dead"
+		p.ProAuto.Status = "dead"
+		p.ProAuto.NextCheckAt = nil
+		p.ProAuto.RetryAt = nil
+		p.ProLastError = p.ProDead.Reason
+	}
 	if previousPushStatus != "completed" && p.PushStatus == "completed" && p.ProPushStartedAt == nil {
 		now := time.Now()
 		p.ProPushStartedAt = &now
@@ -312,6 +322,11 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	}
 	p.ReconcileProQualityMerge()
 	p.ReconcileProStop()
+	if p.IsProDead() {
+		p.ProAuto.Status = "dead"
+		p.ProAuto.NextCheckAt = nil
+		p.ProAuto.RetryAt = nil
+	}
 	if p.ProPushEndTime() != nil || !wasEnding {
 		p.FreezeProPushDuration(p.UpdatedAt)
 	}
@@ -349,6 +364,9 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 		if _, err = tx.Exec(`INSERT INTO pro_oai_confirmation_accounts(email,profile) VALUES(?,?) ON CONFLICT(email) DO UPDATE SET profile=excluded.profile`, email, mustJSON(p.ProOAIConfirmations)); err != nil {
 			return p, err
 		}
+	}
+	if err = recordProDeadTx(tx, p, previous); err != nil {
+		return p, err
 	}
 	if err = s.recordEJHConsumptionTx(tx, p, p.UpdatedAt); err != nil {
 		return p, err
@@ -441,6 +459,11 @@ func (s *Store) RecoverProWorkflows() error {
 			merchantReconciled = true
 		}
 		stopReconciled := p.ReconcileProStop()
+		if p.IsProDead() {
+			p.ProAuto.Status = "dead"
+			p.ProAuto.NextCheckAt = nil
+			p.ProAuto.RetryAt = nil
+		}
 		if !p.ProWorkflowRunning && !legacyCancelled && !groupsRunning && !deletionNeedsRecovery && !merchantReconciled && !stopReconciled {
 			continue
 		}
@@ -496,6 +519,11 @@ func (s *Store) RecoverProWorkflows() error {
 		p.ReconcileProMerchant(time.Now())
 		p.ReconcileProMergeV2(time.Now())
 		p.ReconcileProStop()
+		if p.IsProDead() {
+			p.ProAuto.Status = "dead"
+			p.ProAuto.NextCheckAt = nil
+			p.ProAuto.RetryAt = nil
+		}
 		p.UpdatedAt = time.Now()
 		updates = append(updates, item{email: email, profile: p})
 	}

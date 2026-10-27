@@ -152,7 +152,8 @@ func Evaluate(c Config, s Snapshot, tasks []Task, limits Limits, confirmations, 
 	}
 	if c.ConcurrencyEnabled && confirmations >= c.Confirmations && pressureAt(c, s, now) {
 		d.Trace.ConcurrencyTriggered = true
-		d.ConcurrencyNeed = max(0, int(math.Ceil((float64(d.Used+d.Waiting)*100/float64(c.TargetPercent)-c.EffectiveCapacity(futureCapacity+timely*newSlots))/c.EffectiveCapacity(newSlots))))
+		_, targetPercent := c.CapacityThresholds(d.ReportedCapacity)
+		d.ConcurrencyNeed = max(0, int(math.Ceil((float64(d.Used+d.Waiting)*100/float64(targetPercent)-c.EffectiveCapacity(futureCapacity+timely*newSlots))/c.EffectiveCapacity(newSlots))))
 	}
 	d.Trace.FutureCapacity = c.EffectiveCapacity(futureCapacity)
 	timeWithinHorizon := lead < float64(c.ForecastMinutes) && d.TargetMinutes <= float64(c.ForecastMinutes)

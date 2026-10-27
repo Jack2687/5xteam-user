@@ -26,6 +26,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	}
 	// Older clients omit the new field; retain its saved value. Explicit zero
 	// still fails validation after decoding.
+	input.Automation.BalanceFallbackEnabled = current.BalanceFallbackEnabled
 	input.Automation.MergeConcurrency = current.MergeConcurrency
 	input.Automation.AutoDeleteEnabled = current.AutoDeleteEnabled
 	input.Automation.AutoMerchantEnabled = current.AutoMerchantEnabled

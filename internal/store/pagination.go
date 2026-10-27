@@ -54,6 +54,7 @@ type FreeAccountSeatUsage struct {
 }
 
 type ProAccountsPageSummary struct {
+	Dead       int `json:"dead"`
 	All        int `json:"all"`
 	OAuthReady int `json:"oauth_ready"`
 	Pushed     int `json:"pushed"`
@@ -449,8 +450,8 @@ func (s *Store) ProAccountsPageContext(ctx context.Context, query, mergeState st
 	if err := s.db.QueryRowContext(ctx, cte+` SELECT COUNT(*),
 		COALESCE(SUM(json_extract(profile,'$.access_token_present')=1 AND json_extract(profile,'$.refresh_token_present')=1),0),
 		COALESCE(SUM(json_extract(profile,'$.push_status')='completed'),0), COALESCE(SUM(merge_state='merged'),0),
-  COALESCE(SUM(merge_state='unmerged'),0), COALESCE(SUM(merge_state='in_progress'),0), COALESCE(SUM(merge_state='deleted'),0), COALESCE(SUM(merge_state='merchant'),0), COALESCE(SUM(merge_state='merge_v2'),0) FROM accounts`).Scan(
-		&summary.All, &summary.OAuthReady, &summary.Pushed, &summary.Merged, &summary.Unmerged, &summary.InProgress, &summary.Deleted, &summary.Merchant, &summary.MergeV2); err != nil {
+  COALESCE(SUM(merge_state='unmerged'),0), COALESCE(SUM(merge_state='in_progress'),0), COALESCE(SUM(merge_state='deleted'),0), COALESCE(SUM(merge_state='merchant'),0), COALESCE(SUM(merge_state='merge_v2'),0), COALESCE(SUM(merge_state='dead'),0) FROM accounts`).Scan(
+		&summary.All, &summary.OAuthReady, &summary.Pushed, &summary.Merged, &summary.Unmerged, &summary.InProgress, &summary.Deleted, &summary.Merchant, &summary.MergeV2, &summary.Dead); err != nil {
 		return nil, 0, summary, err
 	}
 	like := "%" + query + "%"

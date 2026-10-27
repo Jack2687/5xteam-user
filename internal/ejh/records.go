@@ -6,6 +6,7 @@ import (
 )
 
 type Operation struct {
+	ErrorCode    string `json:"error_code,omitempty"`
 	Platform     string `json:"platform"`
 	TemplateName string `json:"template_name,omitempty"`
 
@@ -72,6 +73,7 @@ func ValidCaseState(state string) bool {
 }
 
 type Case struct {
+	ProDead                *model.ProDeadState                  `json:"pro_dead,omitempty"`
 	ProOAIAvailableModes   []string                             `json:"pro_oai_available_modes,omitempty"`
 	ProOAIActionsAvailable bool                                 `json:"pro_oai_actions_available"`
 	ProOAIConfirmations    map[string]*model.ProOAIConfirmation `json:"pro_oai_confirmations,omitempty"`

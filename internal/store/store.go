@@ -211,7 +211,9 @@ func (s *Store) initSchema() error {
 		CREATE TABLE IF NOT EXISTS cpa_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1), profile TEXT NOT NULL, encrypted_key TEXT NOT NULL DEFAULT ''
 		);
-		CREATE TABLE IF NOT EXISTS pro_oai_confirmation_accounts (email TEXT PRIMARY KEY COLLATE NOCASE,profile TEXT NOT NULL);
+		CREATE TABLE IF NOT EXISTS pro_dead_accounts(email TEXT PRIMARY KEY COLLATE NOCASE,profile TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS pro_dead_cards(card_key TEXT NOT NULL,email TEXT NOT NULL COLLATE NOCASE,profile TEXT NOT NULL,PRIMARY KEY(card_key,email));
+ CREATE TABLE IF NOT EXISTS pro_oai_confirmation_accounts (email TEXT PRIMARY KEY COLLATE NOCASE,profile TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS pro_oai_sessions (email TEXT COLLATE NOCASE,mode TEXT,encrypted_session TEXT NOT NULL,PRIMARY KEY(email,mode));
 		CREATE TABLE IF NOT EXISTS pro_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1), profile TEXT NOT NULL,
@@ -521,6 +523,18 @@ func (s *Store) saveImportedMailAccount(profile model.MailAccountProfile, creden
 			profile.ProManagedAt = &now
 		}
 	}
+	var deadRaw string
+	deadErr := s.db.QueryRow(`SELECT profile FROM pro_dead_accounts WHERE email=?`, profile.Email).Scan(&deadRaw)
+	if deadErr != nil && !errors.Is(deadErr, sql.ErrNoRows) {
+		return profile, deadErr
+	}
+	if deadErr == nil {
+		if err := json.Unmarshal([]byte(deadRaw), &profile.ProDead); err != nil {
+			return profile, err
+		}
+		profile.ChatGPTStatus, profile.RegistrationStatus, profile.ProAuto.Status = "dead", "dead", "dead"
+		profile.ProAuto.NextCheckAt, profile.ProAuto.RetryAt = nil, nil
+	}
 	// Re-importing ordinary mailbox credentials must preserve the separate SIWC bundle.
 	if credentials.SIWC == nil && encrypted != "" {
 		plain, err := s.decrypt(encrypted)
@@ -589,6 +603,7 @@ func preserveMailPlanCheck(profile *model.MailAccountProfile, old model.MailAcco
 }
 
 func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccountProfile) {
+	profile.ProDead = old.ProDead
 	profile.ProOAIConfirmations = old.ProOAIConfirmations
 	profile.ProDailyMerge, profile.ProMergeTrigger = old.ProDailyMerge, old.ProMergeTrigger
 	profile.ProRestockTaskID, profile.ProRestockTargetID = old.ProRestockTaskID, old.ProRestockTargetID
@@ -802,6 +817,20 @@ func (s *Store) UpdateMailAccountStatus(email, status, message string) error {
 // mail-management projection.  Keep both the dedicated ChatGPT status and the
 // legacy registration status in sync so all existing views show the same state.
 func (s *Store) MarkMailAccountDead(email, message string) error {
+	if profile, _, e := s.MailAccountCredential(email); e == nil && profile.ManagementScope == "pro" {
+		_, e = s.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+			if !p.IsProDead() && p.CanMarkProDead() {
+				now := time.Now()
+				p.ProDead = &model.ProDeadState{At: now, Source: "login", Reason: message}
+				p.ProAuto.StopRequested = true
+				p.ProAuto.StopVersion++
+				p.ChatGPTStatusAt = &now
+				p.ChatGPTStatusMessage = message
+				p.RegistrationStatus = "dead"
+			}
+		})
+		return e
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	email = strings.ToLower(strings.TrimSpace(email))

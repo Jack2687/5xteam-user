@@ -42,6 +42,7 @@ type Settings struct {
 }
 
 type Card struct {
+	DeadAccount  bool   `json:"dead_account"`
 	Platform     string `json:"platform"`
 	TemplateName string `json:"template_name,omitempty"`
 	TemplateID   string `json:"template_id,omitempty"`

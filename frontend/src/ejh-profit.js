@@ -20,8 +20,8 @@ export function usdToR(value) {
   const n = units(value)
   return format(n === null ? null : rounded(n * 67n, 1000n))
 }
-export function financeProfit({ openingUSD, reversalUSD, rechargeUSD, clearingUSD = 0, refundUSD = 0, merchantUSD = 0, consumption, costMissing = 0, consumptionMissing = 0, estimated = false }) {
-  const usdCosts = [openingUSD, reversalUSD, rechargeUSD, clearingUSD, refundUSD, merchantUSD].map(units)
+export function financeProfit({ openingUSD, reversalUSD, rechargeUSD, clearingUSD = 0, refundUSD = 0, merchantUSD = 0, deadUSD = 0, consumption, costMissing = 0, consumptionMissing = 0, estimated = false }) {
+  const usdCosts = [openingUSD, reversalUSD, rechargeUSD, clearingUSD, refundUSD, merchantUSD, deadUSD].map(units)
   const costs = usdCosts.map(n => {
     return n === null ? null : rounded(n * 67n, 1000n)
   })
@@ -35,7 +35,7 @@ export function financeProfit({ openingUSD, reversalUSD, rechargeUSD, clearingUS
   const revenue = rawRevenue === null ? null : rounded(rawRevenue, 100n)
   const incomplete = partial || !!consumptionMissing || revenue === null
   return {
-    openingR: format(costs[0]), reversalR: format(costs[1]), rechargeR: format(costs[2]), clearingR: format(costs[3]), refundR: format(costs[4]), merchantR: format(costs[5]),
+    openingR: format(costs[0]), reversalR: format(costs[1]), rechargeR: format(costs[2]), clearingR: format(costs[3]), refundR: format(costs[4]), merchantR: format(costs[5]), deadR: format(costs[6]),
     costR: partial ? null : format(cost), knownCostR: known.length ? format(cost) : null,
     costUSD: partial ? null : usdText, knownCostUSD: known.length ? usdText : null,
     consumptionR: format(revenue), profitR: incomplete ? null : format(revenue - cost),

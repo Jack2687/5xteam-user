@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"chatgpt-space-merge/internal/gptpay"
@@ -45,6 +46,27 @@ func (s *Server) runProProvisioning(ctx context.Context, email string, cfg gptpa
 		if readErr != nil {
 			return err
 		}
+		if p.IsProDead() {
+			return errProAccountDead
+		}
+		if isProProxyTransportFailure(err) && p.ProAuto.Stage == "login" && p.ProAuto.OrderID == "" && p.ProAuto.Steps["recharge"] != "completed" {
+			const limit = 3
+			if p.ProAuto.ProxyRetryAttempts >= limit {
+				return fmt.Errorf("代理隧道连续不可用，已更换会话重试 %d 次，尚未付款：%w", limit, err)
+			}
+			delay := time.Duration(5*(1<<p.ProAuto.ProxyRetryAttempts)) * time.Second
+			at := time.Now().Add(delay)
+			message := fmt.Sprintf("代理隧道失败，%d 秒后更换代理会话重试 %d/%d；保留原账号和原卡，不占账号业务重试次数", int(delay.Seconds()), p.ProAuto.ProxyRetryAttempts+1, limit)
+			retried, e := s.store.PrepareProAutoProxyRetry(email, p.ProAuto, limit, at, message)
+			if e != nil {
+				return fmt.Errorf("%w；代理重试未执行：%v", err, e)
+			}
+			s.auditProEvent(retried, "login", "pending", "pro_auto", message, map[string]any{"proxy_error": redactSensitiveText(err.Error())})
+			if e = waitProAuto(ctx, time.Until(at)); e != nil {
+				return e
+			}
+			continue
+		}
 		if p.ProAuto.RetryAttempts >= settings.RetryCount {
 			if p.ProAuto.RetryAttempts > 0 {
 				return fmt.Errorf("原账号重试 %d 次后仍失败：%w", p.ProAuto.RetryAttempts, err)
@@ -70,4 +92,13 @@ func (s *Server) runProProvisioning(ctx context.Context, email string, cfg gptpa
 			return err
 		}
 	}
+}
+
+// Only connection establishment failures qualify; never replay a payment RPC.
+func isProProxyTransportFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "connect tunnel failed") || strings.Contains(m, "proxy connect aborted") || strings.Contains(m, "could not resolve proxy") || strings.Contains(m, "failed to connect to proxy")
 }

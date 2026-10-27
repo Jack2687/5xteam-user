@@ -14,7 +14,8 @@ export function cancelCardReason(card, operations = [], cases = []) {
   if (String(card.remote?.status) === '8') return '销卡处理中'
   if (card.local?.issuer_cancel_status) return '已有销卡申请，正在等待卡台处理结果'
   if (card.error || !['1','3','4','5','6','7'].includes(String(card.remote?.status))) return '卡片资料或状态待核实'
-  if (cases.some(row => cardHasCase(card,row) && !(row.payment_only&&row.requested_at) && !['returned','unopened'].includes(row.original_state||row.state))) return '有关联账号已开通或已申请待回款'
+  if (cases.some(row => cardHasCase(card,row) && ['submitting','processing','submission_unknown','manual_review'].includes(row.payment_status))) return '付款结果待核实，请先核实原订单'
+  if (cases.some(row => cardHasCase(card,row) && !(row.pro_dead&&row.payment_status==='success') && !(row.payment_only&&row.requested_at) && !['returned','unopened'].includes(row.original_state||row.state))) return '有关联账号已开通或已申请待回款'
   if (operations.some(op => (op.card_id === card.id || op.order_no && op.order_no === card.remote?.orderNo) && ['submitting','processing','unknown','import_pending'].includes(op.status))) return '有待核实操作'
   return ''
 }

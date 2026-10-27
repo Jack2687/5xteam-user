@@ -33,7 +33,7 @@ export function cardFunding(data, row) {
  const pendingAssets = totals.pending + totals.paymentOnly.pending - closedAuthorization
  // Active/closing cards still belong to card assets. Only a closed card's
  // uncredited residual can explain a missing transfer, never a new expense.
- const closurePending = ready && closed && !totals.unverified && !totals.staleReviews ? Math.max(0, funded - withdrawn - returned - totals.cardLoss - totals.settlement - pendingAssets - totals.manualFees - totals.balanceDifference) : null
+ const closurePending = ready && closed && !totals.unverified && !totals.staleReviews ? Math.max(0, funded - withdrawn - returned - totals.cardLoss - totals.settlement - totals.deadLoss - pendingAssets - totals.manualFees - totals.balanceDifference) : null
  const settled = ready && closed && closurePending === 0 && !waiting
  return {ready, funded:ready ? funded : null, withdrawn:ready ? withdrawn : null, returned:ready ? returned : null,
   difference:settled ? funded - withdrawn - returned : null, additions:additions.length,
@@ -64,7 +64,7 @@ export function frozenBalanceDisplay(data) {
  const settledRefunds=new Map(),seenGroups=new Set()
  let unlinkedSettledRefund=false
  for(const c of data.cases||[]){
-  if(c.state!=='waiting'||c.payment_status!=='success'||c.removed_at)continue
+  if(c.pro_dead||c.state!=='waiting'||c.payment_status!=='success'||c.removed_at)continue
   const card=activeByID.get(c.card_id)
   if(!card)continue
   const group=c.match?.group

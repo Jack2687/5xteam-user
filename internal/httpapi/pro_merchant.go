@@ -37,6 +37,9 @@ func (s *Server) performProMerchant(ctx context.Context, email string) (out mode
 	if err != nil {
 		return p, err
 	}
+	if p.IsProDead() {
+		return p, errProAccountDead
+	}
 	if p.ProAuto.StopRequested {
 		return p, context.Canceled
 	}

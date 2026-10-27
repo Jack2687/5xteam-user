@@ -166,6 +166,10 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 404, nil, "Pro 账号不存在")
 		return
 	}
+	if p.IsProDead() {
+		writeAPI(w, 409, nil, errProAccountDead.Error())
+		return
+	}
 	if p.MergeV2Started() {
 		writeAPI(w, 409, nil, "该账号已进入合并空间2.0，请从该流程续跑")
 		return
@@ -422,7 +426,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			}
 			pushTargetID, pushGroupIDs = latest.ProRestockTargetID, latest.ProAuto.Sub2PushGroupIDs
 		}
-		card, secret, err = s.reserveProStartCard(r.Context(), email, input.CardID, pro.AutoCardEnabled(), r.Context().Value(proScheduledContextKey{}) == true, func() error {
+		card, secret, err = s.reserveProStartCard(context.WithValue(r.Context(), proPaymentConfigKey{}, cfg), email, input.CardID, pro.AutoCardEnabled(), r.Context().Value(proScheduledContextKey{}) == true, func() error {
 			latest, _, err := s.store.MailAccountCredential(email)
 			if err != nil {
 				return err
@@ -893,6 +897,13 @@ func (s *Server) runProContinuousSession(ctx context.Context, email string, rpc 
 		return err
 	}
 	if result["success"] != true {
+		if isDeadOAuthResult(result, fmt.Sprint(result["error"])) {
+			if p, e := s.markProDead(email, "login", fmt.Sprint(result["error"])); e != nil {
+				return e
+			} else if p.IsProDead() {
+				return errProAccountDead
+			}
+		}
 		return errors.New(firstNonEmpty(fmt.Sprint(result["error"]), "Pro 连续会话失败"))
 	}
 	return nil
@@ -912,6 +923,9 @@ func (s *Server) runProAutomationTail(ctx context.Context, email string) (runErr
 	p, err := s.store.UpdateProAccount(email, nil)
 	if err != nil {
 		return err
+	}
+	if p.IsProDead() {
+		return errProAccountDead
 	}
 	if p.DeletionConfirmed() || p.ProAuto.Status == "completed" {
 		return nil
@@ -1112,6 +1126,7 @@ func (s *Server) startProAutomationMonitor() {
 	s.startProRestockMonitor(ctx)
 	s.startProSIWCWorker(ctx)
 	s.startProOAIWorker(ctx)
+	s.startProDeadWorker(ctx)
 	s.proAutoWG.Add(1)
 	go func() {
 		defer s.proAutoWG.Done()

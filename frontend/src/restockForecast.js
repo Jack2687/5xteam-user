@@ -38,6 +38,8 @@ export function concurrencyDetails(snapshot = {}, unavailable = false, now = Dat
   const valid = !unavailable && snapshot.valid && snapshot.load_valid && accounts.every(a=>finite(a.used) && finite(a.capacity))
   const used = accounts.reduce((sum,a)=>sum+a.used,0), reportedCapacity = accounts.reduce((sum,a)=>sum+a.capacity,0)
   const capacity = reportedCapacity * capacityPercent / 100
-  const triggerCount = valid && Number.isInteger(config.trigger_percent) && config.trigger_percent >= 1 && config.trigger_percent <= 100 ? Math.floor(reportedCapacity * capacityPercent * config.trigger_percent / 10000) : null
-  return {used:valid?used:null,capacity:valid?capacity:null,triggerCount,reportedCapacity:valid?reportedCapacity:null,capacityPercent,percent:valid && capacity>0 ? (used*100/capacity).toLocaleString('zh-CN',{maximumFractionDigits:1})+'%' : '—'}
+  const tier=config.capacity_tiers_enabled?[...(config.capacity_tiers||[])].filter(t=>t.min_capacity<=capacity).sort((a,b)=>b.min_capacity-a.min_capacity)[0]:null
+  const triggerPercent=tier?.trigger_percent??config.trigger_percent,targetPercent=tier?.target_percent??config.target_percent
+  const triggerCount = valid && Number.isInteger(triggerPercent) && triggerPercent >= 1 && triggerPercent <= 100 ? Math.floor(reportedCapacity * capacityPercent * triggerPercent / 10000) : null
+  return {used:valid?used:null,capacity:valid?capacity:null,triggerCount,triggerPercent,targetPercent,reportedCapacity:valid?reportedCapacity:null,capacityPercent,percent:valid && capacity>0 ? (used*100/capacity).toLocaleString('zh-CN',{maximumFractionDigits:1})+'%' : '—'}
 }

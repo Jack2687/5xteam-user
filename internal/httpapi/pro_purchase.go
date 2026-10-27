@@ -113,6 +113,18 @@ func (s *Server) validateProPurchaseConfig(p model.ProSettings, pay gptpay.Setti
 	}
 	for _, w := range p.PurchaseWindows {
 		r := &model.ProPurchaseRoute{CardProvider: w.CardProvider, PlanCode: w.PlanCode, TemplateID: p.PlanTemplate(w.CardProvider, w.PlanCode)}
+		if w.BalanceFallbackEnabled {
+			backup := w.BalanceFallbackProvider
+			if backup == "" {
+				backup = "ejh"
+				if w.CardProvider == "ejh" {
+					backup = "nexovcc"
+				}
+			}
+			if err := s.validatePurchaseTemplate(&model.ProPurchaseRoute{CardProvider: backup, PlanCode: w.PlanCode, TemplateID: p.PlanTemplate(backup, w.PlanCode)}); err != nil {
+				return err
+			}
+		}
 		if err := s.validatePurchaseTemplate(r); err != nil {
 			return err
 		}

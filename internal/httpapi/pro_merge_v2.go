@@ -136,6 +136,9 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 	if err != nil {
 		return p, err
 	}
+	if p.IsProDead() {
+		return p, errProAccountDead
+	}
 	if p.ManagementScope != "pro" {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
@@ -330,6 +333,15 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 			}
 		}
 		result, loginErr := login(loginCtx, email)
+		if (loginErr != nil || result["success"] != true) && isDeadOAuthResult(result, oauthErrorText(result, loginErr)) {
+			dead, deadErr := s.markProDead(email, "merge_v2_login", oauthErrorText(result, loginErr))
+			if deadErr != nil {
+				return dead, deadErr
+			}
+			if dead.IsProDead() {
+				return dead, errProAccountDead
+			}
+		}
 		if loginErr != nil {
 			return p, loginErr
 		}

@@ -45,7 +45,7 @@ func newProGroupFixture(t *testing.T) *proGroupFixture {
 			return
 		}
 		p, _, _ := f.s.store.MailAccountCredential(f.email)
-		if (!p.DeletionAccepted() && (p.TransferStatus != "completed" || p.RemoveStatus != "completed")) || p.ProPostMergeGroups == nil || p.ProPostMergeGroups.Status != "running" {
+		if (!p.IsProDead() && !p.DeletionAccepted() && (p.TransferStatus != "completed" || p.RemoveStatus != "completed")) || p.ProPostMergeGroups == nil || p.ProPostMergeGroups.Status != "running" {
 			t.Error("groups requested before successful persisted removal or missing progress")
 		}
 		if r.Method == "GET" {

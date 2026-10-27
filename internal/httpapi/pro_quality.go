@@ -27,7 +27,7 @@ func proQualityConnection(q model.ProQualitySettings, c model.ProSettings) bool 
 }
 
 func proQualityEligible(p model.MailAccountProfile, c model.ProSettings) bool {
-	if p.ManagementScope != "pro" || p.PushStatus != "completed" || p.PushProvider != "sub2" || p.Sub2AccountID <= 0 || p.VM2 != nil || c.Provider != "sub2" {
+	if p.IsProDead() || p.ManagementScope != "pro" || p.PushStatus != "completed" || p.PushProvider != "sub2" || p.Sub2AccountID <= 0 || p.VM2 != nil || c.Provider != "sub2" {
 		return false
 	}
 	if p.DispositionStarted() || p.RemoveStatus == "completed" || p.RemoveStatus == "team_removed" || proImportedDownstreamOK(p, c) != nil {

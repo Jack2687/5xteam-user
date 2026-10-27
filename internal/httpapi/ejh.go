@@ -371,6 +371,7 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 		op.Error = e.Error()
 		var apiErr *ejh.APIError
 		if errors.As(e, &apiErr) && definiteEJHReject(apiErr.Code) {
+			op.ErrorCode = apiErr.Code
 			op.Status = "failed"
 		}
 	} else {
@@ -396,6 +397,10 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 		return op, saveErr
 	}
 	s.notifyEJHOpened(op)
+	var rejected *ejh.APIError
+	if op.Status == "failed" && errors.As(e, &rejected) && (rejected.Code == "100004" || rejected.Code == "800003") {
+		return op, fmt.Errorf("%w：%s", errIssuerInsufficientBalance, rejected.Error())
+	}
 	return op, nil
 }
 func definiteEJHReject(code string) bool {
@@ -866,7 +871,7 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 	zone := time.FixedZone("CST", 8*3600)
 	today := time.Now().In(zone).Format("2006-01-02")
 	for _, o := range ops {
-		if o.Automatic && o.Status == "failed" && time.Since(o.UpdatedAt) < 5*time.Minute {
+		if o.Automatic && o.Status == "failed" && o.ErrorCode != "100004" && o.ErrorCode != "800003" && time.Since(o.UpdatedAt) < 5*time.Minute {
 			return gptpay.Card{}, fmt.Errorf("自动开卡失败后冷却 5 分钟，请先核对失败原因")
 		}
 		if o.Automatic && o.Status == "completed" && o.CardID != "" {
@@ -884,7 +889,7 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 			}
 			// Confirmed cancellation with no outstanding work permits replacement.
 			// It must still reach the daily count and amount accounting below.
-			if !closed && !closing && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
+			if !prior.DeadAccount && !closed && !closing && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
 				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 尚无成功开通记录且当前不可用，请先核实该卡，暂停自动补卡", prior.Last4)
 			}
 		}

@@ -45,6 +45,9 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	if err != nil {
 		return p, err
 	}
+	if p.IsProDead() {
+		return p, errProAccountDead
+	}
 	if p.ManagementScope != "pro" {
 		return p, errors.New("账号不在 Pro 管理中")
 	}

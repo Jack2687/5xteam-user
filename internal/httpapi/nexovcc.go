@@ -837,6 +837,9 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	if route, _ := ctx.Value(proPurchaseContextKey{}).(*model.ProPurchaseRoute); route != nil {
 		manualProvider = route.CardProvider
 	}
+	if route, _ := ctx.Value(proBalanceFallbackKey{}).(*model.ProPurchaseRoute); route != nil {
+		manualProvider = route.CardProvider
+	}
 	admission := store.NexovccOpenAdmission{RestockID: taskID, ManualProvider: manualProvider}
 	if cfg.MaxOnlineCards > 0 || cfg.AutoRecycleAt > 0 {
 		if e = s.store.CheckNexovccOpen(nexovcc.Operation{Action: "open", Amount: t.Amount, Automatic: automatic, CreatedAt: time.Now()}, admission); e != nil {
@@ -876,7 +879,7 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	available, _ := nexovcc.Cents(balance.Amount)
 	buffer, _ := nexovcc.Cents(t.FeeBuffer)
 	if available < amount+buffer {
-		return op, fmt.Errorf("环球账户余额不足以覆盖开卡金额和预留费用")
+		return op, fmt.Errorf("%w：环球账户余额不足以覆盖开卡金额和预留费用", errIssuerInsufficientBalance)
 	}
 	op = nexovcc.Operation{Platform: t.Platform, TemplateName: t.Name, RestockTaskID: taskID, PlanCode: t.PlanCode, ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if e = s.store.BeginNexovccOperation(op, admission); e != nil {
@@ -1234,7 +1237,7 @@ func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) 
 			if err != nil {
 				return gptpay.Card{}, fmt.Errorf("已开环球卡尚未加入银行卡列表，请同步原卡后继续")
 			}
-			if prior.IssuerStatus != "4" && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
+			if !prior.DeadAccount && prior.IssuerStatus != "4" && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
 				return gptpay.Card{}, fmt.Errorf("环球卡尾号 %s 尚未使用且不可用，请核实原卡，暂停自动补卡", prior.Last4)
 			}
 		}

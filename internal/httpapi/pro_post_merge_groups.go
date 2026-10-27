@@ -33,7 +33,7 @@ func (s *Server) finishProPostMergeGroups(ctx context.Context, p model.MailAccou
 	if p.ProPostMergeGroups.Action == "deactivate" && !p.DeletionAccepted() {
 		return p, errors.New("删除请求尚未受理，暂不调整删除后分组")
 	}
-	if !p.MergeV2Removed() && !p.DeletionAccepted() && !p.MerchantAccepted() && (p.TransferStatus != "completed" || (p.RemoveStatus != "completed" && p.RemoveStatus != "team_removed")) {
+	if !p.IsProDead() && !p.MergeV2Removed() && !p.DeletionAccepted() && !p.MerchantAccepted() && (p.TransferStatus != "completed" || (p.RemoveStatus != "completed" && p.RemoveStatus != "team_removed")) {
 		return p, errors.New("合并移出成功或删除请求受理后才能调整 Sub2 分组")
 	}
 	target := *p.ProPostMergeGroups
@@ -45,7 +45,7 @@ func (s *Server) finishProPostMergeGroups(ctx context.Context, p model.MailAccou
 		return p, err
 	}
 	details := map[string]any{"account_id": target.AccountID, "group_ids": target.GroupIDs}
-	s.auditProEvent(p, "post_merge_groups", "running", "sub2", "合并已移出或删除已受理，开始调整 Sub2 分组", details)
+	s.auditProEvent(p, "post_merge_groups", "running", "sub2", "处理账号下游分组调整", details)
 	settings, password, _, err := s.proAccountPushSettings(p)
 	if err == nil {
 		switch {

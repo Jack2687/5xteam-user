@@ -31,7 +31,7 @@ func holdFailedProAutoCard(tx *sql.Tx, previous, order gptpay.Order) error {
 		return err
 	}
 	a := p.ProAuto
-	if p.ManagementScope != "pro" || a.Status != "running" || a.ID == "" || a.CardID != order.CardID || a.PaymentOrderID() != order.ID || (a.OrderID != "" && a.OrderID != order.ID) {
+	if p.IsProDead() || p.ManagementScope != "pro" || a.Status != "running" || a.ID == "" || a.CardID != order.CardID || a.PaymentOrderID() != order.ID || (a.OrderID != "" && a.OrderID != order.ID) {
 		return nil
 	}
 	_, err = tx.Exec(`INSERT INTO pro_card_reservations(email,card_key)
@@ -43,6 +43,14 @@ func holdFailedProAutoCard(tx *sql.Tx, previous, order gptpay.Order) error {
 // The caller keeps the original account lock and worker slot throughout the
 // wait. Verify payment history and advance the attempt in one transaction.
 func (s *Store) PrepareProAutoRetry(email string, expected model.ProAutoState, limit int, at time.Time, message string) (model.MailAccountProfile, error) {
+	return s.prepareProAutoRetry(email, expected, limit, at, message, false)
+}
+
+func (s *Store) PrepareProAutoProxyRetry(email string, expected model.ProAutoState, limit int, at time.Time, message string) (model.MailAccountProfile, error) {
+	return s.prepareProAutoRetry(email, expected, limit, at, message, true)
+}
+
+func (s *Store) prepareProAutoRetry(email string, expected model.ProAutoState, limit int, at time.Time, message string, proxy bool) (model.MailAccountProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var p model.MailAccountProfile
@@ -59,10 +67,17 @@ func (s *Store) PrepareProAutoRetry(email string, expected model.ProAutoState, l
 		return p, err
 	}
 	a := p.ProAuto
-	if p.ManagementScope != "pro" || a.ID == "" || a.ID != expected.ID || a.OrderID != expected.OrderID || a.StopVersion != expected.StopVersion || a.RetryAttempts != expected.RetryAttempts || a.StopRequested || a.Status != "running" || p.ProWorkflowRunning || p.SpaceMergedOnce {
+	attempts := a.RetryAttempts
+	if proxy {
+		attempts = a.ProxyRetryAttempts
+		if a.Stage != "login" || a.OrderID != "" || a.ProxyRetryAttempts != expected.ProxyRetryAttempts {
+			return p, errors.New("代理重试仅允许尚未付款的登录阶段")
+		}
+	}
+	if p.IsProDead() || p.ManagementScope != "pro" || a.ID == "" || a.ID != expected.ID || a.OrderID != expected.OrderID || a.StopVersion != expected.StopVersion || a.RetryAttempts != expected.RetryAttempts || a.StopRequested || a.Status != "running" || p.ProWorkflowRunning || p.SpaceMergedOnce {
 		return p, errors.New("账号流程已变化或停止")
 	}
-	if a.RetryAttempts >= limit || (a.Stage != "login" && a.Stage != "recharge") || a.Steps["recharge"] == "completed" || a.Steps["oauth"] == "completed" || p.PushStatus == "completed" {
+	if attempts >= limit || (a.Stage != "login" && a.Stage != "recharge") || a.Steps["recharge"] == "completed" || a.Steps["oauth"] == "completed" || p.PushStatus == "completed" {
 		return p, errors.New("重试次数已用尽或已进入开通后的流程")
 	}
 	rows, err := tx.Query(`SELECT profile FROM gptpay_orders WHERE email=? ORDER BY created_at DESC,id DESC`, email)
@@ -100,7 +115,11 @@ func (s *Store) PrepareProAutoRetry(email string, expected model.ProAutoState, l
 		return p, errors.New("原订单无法核实，禁止重新付款")
 	}
 	// Keep the account, card, batch, original start time and policy snapshots.
-	p.ProAuto.RetryAttempts++
+	if proxy {
+		p.ProAuto.ProxyRetryAttempts++
+	} else {
+		p.ProAuto.RetryAttempts++
+	}
 	p.ProAuto.RetryAt = &at
 	p.ProAuto.OrderID, p.ProAuto.ExitIP = "", ""
 	p.ProAuto.Stage, p.ProAuto.Error = "login", message
