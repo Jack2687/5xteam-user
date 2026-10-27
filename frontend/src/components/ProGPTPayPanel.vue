@@ -356,7 +356,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
             <p class="config-callout">一般保留当前值即可。资金操作的未知结果不会因重试设置而自动重复提交。</p>
             <div class="settings-fields">        <label class="field"><span>并发账号数</span><input v-model.number="automation.concurrency" type="number" min="1" max="20" required /><small>控制从登录、开通、获取凭证到推送、额度检测及合并的活动链条。等待下一次额度检测时释放名额；进入合并阶段还需遵守空间合并页的合并并发数。</small></label>
         <label class="field"><span>失败重试次数</span><input v-model.number="automation.retry_count" type="number" min="0" max="10" required /><small>未开通成功时在原账号重试；2 次表示首次执行加 2 次重试。结果待确认不重复付款。</small></label>
-        <label class="field"><span>重试间隔（秒）</span><input v-model.number="automation.retry_interval_seconds" type="number" min="1" required /></label>
+        <label class="field"><span>重试间隔（秒）</span><input v-model.number="automation.retry_interval_seconds" type="number" min="1" required /><small>失败后从登录重新执行的等待时间；登录阶段代理连接失败也按此间隔更换代理会话，最多额外重试 3 次，不占账号业务重试次数。已付款或付款待确认时不会重新付款。修改后在下一次安排重试时生效。</small></label>
         <label class="field"><span>登录及开通会话最长保留（分钟）</span><input v-model.number="settings.session_timeout_minutes" type="number" min="5" max="60" required /><small>出口 IP 变化或检测失败仅记录日志，继续执行；任务超时仍会停止，已提交订单可查询。</small></label>
 </div>
           </section>

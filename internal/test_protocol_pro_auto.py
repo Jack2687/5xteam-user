@@ -24,7 +24,7 @@ class CookieStore:
 class ContinuousSessionTest(unittest.TestCase):
     def scenario(self, drift_at=0, relogin=False, payment_error=False, bad_trace_at=0,
                  expected_ip='198.51.100.8', real_login=False, login_mode='email_otp', trace_error_at=0,
-                 all_unavailable=False):
+                 all_unavailable=False, request_error_path='', request_error='CONNECT tunnel failed, response 504'):
         clients, calls, events, diagnostics = [], [], [], []
         outer = self
         proxy = 'http://sticky:pass@proxy.test:80'
@@ -42,6 +42,8 @@ class ContinuousSessionTest(unittest.TestCase):
                 outer.assertFalse(self.closed)
                 outer.assertEqual(self.options['proxies'], upstream._cffi_proxies(proxy))
                 path=urlsplit(url).path;calls.append(path)
+                if path == request_error_path:
+                    raise RuntimeError(request_error)
                 if real_login:
                     if path=='/':return Response(url)
                     if path=='/api/auth/csrf':return Response(url,body={'csrfToken':'csrf'})
@@ -182,6 +184,33 @@ class ContinuousSessionTest(unittest.TestCase):
         result,events,calls=self.scenario(relogin=True);self.assertFalse(result['success']);self.assertEqual(events.count('login'),1);self.assertNotIn('/oauth/token',calls)
     def test_uncertain_payment_never_authorizes(self):
         result,events,calls=self.scenario(payment_error=True);self.assertFalse(result['success']);self.assertEqual(events,['ip1','ip2','login','ip3','pay','close']);self.assertEqual(calls,[])
+
+    def test_proxy_failure_never_repeats_requests_inside_one_attempt(self):
+        for path in ('/', '/api/auth/csrf', '/api/accounts/password/verify', '/oauth/token'):
+            with self.subTest(path=path):
+                result,events,calls=self.scenario(real_login=True,login_mode='password_totp',request_error_path=path)
+                self.assertFalse(result['success'],result)
+                self.assertIn('CONNECT tunnel failed',result['error'])
+                self.assertEqual(calls.count(path),1)
+                self.assertEqual(events.count('pay'),int(path=='/oauth/token'))
+                self.assertEqual(events.count('login'),int(path not in ('/','/api/auth/csrf')))
+                if path=='/':
+                    # The optional warmup catches errors, but the next CSRF
+                    # request must not actually use the failed tunnel again.
+                    self.assertEqual(calls,['/'])
+
+    def test_pro_transport_does_not_blindly_replay_a_post(self):
+        result,events,calls=self.scenario(real_login=True,login_mode='password_totp',
+            request_error_path='/api/accounts/password/verify',request_error='response read timeout')
+        self.assertFalse(result['success'],result)
+        self.assertEqual(calls.count('/api/accounts/password/verify'),1)
+        self.assertNotIn('pay',events)
+
+    def test_optional_warmup_timeout_can_still_continue(self):
+        result,events,calls=self.scenario(real_login=True,request_error_path='/',request_error='response read timeout')
+        self.assertTrue(result['success'],result)
+        self.assertEqual(calls.count('/'),1)
+        self.assertIn('tokens',events)
 
     def test_selects_only_the_paid_workspace(self):
         flow=object.__new__(pro.ContinuousProLogin);flow.paid_account_id='personal'

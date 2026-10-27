@@ -26,6 +26,29 @@ class ContinuousProLogin(ProjectProtocolLogin):
         self.login_client = self.web_session
         self.login_exit_ip = ""
         self.paid_account_id = ""
+        self.proxy_transport_error = None
+
+    def web_request_attempt_limit(self):
+        # Go owns Pro's cancellable, configured retry wait and recreates the
+        # proxy session before payment. Never replay HTTP writes invisibly here.
+        return 1
+
+    def request(self, url, **kwargs):
+        if self.proxy_transport_error is not None:
+            raise self.proxy_transport_error
+        try:
+            return super().request(url, **kwargs)
+        except Exception as exc:
+            message = str(exc).lower()
+            if any(marker in message for marker in (
+                "connect tunnel failed", "proxy connect aborted",
+                "could not resolve proxy", "failed to connect to proxy",
+            )):
+                # Optional warmup may swallow an error. Do not let it send the
+                # next login request through the same broken tunnel. IP trace
+                # observations remain diagnostic and do not enter this guard.
+                self.proxy_transport_error = exc
+            raise
 
     def client_details(self):
         reused = self.web_session is self.login_client

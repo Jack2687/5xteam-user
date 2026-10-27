@@ -532,6 +532,9 @@ class ProjectProtocolLogin(upstream.ChatGPTProtocolLogin):
         self._sync_web_session_cookies()
         return response
 
+    def web_request_attempt_limit(self):
+        return 3 if self.proxy_url else 2
+
     def _web_session_request(self, url, **kwargs):
         if self.web_session is None:
             raise RuntimeError("ChatGPT Web Session 未初始化")
@@ -547,7 +550,7 @@ class ProjectProtocolLogin(upstream.ChatGPTProtocolLogin):
             body = urlencode(form_data).encode("utf-8")
             final_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
         last_error = ""
-        attempts = 3 if self.proxy_url else 2
+        attempts = self.web_request_attempt_limit()
         for attempt in range(attempts):
             try:
                 response = self.web_request(

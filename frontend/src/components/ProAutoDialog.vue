@@ -71,7 +71,9 @@ defineExpose({open})
 <div class="modal-heading"><h2>全自动开通 Pro</h2><button class="icon-button" title="关闭全自动窗口" :disabled="busy" @click="close"><X :size="17" /></button></div>
 <p>{{ email }}</p><ProAutoStages :state="state.stage_progress || state" :disposition="displayDisposition" />
 <p v-if="preparingCard&&autoCardEnabled" role="status">正在准备银行卡；新卡资料同步完成后会继续全自动，请稍候。</p>
-<p v-if="state.retry_attempts" role="status">原账号重试：第 {{ state.retry_attempts }} 次<span v-if="state.status==='running'&&state.retry_at"> · 下次执行：{{ formatTime(state.retry_at) }}</span></p>
+<p v-if="state.retry_attempts" role="status">原账号重试：第 {{ state.retry_attempts }} 次</p>
+<p v-if="state.proxy_retry_attempts" role="status">代理连接重试：第 {{ state.proxy_retry_attempts }} 次 / 最多 3 次（保留原账号和原卡）</p>
+<p v-if="state.status==='running'&&state.retry_at" role="status">正在等待重试 · 下次执行：{{ formatTime(state.retry_at) }}</p>
 <ProMergeV2Stages v-if="state.pro_merge_v2" :account="{pro_merge_v2:state.pro_merge_v2,pro_auto:state}" :disabled="busy || state.pro_workflow_running" readonly @retry="resumeMergeV2"/>
 <ProMerchantStages v-if="state.pro_merchant" :account="{pro_merchant:state.pro_merchant,pro_auto:state}" :disabled="busy || state.pro_workflow_running" @retry="resumeMerchant"/>
 <p v-if="state.status==='completed'" class="done">{{ state.stage === 'merge_v2' ? '合并空间2.0流程完成，上游停用和退款另行核实。' : state.stage === 'merchant' ? 'API 商户已处理成功。' : state.stage === 'deactivate' ? '删除账户及后续处理已完成。' : '全自动流程已完成，已移出空间。' }}</p>
