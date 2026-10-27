@@ -1,3 +1,5 @@
+import { dispositionLabels } from './pro-disposition.js'
+
 export const defaultOAIInquiry = {
   prompt: '请查询订阅邮箱【{{email}}】对应的最近一笔网页订阅退款，确认是否已经发起或处理，并给我预计入账时间和发票号。请以实际查询结果为准，不要仅凭我的描述推断；这次仅查询，不要新建退款、取消订阅或删除账户申请。\n如果确认退款已发起或已处理，请在最后一行仅输入：{{success_marker}}\n如果确认退款未发起或没有退款，请在最后一行仅输入：{{failure_marker}}\n如果无法查询或不能确认，请在最后一行仅输入：{{review_marker}}',
   success_marker: '已成功', failure_marker: '已失败', review_marker: '待核实',
@@ -18,5 +20,14 @@ export function caseOAIRecords(row = {}) {
   }))
 }
 
-export const caseOAIConfirmed = row => Object.values(caseOAIRecords(row)).some(r => r?.status === 'confirmed' && (r.confirmed_at || r.confirmation_source === 'card_return'))
+const recordConfirmed = r => r?.status === 'confirmed' && (r.confirmed_at || r.confirmation_source === 'card_return')
+export const caseOAIConfirmed = row => Object.values(caseOAIRecords(row)).some(recordConfirmed)
 export const waitingOAIConfirmedCount = rows => rows.filter(r => r.state === 'waiting' && caseOAIConfirmed(r)).length
+
+export const waitingOAIReplies = rows => rows.filter(row => row.state === 'waiting').flatMap(row =>
+  Object.entries(caseOAIRecords(row)).filter(([,record]) => recordConfirmed(record)).map(([mode,record]) => ({
+    key: `${row.id}:${mode}`,
+    label: `${row.email || row.id} · ${dispositionLabels[mode] || 'OAI 确认'}`,
+    record,
+  }))
+)

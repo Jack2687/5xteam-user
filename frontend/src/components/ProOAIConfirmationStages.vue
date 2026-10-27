@@ -29,7 +29,7 @@ async function action(action){busy.value=true;error.value='';try{await api(`/api
  <div v-if="actionsAvailable && record && record.completed_at && !record.completed_at.startsWith('0001') && record.confirmation_source!=='card_return'" class="oai-actions"><button type="button" :disabled="busy" title="重新登录并授权 Help，从头执行；历史回答保留" @click="action('restart')">重新执行</button></div>
  <small v-if="error" class="danger-text">{{error}}</small>
  <div class="oai-result">
-  <OAIConfirmationReply :record="record" click-only trigger-label="结果情况，查看 Help 完整回答"><span class="oai-result-button"><MessageSquareText :size="12"/><span>结果情况</span><small>{{record?.answer||record?.replies?.length?'查看回答':record?.error?'查看情况':'暂无回答'}}</small></span></OAIConfirmationReply>
+  <OAIConfirmationReply :record="record" trigger-label="结果情况，悬停查看 Help 完整回答"><span class="oai-result-button"><MessageSquareText :size="12"/><span>结果情况</span><small>{{record?.answer||record?.replies?.length?'查看回答':record?.error?'查看情况':'暂无回答'}}</small></span></OAIConfirmationReply>
  </div>
 </div></template>
 <style scoped>
