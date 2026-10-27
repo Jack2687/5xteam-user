@@ -67,7 +67,7 @@ func (s *Server) loginProMergeV2(ctx context.Context, p model.MailAccountProfile
 			return map[string]any{"success": true}, nil
 		}
 		if latest.ProMergeV2 != nil && latest.ProMergeV2.SubmittedAt != nil {
-			return nil, errMergeV2Unknown
+			return result, errMergeV2Unknown
 		}
 		if latest.ProMergeV2 == nil || latest.ProMergeV2.TeamID != p.ProMergeV2.TeamID {
 			return nil, errors.New("合并空间2.0目标空间已变化")
@@ -96,6 +96,12 @@ func (s *Server) loginProMergeV2(ctx context.Context, p model.MailAccountProfile
 func (s *Server) auditMergeV2Login(p model.MailAccountProfile, provider, executionID string, attempt int, d protocolOAuthDiagnostic) {
 	details := mergeV2DiagnosticFields(d.Details, "request_id", "error", "error_type", "error_code", "stage", "http_status", "retryable", "dead", "hint", "oauth_success", "round", "round_max_attempts", "quality_attempt", "quality_max_attempts", "stop_reason", "will_retry", "delay_seconds", "next_attempt", "max_attempts", "login_method", "login_auth_status", "at_team_present", "at_team_matches", "session_team_present", "session_team_matches", "email_matches", "workspace_selected", "workspace_page")
 	details["execution_id"], details["team_login_attempt"], details["protocol_event"] = executionID, attempt, d.Event
+	if code, ok := d.Details["curl_code"]; ok {
+		switch code.(type) {
+		case int, int64, float64:
+			details["curl_code"] = code
+		}
+	}
 	if first, ok := d.Details["first_failed_request"].(map[string]any); ok {
 		details["first_failed_request"] = mergeV2DiagnosticFields(first, "request_id", "stage", "http_status", "url", "error", "error_code", "error_message", "body_kind")
 	}

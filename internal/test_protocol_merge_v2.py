@@ -65,6 +65,26 @@ class MergeV2ProtocolTests(unittest.TestCase):
         self.assertFalse(result["retryable"]);request.assert_called_once()
         self.assertEqual([c.args[0] for c in rpc.call_args_list],["merge_v2_ready","merge_v2_submitting"])
 
+    def test_submit_diagnostics_preserve_failure_without_secrets_or_retry(self):
+        from curl_cffi.requests.exceptions import Timeout
+        f=self.flow()
+        merge_v2.bridge.configure(f.payload)
+        token=session()["accessToken"]
+        failure=Timeout("timeout http://user:secret@proxy.invalid:8080 " + token,code=28)
+        with patch.object(f.web_session,"request",side_effect=failure) as request,patch.object(merge_v2.bridge,"call") as rpc,patch.object(merge_v2.bridge,"emit") as emit:
+            result=f.submit_export(session())
+        self.assertEqual(result["error_code"],"export_uncertain")
+        request.assert_called_once()
+        events=[c for c in emit.call_args_list if c.args[1]=="export_exception"]
+        self.assertEqual(len(events),1)
+        details=events[0].kwargs["details"]
+        self.assertEqual(details["curl_code"],28)
+        self.assertEqual(details["error_type"],"Timeout")
+        self.assertFalse(details["retryable"])
+        raw=str(emit.call_args_list)
+        self.assertNotIn(token,raw);self.assertNotIn("user:secret",raw)
+        self.assertNotIn("merge_v2_rejected",[c.args[0] for c in rpc.call_args_list])
+
     def test_wrong_team_or_identity_never_submits(self):
         for value in [session("personal"),session(email="someone@example.com"),{**session(),"account":{"id":"other"}}]:
             f=self.flow()

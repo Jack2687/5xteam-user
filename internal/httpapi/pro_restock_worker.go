@@ -206,8 +206,10 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 				} else if order.Status == "failed" && !s.proAutomationRunning(t.Email) {
 					t.Status = "failed"
 					t.ETA = nil
-					if order.PaymentReviewRequired() {
+					if order.PaymentReviewBlocksRestock() {
 						t.Status, t.Message = "attention", gptpay.PaymentReviewMessage
+					} else if order.PaymentReviewRequired() {
+						t.Message = gptpay.PaymentReviewRestockMessage
 					}
 				} else if order.Status == "success" && profile.ProAuto.Steps["oauth"] != "completed" && (profile.ProAuto.Status == "interrupted" || profile.ProAuto.Status == "failed") {
 					s.queueRestockPaidRecovery(profile, p)
@@ -291,7 +293,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		}
 		// Historical completed manual failures must not become new blocking
 		// tasks on upgrade. Only a workflow stopped for review holds admission.
-		review := profile.ProAuto.PaymentReviewRequired && orderErr == nil && order.PaymentReviewRequired()
+		review := profile.ProAuto.PaymentReviewRequired && orderErr == nil && order.PaymentReviewBlocksRestock()
 		if !running && !review && (orderErr != nil || order.Status == "failed") && profile.ProAuto.OrderID == "" && profile.ProAuto.Steps["recharge"] != "completed" && profile.ProAuto.Steps["oauth"] != "completed" && profile.PushStatus != "completed" {
 			continue
 		}

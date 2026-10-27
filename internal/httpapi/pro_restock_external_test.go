@@ -5,6 +5,7 @@ import (
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -72,5 +73,76 @@ func TestRestockExternalInflightTracksPaymentOutcome(t *testing.T) {
 				t.Fatal("unknown payment promised future capacity")
 			}
 		})
+	}
+}
+
+func TestRestockSettledRiskFailureReleasesOnlyFinishedWork(t *testing.T) {
+	for _, tracked := range []bool{false, true} {
+		for _, settled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("tracked=%v/settled=%v", tracked, settled), func(t *testing.T) {
+				s, st, email := gptPayFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("no supplier mutation allowed") })
+				s.proAutoCancel()
+				s.proAutoWG.Wait()
+				configureProAutoFixture(t, s)
+				cfg, _, _, _ := st.ProSettings()
+				var task restock.Task
+				if tracked {
+					c := restock.DefaultConfig()
+					c.Enabled, c.Mode, c.GroupID = true, "auto", 1
+					c, err := st.SaveProRestockConfig(c)
+					if err != nil {
+						t.Fatal(err)
+					}
+					reserved, err := st.ReserveProRestock(restock.Decision{ID: "risk-batch", At: time.Now(), Version: c.Version, Suggested: 1}, "", 0)
+					if err != nil || len(reserved) != 1 {
+						t.Fatal(reserved, err)
+					}
+					task = reserved[0]
+				}
+				o := gptpay.Order{ID: "pro-auto-risk", Email: email, CardID: "test-card", Status: "failed", Error: "支付风控拦截", CreatedAt: time.Now(), Remote: gptpay.RemoteOrder{ID: "remote-risk", Status: "failed"}}
+				if settled {
+					o.Remote.SettlementStatus = "settled"
+				}
+				if err := st.CreateGPTPayOrder(o, gptpay.Snapshot{}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := st.UpdateProAccount(email, func(p *model.MailAccountProfile) {
+					p.ProAuto = model.ProAutoState{ID: "risk", Status: "failed", Stage: "recharge", OrderID: o.ID, CardID: "test-card", PaymentReviewRequired: true, RestockBinding: restockBinding(cfg)}
+					if tracked {
+						p.ProRestockTaskID = task.ID
+					}
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if tracked {
+					task.Status, task.OrderID, task.Binding = "attention", o.ID, restockBinding(cfg)
+					if err := st.SaveProRestockTask(task); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for n := 0; n < 2; n++ {
+					tasks, _, err := s.restockTasks(restock.Snapshot{Binding: restockBinding(cfg), GroupID: 1}, cfg, restock.Config{GroupID: 1, LeadMinutes: 5, LeadSamples: 2})
+					if err != nil {
+						t.Fatal(err)
+					}
+					active := 0
+					for _, task := range tasks {
+						if task.Active() {
+							active++
+						}
+						if settled && task.Predictable() {
+							t.Fatal("failed order counted as supply")
+						}
+					}
+					if (active == 0) != settled {
+						t.Fatalf("tasks=%+v settled=%v", tasks, settled)
+					}
+				}
+				p, _, _ := st.MailAccountCredential(email)
+				if !p.ProAuto.PaymentReviewRequired || p.ProAuto.OrderID != o.ID || p.IsProDead() {
+					t.Fatal("review or original order lost")
+				}
+			})
+		}
 	}
 }

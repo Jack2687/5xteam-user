@@ -110,18 +110,33 @@ class TeamProtocolLogin(ProjectProtocolLogin):
             return {"success": False, "retryable": True, "error_code": "team_session_expired", "error": "提交前凭据已超过120秒，重新登录"}
         headers = {"Authorization": "Bearer " + token, "User-Agent": SAFARI_UA,
                    "Origin": "https://chatgpt.com", "Referer": "https://chatgpt.com", "oai-language": "zh-CN", "Accept": "application/json"}
+        started = time.monotonic()
+        bridge.emit("merge_v2_submit", "export_start", "提交导出停用请求，已保存提交检查点",
+                    request={"method": "POST", "url": EXPORT_URL, "timeout_seconds": 60,
+                             "impersonate": "chrome", "allow_redirects": False})
         try:
             # Deliberately bypass login request retries; exactly one destructive POST.
             resp = self.web_session.request("POST", EXPORT_URL, headers=headers,
                                             timeout=60, allow_redirects=False,
                                             impersonate="chrome", default_headers=False)
-        except Exception:
+        except Exception as exc:
+            bridge.emit("merge_v2_submit", "export_exception", "导出停用请求中断，保留未知提交检查点",
+                        level="error", duration_ms=int((time.monotonic()-started)*1000),
+                        details={"error_type": type(exc).__name__, "error": bridge.redact(exc)[:500],
+                                 "curl_code": int(getattr(exc, "code", 0) or 0), "retryable": False})
             return {"success": False, "retryable": False, "error_code": "export_uncertain", "error": "导出停用请求中断，结果待确认，保留团队成员"}
         try:
             data = resp.json()
         except (ValueError, TypeError):
             data = {}
         status = int(resp.status_code)
+        error = data.get("error") if isinstance(data, dict) else None
+        code = str(error.get("code") or "") if isinstance(error, dict) else ""
+        bridge.emit("merge_v2_submit", "export_response", "导出停用请求返回",
+                    http_status=status, duration_ms=int((time.monotonic()-started)*1000),
+                    response={"http_status": status, "error_code": code,
+                              "ok": isinstance(data, dict) and data.get("success") is True},
+                    details={"retryable": False})
         if 200 <= status < 300 and isinstance(data, dict) and data.get("success") is True:
             bridge.call("merge_v2_accepted")
             return {"success": True, "accepted": True, "http_status": status}

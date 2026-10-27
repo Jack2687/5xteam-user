@@ -1223,7 +1223,8 @@ func (s *Server) executeOpenAILoginContext(parent context.Context, email, creden
 					if latest.MergeV2Accepted() {
 						return map[string]any{"success": true}, nil
 					}
-					return nil, errMergeV2Unknown
+					// Keep the protocol result for diagnostics without enabling retry.
+					return result, errMergeV2Unknown
 				}
 			}
 			lastResult, lastErr = result, runErr
