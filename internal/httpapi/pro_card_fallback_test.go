@@ -146,3 +146,62 @@ func TestBalanceFallbackTimetableKeepsDistinctWindowRules(t *testing.T) {
 		t.Fatal("fallback leaked across window")
 	}
 }
+
+func TestBalanceFallbackNexovccReserveRejection(t *testing.T) {
+	for _, mode := range []string{"reserve", "insufficient", "other_rejection", "http_unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			s, issued, _, _ := allocationFixture(t)
+			other, _ := nexFixtureServer(t)
+			ncfg, key, _ := other.store.NexovccSettings()
+			ncfg.Templates[0].PlanCode = "pro20"
+			if _, err := s.store.SaveNexovccSettings(ncfg, key, false); err != nil {
+				t.Fatal(err)
+			}
+			ec, ek, _ := s.store.EJHSettings()
+			ec.Templates[0].PlanCode = "pro20"
+			if _, err := s.store.SaveEJHSettings(ec, ek); err != nil {
+				t.Fatal(err)
+			}
+			p, _, _, _ := s.store.ProSettings()
+			p.CardProvider, p.NexovccAutoOpen, p.NexovccTemplateID = "nexovcc", true, "template"
+			p.NexovccDailyOpenLimit, p.NexovccDailyAmountLimit = 10, "100.00"
+			p.BalanceFallbackEnabled = true
+			p.EJHPlanTemplates = map[string]string{"pro20": "allocation"}
+			if _, err := s.store.SaveProSettings(p, "", ""); err != nil {
+				t.Fatal(err)
+			}
+			creates := 0
+			s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
+				if r.Path == "/api/card/createUserCard" {
+					creates++
+					switch mode {
+					case "reserve":
+						return nexovcc.Response{Status: 200, Body: `{"code":500,"message":"账户余额强制预留: 20 USD, 请先充值"}`}, nil
+					case "insufficient":
+						return nexovcc.Response{Status: 200, Body: `{"code":500,"message":"账户余额不足"}`}, nil
+					case "other_rejection":
+						return nexovcc.Response{Status: 200, Body: `{"code":500,"message":"产品不可用"}`}, nil
+					default:
+						return nexovcc.Response{Status: 500}, nil
+					}
+				}
+				return other.nexovcc.transport(ctx, r)
+			}
+			card, _, err := s.ensureProviderCardWithFallback(context.Background())
+			if creates != 1 {
+				t.Fatal("primary issuance repeated", creates)
+			}
+			ops, _ := s.store.NexovccOperations()
+			if len(ops) != 1 || ops[0].Serial != "" || ops[0].CardID != "" {
+				t.Fatal(ops)
+			}
+			if mode == "reserve" || mode == "insufficient" {
+				if err != nil || card.Source != "ejh" || issued.Load() != 1 || ops[0].Status != "failed" {
+					t.Fatal(card, err, issued.Load(), ops)
+				}
+			} else if err == nil || issued.Load() != 0 {
+				t.Fatal("unsafe fallback", err, issued.Load())
+			}
+		})
+	}
+}

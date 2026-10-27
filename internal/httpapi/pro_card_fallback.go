@@ -3,16 +3,31 @@ package httpapi
 import (
 	"chatgpt-space-merge/internal/gptpay"
 	"chatgpt-space-merge/internal/model"
+	"chatgpt-space-merge/internal/nexovcc"
 	"chatgpt-space-merge/internal/restock"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var errIssuerInsufficientBalance = errors.New("卡台开卡余额不足")
 
 type proBalanceFallbackKey struct{}
 type proPaymentConfigKey struct{}
+
+// HTTP errors and uncertain responses never authorize another money request.
+// The reserve message is a business rejection even though its JSON code is 500.
+func nexovccBalanceRejected(err error) bool {
+	var rejected *nexovcc.Error
+	if !errors.As(err, &rejected) || rejected.Unknown {
+		return false
+	}
+	message := strings.ToLower(rejected.Message)
+	return strings.Contains(message, "余额不足") ||
+		strings.Contains(message, "insufficient balance") ||
+		(strings.Contains(message, "账户余额强制预留") && strings.Contains(message, "请先充值"))
+}
 
 // Only an explicit pre-issue balance failure or a durably recorded definite
 // issuer rejection reaches this boundary. Never switch after an unknown issue.

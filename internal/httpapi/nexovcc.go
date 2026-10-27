@@ -879,7 +879,7 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	available, _ := nexovcc.Cents(balance.Amount)
 	buffer, _ := nexovcc.Cents(t.FeeBuffer)
 	if available < amount+buffer {
-		return op, fmt.Errorf("%w：环球账户余额不足以覆盖开卡金额和预留费用", errIssuerInsufficientBalance)
+		return op, fmt.Errorf("%w：环球账户余额 %s USD，开卡需 %s USD，加账户预留 %s USD；开卡后必须保留该金额", errIssuerInsufficientBalance, balance.Amount, t.Amount, t.FeeBuffer)
 	}
 	op = nexovcc.Operation{Platform: t.Platform, TemplateName: t.Name, RestockTaskID: taskID, PlanCode: t.PlanCode, ID: id, Action: "open", TemplateID: templateID, ProductID: product.ID, Amount: t.Amount, Remark: id, Status: "submitted", Automatic: automatic, BeforeAccountBalance: balance.Amount, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if e = s.store.BeginNexovccOperation(op, admission); e != nil {
@@ -893,8 +893,14 @@ func (s *Server) openNexovccLocked(ctx context.Context, id, templateID string, a
 	}
 	data, e := client.Do(ctx, "/api/card/createUserCard", body)
 	if e != nil {
+		rejected := e
 		op, e = s.nexovccActionError(ctx, op, e)
 		s.notifyNexovccOpened(op)
+		// A saved, explicit balance rejection has not issued a card. Let the
+		// original task use its configured backup issuer without a new account.
+		if e == nil && op.Status == "failed" && op.Serial == "" && op.CardID == "" && nexovccBalanceRejected(rejected) {
+			return op, fmt.Errorf("%w：%s", errIssuerInsufficientBalance, rejected)
+		}
 		return op, e
 	} else {
 		m, err := nexovcc.Object(data)
@@ -1243,9 +1249,6 @@ func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) 
 		}
 		if op.Action == "open" && !op.Terminal() {
 			return gptpay.Card{}, fmt.Errorf("存在未完成环球开卡，请在操作记录核实或同步原卡")
-		}
-		if op.Automatic && op.Status == "failed" && time.Since(op.UpdatedAt) < 5*time.Minute && !nexovcc.ImmediateRequests(ctx) {
-			return gptpay.Card{}, fmt.Errorf("环球开卡失败后冷却 5 分钟")
 		}
 	}
 	if e = ctx.Err(); e != nil {

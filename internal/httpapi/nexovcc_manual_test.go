@@ -12,7 +12,7 @@ import (
 	"chatgpt-space-merge/internal/nexovcc"
 )
 
-func TestManualProStartSkipsRecentOpenFailureCooldown(t *testing.T) {
+func TestManualProStartAfterRecentOpenFailure(t *testing.T) {
 	s, f, email, c := restockWindowIntegration(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected payment") })
 	p, _, _, _ := s.store.ProSettings()
 	p.CardProvider, p.RetryCount = "nexovcc", 0
@@ -30,9 +30,6 @@ func TestManualProStartSkipsRecentOpenFailureCooldown(t *testing.T) {
 	op.Status, op.Automatic = "failed", true
 	if err := s.store.SaveNexovccOperation(op); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := s.ensureNexovccCard(context.Background()); err == nil || !strings.Contains(err.Error(), "冷却 5 分钟") {
-		t.Fatal("automatic cooldown lost", err)
 	}
 	client, _, err := s.nexovccClientLocked()
 	if err != nil {
