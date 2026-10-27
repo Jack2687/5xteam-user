@@ -82,6 +82,9 @@ func (s *Server) autoWithdrawNexovccLocked(ctx context.Context, onlyCard ...stri
 		if !cardplatform.IsOAI(card.Platform) || card.NormalPending || card.Status != "1" || card.Control == "frozen" || !card.Imported || !nexovccCardUsed(card, cases, groups) {
 			continue
 		}
+		if nexovccWithdrawnToReserve(card, ops) {
+			continue
+		}
 		local, _, e := s.store.GPTPayCard(card.ID)
 		if e != nil {
 			return e

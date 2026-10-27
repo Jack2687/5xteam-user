@@ -54,8 +54,19 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 			}
 		}
 	}
+	scheduled, _ := ctx.Value(nexovccScheduledSyncKey{}).(bool)
+	var ops []nexovcc.Operation
+	if scheduled {
+		ops, err = s.store.NexovccOperations()
+		if err != nil {
+			return err
+		}
+	}
 	selected := make([]nexovcc.Card, 0, len(cards))
 	for _, card := range cards {
+		if scheduled && nexovccWithdrawnToReserve(card, ops) {
+			continue
+		}
 		if cardID != "" && card.ID == cardID || cardID == "" && card.Status != "4" && card.NormalPending == (category == "normal_pending") {
 			selected = append(selected, card)
 		}
@@ -131,6 +142,9 @@ func (s *Server) syncNexovccFinanceScopeLocked(ctx context.Context, cardID strin
 		return err
 	}
 	message := fmt.Sprintf("已同步 %d 张正常卡余额与流水，%d 张正常待定或销卡保留已有数据", len(cards), skipped)
+	if scheduled {
+		message = fmt.Sprintf("已同步 %d 张正常卡余额与流水，%d 张已提现留 1U、正常待定或销卡保留已有数据", len(cards), skipped)
+	}
 	if category == "normal_pending" {
 		message = fmt.Sprintf("已同步 %d 张正常待定卡余额、交易与资金明细", len(cards))
 	}

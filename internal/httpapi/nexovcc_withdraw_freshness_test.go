@@ -150,6 +150,24 @@ func TestNexovccAutoWithdrawRefreshesStaleCandidates(t *testing.T) {
 				if err = s.autoWithdrawNexovccLocked(context.Background()); err != nil || writes != 1 {
 					t.Fatal("duplicate withdrawal", writes, err)
 				}
+				// Advance the saved evidence to a later monitoring cycle without
+				// sleeping. A confirmed withdrawal must not re-read the card simply
+				// because its balance/ledger cache is old, including after restart.
+				completed, _ := s.store.NexovccCard(card.ID)
+				completed.BalanceAt = old.Add(time.Minute)
+				if _, err = s.store.SaveNexovccCard(completed, nil); err != nil {
+					t.Fatal(err)
+				}
+				ops[0].CreatedAt = old
+				if err = s.store.SaveNexovccOperation(ops[0]); err != nil {
+					t.Fatal(err)
+				}
+				beforeReads := reads
+				restarted := &Server{store: s.store}
+				restarted.nexovcc.transport = s.nexovcc.transport
+				if err = restarted.autoWithdrawNexovccLocked(context.Background()); err != nil || reads != beforeReads || writes != 1 {
+					t.Fatal("completed reserve card was polled again", reads, beforeReads, writes, err)
+				}
 			}
 		})
 	}

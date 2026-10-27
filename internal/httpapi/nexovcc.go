@@ -582,8 +582,16 @@ func (s *Server) syncNexovccCardsLocked(ctx context.Context) error {
 		return e
 	}
 	pending := map[string]bool{}
+	scheduled, _ := ctx.Value(nexovccScheduledSyncKey{}).(bool)
+	var ops []nexovcc.Operation
+	if scheduled {
+		ops, e = s.store.NexovccOperations()
+		if e != nil {
+			return e
+		}
+	}
 	for _, card := range localCards {
-		if card.NormalPending {
+		if card.NormalPending || scheduled && nexovccWithdrawnToReserve(card, ops) {
 			pending[card.Serial] = true
 		}
 	}
@@ -597,7 +605,7 @@ func (s *Server) syncNexovccCardsLocked(ctx context.Context) error {
 			return e
 		}
 		// A supplier list cannot filter our local category. Keep its saved
-		// snapshot intact and issue no detail/balance requests for pending cards.
+		// snapshot intact for pending and automatically retired reserve cards.
 		if pending[nexovcc.String(r["serial_no"])] {
 			continue
 		}
