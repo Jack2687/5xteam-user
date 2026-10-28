@@ -63,6 +63,7 @@ func TestProAutoContinuousPaymentToCompletion(t *testing.T) {
 		loseSession  bool
 		cancellation string
 		cmsnav       bool
+		xupay        bool
 		plan         string
 		quantity     int
 	}{
@@ -83,12 +84,52 @@ func TestProAutoContinuousPaymentToCompletion(t *testing.T) {
 		{name: "cmsnav_pro50_cancel_failed", cmsnav: true, status: "completed", quota: 100, cancellation: "failed"},
 		{name: "cmsnav_pro50_wait_quota", cmsnav: true, status: "waiting_quota", quota: 30},
 		{name: "cmsnav_pro50_uncertain", cmsnav: true, status: "failed", paymentCode: 503},
+		{name: "xupay_pro20_complete", xupay: true, status: "completed", quota: 100},
+		{name: "xupay_pro5_complete", xupay: true, plan: "pro5", status: "completed", quota: 100},
+		{name: "xupay_cancel_failed", xupay: true, status: "completed", quota: 100, cancellation: "review"},
+		{name: "xupay_uncertain", xupay: true, status: "failed", paymentCode: 503},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var purchases, logins, pushes, merges atomic.Int32
 			var verifyInitialSaved func()
 			s, st, email := gptPayFixture(t, func(w http.ResponseWriter, r *http.Request) {
 				verifyInitialSaved()
+				if tc.xupay {
+					product := "pro"
+					if tc.plan == "pro5" {
+						product = "pro5x"
+					}
+					if r.Header.Get("Authorization") != "Bearer xupay-fixture-key" {
+						t.Error("wrong XUPay key")
+					}
+					if r.Method == "GET" {
+						renewal := "disabled"
+						if tc.cancellation != "" {
+							renewal = tc.cancellation
+						}
+						fmt.Fprintf(w, `{"order":{"id":"auto-remote","product_id":%q,"workflow":"subscription","status":"succeeded","activation":"active","renewal":%q},"payment":{"state":"succeeded","fee_state":"charged"}}`, product, renewal)
+						return
+					}
+					purchases.Add(1)
+					var input struct {
+						Product  string         `json:"product_id"`
+						Session  gptpay.Session `json:"session"`
+						Workflow string         `json:"workflow"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+						t.Error(err)
+					}
+					if r.URL.Path != "/api/v1/orders" || input.Product != product || input.Workflow != "subscription" || input.Session.AccessToken != proAutoToken("pro-test@example.com", "before") {
+						t.Error("automatic XUPAY request mismatch")
+					}
+					if tc.paymentCode != 0 {
+						w.WriteHeader(tc.paymentCode)
+						fmt.Fprint(w, `{"error":"temporary failure"}`)
+						return
+					}
+					fmt.Fprint(w, `{"id":"auto-remote","status":"queued"}`)
+					return
+				}
 				if tc.cmsnav {
 					if r.Header.Get("Authorization") != "Bearer cmsnav-fixture-key" {
 						t.Error("incorrect automatic provider key")
@@ -157,6 +198,14 @@ func TestProAutoContinuousPaymentToCompletion(t *testing.T) {
 				cfg.Provider, cfg.PlanCode, cfg.Country = provider, plan, "PH"
 				cfg.TermsAccepted = true
 				if _, err := st.SaveGPTPaySettings(cfg, "cmsnav-fixture-key"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.xupay {
+				cfg, _, _ := st.GPTPaySettings()
+				provider = gptpay.XUPay
+				cfg.Provider, cfg.PlanCode, cfg.Country, cfg.TermsAccepted = provider, plan, "PH", true
+				if _, err := st.SaveGPTPaySettings(cfg, "xupay-fixture-key"); err != nil {
 					t.Fatal(err)
 				}
 			}

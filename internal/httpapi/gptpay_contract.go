@@ -10,15 +10,12 @@ func (s *Server) validateGPTPayNewPurchase(email string, cfg gptpay.Settings) er
 	if err := gptpay.ValidatePurchase(cfg); err != nil {
 		return err
 	}
-	if cfg.Provider != gptpay.CMSNav {
-		return nil
-	}
 	orders, _, err := s.store.GPTPayOrders(1, 0, email)
 	if err != nil {
 		return fmt.Errorf("读取原付款订单失败，未重新付款")
 	}
 	if len(orders) > 0 && orders[0].RetryBlocked() {
-		return fmt.Errorf("CMSNav 原订单不允许重试，请先查询原订单并按供应商提示处理：%s", orders[0].Remote.RetryHint)
+		return fmt.Errorf("原订单不允许重新付款，请先查询原订单并按供应商提示处理：%s", orders[0].Remote.RetryHint)
 	}
 	return nil
 }

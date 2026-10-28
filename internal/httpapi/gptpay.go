@@ -61,6 +61,21 @@ func (s *Server) getGPTPayAccount(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getGPTPayCatalog(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
+	if provider == gptpay.XUPay {
+		// Never send a saved bearer key to an unsaved URL supplied by the browser.
+		cfg, key, err := s.store.GPTPayProviderSettings(provider)
+		if err != nil || key == "" {
+			writeAPI(w, 400, nil, "请先保存序付地址和 API Key，再刷新国家与套餐")
+			return
+		}
+		catalog, err := s.gptPayClient().XUPayCatalog(r.Context(), cfg.URL, key)
+		if err != nil {
+			writeAPI(w, 502, nil, err.Error())
+			return
+		}
+		writeAPI(w, 200, catalog, "")
+		return
+	}
 	if provider != gptpay.CMSNav {
 		writeAPI(w, 400, nil, "该供应商不支持公开国家与套餐目录")
 		return
@@ -419,6 +434,7 @@ func (s *Server) submitGPTPayOrder(ctx context.Context, order gptpay.Order, snap
 }
 
 func (s *Server) submitGPTPayOrderWithAdmission(ctx context.Context, order gptpay.Order, snapshot gptpay.Snapshot, admit func() error) (gptpay.Order, error) {
+	previouslySubmitted := order.SubmissionStarted
 	s.updateProPaymentStage(order)
 	ctx, cancel := context.WithTimeout(ctx, 50*time.Second)
 	defer cancel()
@@ -427,17 +443,26 @@ func (s *Server) submitGPTPayOrderWithAdmission(ctx context.Context, order gptpa
 			return order, err
 		}
 	}
+	if snapshot.Provider == gptpay.XUPay && !order.SubmissionStarted {
+		// A later replay can be rejected before XUPay reaches its idempotency
+		// lookup (expired session, rate limit, changed key). Persist first entry
+		// before I/O so that such a response cannot erase an earlier charge.
+		order.SubmissionStarted = true
+		if err := s.store.UpdateGPTPayOrder(order); err != nil {
+			return order, fmt.Errorf("保存序付提交标记失败，未发送付款请求")
+		}
+	}
 	remote, rid, err := s.gptPayClient().Create(ctx, snapshot, order.ID)
 	order.RequestID = rid
 	order.UpdatedAt = time.Now()
 	if err != nil {
 		order.Status = "submission_unknown"
 		var apiErr *gptpay.APIError
-		if errors.As(err, &apiErr) && !apiErr.Uncertain {
+		if errors.As(err, &apiErr) && !apiErr.Uncertain && !(snapshot.Provider == gptpay.XUPay && previouslySubmitted) {
 			order.Status = "failed"
 		}
 		order.Error = err.Error()
-		if apiErr != nil && snapshot.Provider == gptpay.CMSNav {
+		if apiErr != nil && (snapshot.Provider == gptpay.CMSNav || snapshot.Provider == gptpay.XUPay) {
 			order.Remote.Retryable = apiErr.Retryable
 			order.Remote.RetryHint = gptpay.Redact(apiErr.RetryHint, snapshot)
 			order.Remote.ErrorCode = apiErr.ErrorCode

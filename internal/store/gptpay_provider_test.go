@@ -7,6 +7,45 @@ import (
 	"testing"
 )
 
+func TestGPTPayXUPayProviderKeysSurviveSwitchAndRestart(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{gptpay.Tokenseek, gptpay.CMSNav, gptpay.XUPay} {
+		cfg, key, err := s.GPTPayProviderSettings(provider)
+		if err != nil || key != "" || cfg.KeyPresent {
+			t.Fatal("new provider inherited a key", err)
+		}
+		cfg.PlanCode, cfg.TermsAccepted = "pro20", true
+		if _, err := s.SaveGPTPaySettings(cfg, provider+"-private-key"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, provider := range []string{gptpay.Tokenseek, gptpay.CMSNav, gptpay.XUPay} {
+		cfg, key, err := s.GPTPayProviderSettings(provider)
+		if err != nil || key != provider+"-private-key" || cfg.PlanCode != "pro20" {
+			t.Fatal("provider profile changed", err)
+		}
+		if _, err := s.SaveGPTPaySettings(cfg, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, _, _ := s.GPTPaySettings()
+	if cfg.Provider != gptpay.XUPay || cfg.URL != gptpay.XUPayURL {
+		t.Fatal("wrong final provider")
+	}
+}
+
 func TestGPTPayCMSNavTransferKeepsProviderAndSession(t *testing.T) {
 	src, dst := transferStore(t), transferStore(t)
 	email := "cmsnav-transfer@example.com"

@@ -73,7 +73,9 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 	if p.ProAuto.OrderID != "" && p.ProAuto.Status != "running" {
 		if order, _, e := s.store.GPTPayOrder(p.ProAuto.OrderID); e == nil && order.Email == p.Email {
 			paymentStatus = order.Status
-			paymentRetryBlocked, paymentRetryHint = order.RetryBlocked(), order.Remote.RetryHint
+			// Known paid orders may still resume OAuth/push; this flag only blocks
+			// another purchase after an explicit supplier retry prohibition.
+			paymentRetryBlocked, paymentRetryHint = order.Status == "failed" && order.RetryBlocked(), order.Remote.RetryHint
 			payment := proPaymentStage(order)
 			progress.Steps["recharge"], progress.Errors["recharge"] = payment.Status, payment.Error
 		}
@@ -721,7 +723,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 				break
 			}
 			if order.Status == "failed" {
-				return nil, fmt.Errorf("GPTPay 开通失败：%s", order.Error)
+				return nil, fmt.Errorf("供应商开通失败：%s", order.Error)
 			}
 			if order.Remote.ID == "" {
 				return nil, errors.New("GPTPay 提交结果待确认，已保留原订单；不会新建订单或继续授权")
@@ -759,7 +761,7 @@ func (s *Server) proAutoRPC(ctx context.Context, email string, cfg gptpay.Settin
 			}
 		}
 		s.auditGPTPayOrder(order)
-		if err = s.autoProUpdate(email, "recharge", "completed", "GPTPay 已确认开通成功"); err != nil {
+		if err = s.autoProUpdate(email, "recharge", "completed", "供应商已确认开通成功"); err != nil {
 			return nil, err
 		}
 		if err = s.autoProUpdate(email, "oauth", "running", "沿用首次登录会话获取开通后的新 RT/AT"); err != nil {

@@ -229,6 +229,9 @@ func applyCMSNavAmount(r *RemoteOrder, a cmsnavAmount) {
 }
 
 func (c *Client) StatusForProvider(ctx context.Context, provider, base, key string, ids []string) ([]RemoteOrder, error) {
+	if Provider(provider) == XUPay {
+		return c.statusXUPay(ctx, base, key, ids)
+	}
 	if Provider(provider) == Tokenseek {
 		return c.Status(ctx, base, key, ids)
 	}
@@ -277,6 +280,9 @@ func (c *Client) StatusForProvider(ctx context.Context, provider, base, key stri
 }
 
 func (c *Client) AccountForProvider(ctx context.Context, provider, base, key string) (Account, error) {
+	if Provider(provider) == XUPay {
+		return c.accountXUPay(ctx, base, key)
+	}
 	if Provider(provider) == Tokenseek {
 		return c.Account(ctx, base, key)
 	}

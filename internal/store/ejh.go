@@ -681,7 +681,7 @@ func (s *Store) ejhCasesQuery(q ejhCaseQuery, emails []string) ([]ejh.Case, erro
 				return nil, e
 			}
 			if order.Remote.ID != "" {
-				v.Credits = &ejh.ActivationCredits{Charged: order.Remote.ChargedCredits, Reserved: order.Remote.ReservedCredits, Released: order.Remote.ReleasedCredits, Settlement: order.Remote.SettlementStatus, UpdatedAt: order.UpdatedAt}
+				v.Credits = &ejh.ActivationCredits{Unit: order.Remote.CreditUnit, Charged: order.Remote.ChargedCredits, Reserved: order.Remote.ReservedCredits, Released: order.Remote.ReleasedCredits, Settlement: order.Remote.SettlementStatus, UpdatedAt: order.UpdatedAt}
 			}
 		}
 		v.Deleted = !exists.Valid

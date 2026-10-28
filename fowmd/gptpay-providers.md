@@ -1,11 +1,12 @@
 # Pro 开通供应商与 Pro 50x
 
-Pro 全自动配置中的「开通供应商」选择 GPTPay · Tokenseek 或 GPTPay · CMSNav；手动开通、全自动开通及定时开通均使用保存的选择。两家供应商分别保存 API 地址、加密密钥、套餐、支付国家，切换不会沿用另一家的密钥。银行卡名额上限与登录会话保留时间共用。
+Pro 全自动配置中的「开通供应商」可选择 GPTPay · Tokenseek、GPTPay · CMSNav 或序付 · XUPAY；手动开通、全自动开通及定时开通均使用保存的选择。各供应商分别保存 API 地址、加密密钥、套餐、支付国家，切换不会沿用另一家的密钥。银行卡名额上限与登录会话保留时间共用。序付配置和状态规则见 [序付开通供应商](xupay-provider.md)。
 
 | 供应商 | 默认 API 地址 | 支持套餐 |
 | --- | --- | --- |
 | Tokenseek | `https://gptpay.tokenseek.app/api/v1` | Pro 5x、Pro 20x |
 | CMSNav | `https://gptpay.cmsnav.com/api/v1` | Pro 5x、Pro 20x、Pro 50x |
+| 序付 · XUPAY | `http://104.160.172.162:5496/api/v1` | Pro 5x、Pro 20x |
 
 Tokenseek 保持现有协议。CMSNav 依据 <https://gptpay.cmsnav.com/docs> 和 <https://gptpay.cmsnav.com/api/openapi.json>（2026-09-30）接入：
 

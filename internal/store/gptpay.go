@@ -414,6 +414,11 @@ func (s *Store) updateGPTPayOrder(v gptpay.Order, unsubmitted *gptpay.Order) err
 	if err = json.Unmarshal([]byte(currentRaw), &current); err != nil {
 		return err
 	}
+	if current.Provider == gptpay.XUPay && current.Remote.PaymentState == "succeeded" &&
+		(v.Remote.PaymentState != "succeeded" || v.Status == "failed" || v.Remote.ID != current.Remote.ID) {
+		return fmt.Errorf("序付已确认付款成功，拒绝将原订单回退为未付款或失败")
+	}
+	v.SubmissionStarted = v.SubmissionStarted || current.SubmissionStarted
 	// Compare the whole initial record inside the transaction. Any intervening
 	// response, reconciliation or status write makes automatic cleanup unsafe.
 	if unsubmitted != nil && mustJSON(current) != mustJSON(*unsubmitted) {

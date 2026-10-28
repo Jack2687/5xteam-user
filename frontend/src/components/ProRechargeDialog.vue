@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { LoaderCircle, X } from 'lucide-vue-next'
 import { api } from '../api'
-import { needsPayPoll, paymentRetryBlocked, supplierPaymentLabel, payRequestID, payStatusName, proPlanName, payProviderName, paymentCountryLabel } from '../gptpay'
+import { supplierCredits, xupayStates, needsPayPoll, paymentRetryBlocked, supplierPaymentLabel, payRequestID, payStatusName, proPlanName, payProviderName, paymentCountryLabel } from '../gptpay'
 import Pagination from './Pagination.vue'
 
 const props=defineProps({defaultPageSize:{type:Number,default:10}})
@@ -63,18 +63,18 @@ defineExpose({ open })
     <template v-if="!order">
       <p>供应商：{{ payProviderName(settings.provider) }}</p><p>开通套餐：<strong>{{ proPlanName(settings.plan_code) }}</strong></p>
       <p>开通国家：{{ paymentCountryLabel(settings.country) }}<span v-if="settings.plan_code === 'codex_point'">；购买点数：{{ settings.credit_quantity }}</span></p>
-      <p v-if="settings.provider === 'cmsnav' && !settings.terms_accepted" class="danger-text">请先到 Pro 全自动配置 → 开通设置确认并保存商户条款。</p><p v-if="!settings.key_present" class="danger-text">请先在“Pro 全自动配置”中保存 GPTPay API Key。</p>
+      <p v-if="['cmsnav', 'xupay'].includes(settings.provider) && !settings.terms_accepted" class="danger-text">请先到 Pro 全自动配置 → 开通设置确认并保存商户条款。</p><p v-if="!settings.key_present" class="danger-text">请先在“Pro 全自动配置”中保存供应商 API Key。</p>
       <label class="field"><span>选择银行卡</span><select v-model="cardID" :disabled="busy"><option value="">{{autoCardEnabled ? `自动选卡（无可用卡时从 ${autoCardLabel} 补卡）` : '请选择已启用银行卡'}}</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · {{ card.exp_year }}/{{ String(card.exp_month).padStart(2, '0') }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
       <Pagination v-if="total > 10" :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
       <p v-if="autoCardEnabled" class="muted">优先使用 {{autoCardLabel}} 可用卡，无卡可用则按该卡台模板和每日预算补卡。原订单重试不会另行开卡。</p><p v-else-if="!cards.length && !busy">暂无可选卡：请添加或启用银行卡，或到 Pro 全自动配置启用自动补卡。</p>
-      <p class="muted">将使用此账号已保存的 AT 和所选银行卡向 GPTPay 提交开通订单，费用按供应商配置扣除。</p>
-      <div class="panel-actions"><button class="btn ghost" :disabled="busy" @click="close">取消</button><button class="btn primary" :disabled="busy || (!chosen && !autoCardEnabled) || !settings.key_present || (settings.provider === 'cmsnav' && !settings.terms_accepted)" @click="submit(false)"><LoaderCircle v-if="busy" class="spin" :size="15" />{{ busy ? '正在提交…' : '确认开通 ' + proPlanName(settings.plan_code) }}</button></div>
+      <p class="muted">将使用此账号已保存的 AT 和所选银行卡向 {{ payProviderName(settings.provider) }} 提交开通订单，费用按供应商配置扣除。</p>
+      <div class="panel-actions"><button class="btn ghost" :disabled="busy" @click="close">取消</button><button class="btn primary" :disabled="busy || (!chosen && !autoCardEnabled) || !settings.key_present || (['cmsnav', 'xupay'].includes(settings.provider) && !settings.terms_accepted)" @click="submit(false)"><LoaderCircle v-if="busy" class="spin" :size="15" />{{ busy ? '正在提交…' : '确认开通 ' + proPlanName(settings.plan_code) }}</button></div>
     </template>
     <template v-else>
       <h3 :class="{ 'danger-text': order.status === 'failed' }">{{ proPlanName(order.plan_code) }} · {{ payStatusName(order.status) }}</h3>
       <p>开通国家：{{ paymentCountryLabel(order.country || order.remote?.country) }}<span v-if="order.plan_code === 'codex_point'">；购买点数：{{ order.credit_quantity || order.remote?.creditQuantity }}</span></p>
-      <p>{{ payProviderName(order.provider) }}</p><dl><dt>订单编号</dt><dd>{{ order.remote?.orderNo || order.id }}</dd><dt>供应商订单 ID</dt><dd>{{ order.remote?.id || '尚未返回' }}</dd><dt>银行卡</dt><dd>{{ order.card_name }} · 尾号 {{ order.card_last4 }}</dd><dt>结算 / 取消续费</dt><dd>{{ payStatusName(order.remote?.settlementStatus) }} / {{ payStatusName(order.remote?.cancellationStatus) }}</dd><template v-if="order.provider === 'cmsnav'"><dt>供应商应付</dt><dd>{{ supplierPaymentLabel(order.remote) }}</dd></template><dt>扣除 Credits</dt><dd>{{ order.remote?.chargedCredits || 0 }}</dd></dl>
-      <p v-if="order.status === 'manual_review'" class="danger-text">待人工核查，已停止自动轮询，请联系供应商处理。</p><p v-if="paymentRetryBlocked(order)" class="danger-text">供应商不允许重试：{{ order.remote?.retryHint || '请先联系供应商处理，再查询原订单。' }}</p><p v-if="order.error" class="danger-text">{{ order.error }}</p>
+      <p>{{ payProviderName(order.provider) }}</p><dl><dt>订单编号</dt><dd>{{ order.remote?.orderNo || order.id }}</dd><dt>供应商订单 ID</dt><dd>{{ order.remote?.id || '尚未返回' }}</dd><dt>银行卡</dt><dd>{{ order.card_name }} · 尾号 {{ order.card_last4 }}</dd><dt>结算 / 取消续费</dt><dd>{{ payStatusName(order.remote?.settlementStatus) }} / {{ payStatusName(order.remote?.cancellationStatus) }}</dd><template v-if="['cmsnav', 'xupay'].includes(order.provider)"><dt>供应商应付</dt><dd>{{ supplierPaymentLabel(order.remote) }}</dd></template><dt>扣除服务费</dt><dd>{{ supplierCredits(order.remote?.chargedCredits, order.provider) }}</dd></dl>
+      <p v-if="order.provider === 'xupay'">{{ xupayStates(order.remote) }}</p><p v-if="order.status === 'manual_review'" class="danger-text">待人工核查，已停止自动轮询，请联系供应商处理。</p><p v-if="paymentRetryBlocked(order)" class="danger-text">禁止重复付款：{{ order.remote?.retryHint || '请先联系供应商处理，再查询原订单。' }}</p><p v-if="order.error" class="danger-text">{{ order.error }}</p>
       <p v-if="order.status_check_error" class="danger-text">订单同步：{{ order.status_check_error }}；{{ order.status === 'manual_review' ? '请人工查询。' : '后台会继续查询。' }}</p>
       <p v-if="order.status === 'success' && order.remote?.cancellationStatus === 'failed'" class="muted">Pro 已开通成功；取消续费失败单独记录，不影响开通完成状态。</p>
       <p v-if="needsPayPoll(order)" class="muted">后台正在定时同步订单；关闭窗口或重启服务后仍会继续查询。</p>

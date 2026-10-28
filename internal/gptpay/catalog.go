@@ -21,6 +21,7 @@ type CatalogProduct struct {
 }
 
 type Catalog struct {
+	CreditUnit          string            `json:"creditUnit,omitempty"`
 	Countries           []CatalogCountry  `json:"countries"`
 	Currencies          map[string]string `json:"currencies"`
 	CreditPrices        map[string]int64  `json:"creditPrices"`

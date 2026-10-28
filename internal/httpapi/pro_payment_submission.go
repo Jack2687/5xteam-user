@@ -66,7 +66,7 @@ func (s *Server) submitProAutoPayment(ctx context.Context, expected model.ProAut
 		_, err = s.store.UpdateProAccount(order.Email, func(p *model.MailAccountProfile) { p.ProAuto.OrderID = order.ID })
 	}
 	if err == nil {
-		err = s.autoProUpdate(order.Email, "recharge", "running", "提交 GPTPay 开通订单，原登录会话保持中")
+		err = s.autoProUpdate(order.Email, "recharge", "running", "提交供应商开通订单，原登录会话保持中")
 	}
 	s.proAutoMu.Unlock()
 	if err != nil {

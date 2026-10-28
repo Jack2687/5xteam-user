@@ -7,6 +7,9 @@ import (
 )
 
 func SupportedPlan(provider, plan string) bool {
+	if Provider(provider) == XUPay {
+		return plan == "pro5" || plan == "pro20"
+	}
 	if Provider(provider) == CMSNav {
 		return plan == "pro5" || plan == "pro20" || plan == "pro50"
 	}
@@ -67,7 +70,7 @@ func NewSnapshot(cfg Settings, key string, card CardSecret, session Session) Sna
 		input.CreditQuantity = cfg.CreditQuantity
 	}
 	snapshot := Snapshot{Provider: cfg.Provider, Country: cfg.Country, URL: cfg.URL, APIKey: key, Input: input, WebSessionToken: sessionToken}
-	if Provider(cfg.Provider) == CMSNav {
+	if Provider(cfg.Provider) == CMSNav || Provider(cfg.Provider) == XUPay {
 		accepted := cfg.TermsAccepted
 		snapshot.TermsAccepted = &accepted
 	}

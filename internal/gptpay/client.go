@@ -20,6 +20,8 @@ const (
 	Tokenseek = "tokenseek"
 	CMSNav    = "cmsnav"
 	CMSNavURL = "https://gptpay.cmsnav.com/api/v1"
+	XUPay     = "xupay"
+	XUPayURL  = "http://104.160.172.162:5496/api/v1"
 )
 
 func Provider(v string) string {
@@ -127,6 +129,9 @@ type Snapshot struct {
 }
 
 type RemoteOrder struct {
+	PaymentState        string `json:"paymentState,omitempty"`
+	ActivationStatus    string `json:"activationStatus,omitempty"`
+	CreditUnit          string `json:"creditUnit,omitempty"`
 	Retryable           *bool  `json:"retryable,omitempty"`
 	RetryHint           string `json:"retryHint,omitempty"`
 	FailureCategory     string `json:"failureCategory,omitempty"`
@@ -161,6 +166,7 @@ type OccupancyResolution struct {
 }
 
 type Order struct {
+	SubmissionStarted   bool                 `json:"submission_started,omitempty"`
 	OccupancyResolution *OccupancyResolution `json:"occupancy_resolution,omitempty"`
 	Country             string               `json:"country,omitempty"`
 	CreditQuantity      int                  `json:"credit_quantity,omitempty"`
@@ -194,6 +200,9 @@ func (o Order) NeedsStatusPoll() bool {
 }
 
 func (o Order) RetryBlocked() bool {
+	if Provider(o.Provider) == XUPay {
+		return o.Remote.PaymentState == "succeeded" || o.Status == "success" || o.Status == "manual_review" || o.Status == "submission_unknown"
+	}
 	// A validation rejection before task creation can be corrected (for example,
 	// top up credits or renew the Session). It must not permanently lock an account.
 	if o.Remote.ID == "" {
@@ -207,6 +216,9 @@ func (o Order) RetryBlocked() bool {
 }
 
 func ValidatePurchase(v Settings) error {
+	if Provider(v.Provider) == XUPay && !v.TermsAccepted {
+		return fmt.Errorf("请先在 Pro 全自动配置的开通设置中确认并保存序付商户条款")
+	}
 	if Provider(v.Provider) == CMSNav && !v.TermsAccepted {
 		return fmt.Errorf("请先在 Pro 全自动配置的开通设置中确认并保存 CMSNav 商户条款")
 	}
@@ -223,6 +235,7 @@ type AccountPlan struct {
 }
 
 type Account struct {
+	CreditUnit     string `json:"creditUnit,omitempty"`
 	DefaultCountry string `json:"defaultCountry,omitempty"`
 	User           struct {
 		ID    string `json:"id"`
@@ -245,7 +258,7 @@ type Account struct {
 
 func NormalizeSettings(v Settings) (Settings, error) {
 	v.Provider = Provider(v.Provider)
-	if v.Provider != Tokenseek && v.Provider != CMSNav {
+	if v.Provider != Tokenseek && v.Provider != CMSNav && v.Provider != XUPay {
 		return v, fmt.Errorf("请选择有效供应商")
 	}
 	v.PlanCode = strings.TrimSpace(v.PlanCode)
@@ -271,6 +284,12 @@ func NormalizeSettings(v Settings) (Settings, error) {
 				v.Country = "CL"
 			}
 		}
+		if v.Provider == XUPay {
+			v.Country = "PH"
+		}
+	}
+	if v.Provider == XUPay && !XUPayCountry(v.Country) {
+		return v, fmt.Errorf("序付开通国家仅支持 PH、US、JP、SG、GB、EG、TR")
 	}
 	if v.Provider == Tokenseek && !TokenseekCountry(v.Country) {
 		return v, fmt.Errorf("Tokenseek 开通国家仅支持 PH、EG、CL、US、JP")
@@ -290,16 +309,22 @@ func NormalizeSettings(v Settings) (Settings, error) {
 		if v.Provider == CMSNav {
 			v.URL = CMSNavURL
 		}
+		if v.Provider == XUPay {
+			v.URL = XUPayURL
+		}
 	}
 	u, err := url.Parse(v.URL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return v, fmt.Errorf("GPTPay 地址无效")
 	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost")) {
+	if u.Scheme != "https" && !(u.Scheme == "http" && (v.Provider == XUPay || u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost")) {
 		return v, fmt.Errorf("GPTPay 地址需要 HTTPS")
 	}
 	if u.Path == "" {
 		v.URL += "/api/v1"
+	}
+	if v.Provider == XUPay && u.Path != "" && u.Path != "/api/v1" {
+		return v, fmt.Errorf("序付地址请填写站点根地址或以 /api/v1 结尾的 API 地址")
 	}
 	if v.SessionTimeoutMinutes == 0 {
 		v.SessionTimeoutMinutes = 30
@@ -360,6 +385,7 @@ func ParseCard(line string, now time.Time) (CardSecret, error) {
 }
 
 type APIError struct {
+	Provider         string
 	Retryable        *bool
 	RetryHint        string
 	ErrorCode        string
@@ -369,6 +395,9 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
+	if e.Provider == XUPay {
+		return e.xupayMessage()
+	}
 	if e.ErrorCode != "" {
 		return e.cmsnavMessage()
 	}
@@ -443,6 +472,9 @@ func (c *Client) Account(ctx context.Context, base, key string) (Account, error)
 	return v, err
 }
 func (c *Client) Create(ctx context.Context, snapshot Snapshot, id string) (RemoteOrder, string, error) {
+	if Provider(snapshot.Provider) == XUPay {
+		return c.createXUPay(ctx, snapshot, id)
+	}
 	if Provider(snapshot.Provider) == CMSNav {
 		return c.createCMSNav(ctx, snapshot, id)
 	}

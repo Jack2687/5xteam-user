@@ -20,6 +20,7 @@ type ActivationCharge struct {
 	SyncedAt      time.Time `json:"synced_at"`
 }
 type ActivationCredits struct {
+	Unit       string    `json:"unit,omitempty"`
 	Charged    int64     `json:"charged"`
 	Reserved   int64     `json:"reserved"`
 	Released   int64     `json:"released"`

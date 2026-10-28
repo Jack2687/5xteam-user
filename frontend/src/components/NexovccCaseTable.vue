@@ -10,7 +10,7 @@ import { caseReturnNotice } from '../nexovcc-return-notice'
 defineProps({rows:{type:Array,default:()=>[]},finance:{type:Object,default:()=>({})},cards:{type:Array,default:()=>[]},data:{type:Object,default:()=>({})},running:Boolean,compact:Boolean})
 defineEmits(['state','match','details','card','updated'])
 const at=v=>v&&!v.startsWith('0001')&&Number.isFinite(Date.parse(v))?formatTime(v):'—'
-const provider=v=>({cmsnav:'CMSNAV',tokenseek:'TokenSeek',gptpay:'GPTPay'}[v]||v||'—')
+const provider=v=>({xupay:'序付',cmsnav:'CMSNAV',tokenseek:'TokenSeek',gptpay:'GPTPay'}[v]||v||'—')
 const returnedAt=row=>row.match?.group?.returned_at&&!row.match.group.returned_at.startsWith('0001')?row.match.group.returned_at:''
 </script>
 <template>

@@ -25,7 +25,7 @@ const quotaResumeAvailable=computed(()=>state.value.quota_resume_available===tru
 const deletionSubmitted=computed(()=>!!state.value.pro_deactivation?.submitted_at)
 const resumable=computed(()=>!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&state.value.steps?.oauth==='completed'&&!active.value&&state.value.status!=='completed')
 const retryCurrent=computed(()=>!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&!!(state.value.id||state.value.order_id||state.value.restock_retry_available)&&!active.value&&!resumable.value&&state.value.status!=='completed')
-const termsMissing=computed(()=>settings.value.provider==='cmsnav'&&!settings.value.terms_accepted)
+const termsMissing=computed(()=>['cmsnav','xupay'].includes(settings.value.provider)&&!settings.value.terms_accepted)
 const restartable=computed(()=>retryCurrent.value&&(!state.value.order_id||state.value.payment_status==='failed'))
 const canStart=computed(()=>!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&!active.value&&!resumable.value&&!retryCurrent.value&&state.value.status!=='completed'&&!state.value.order_id)
 const blockedCards=ref([]),checkingOccupancy=ref(false),occupancyMessage=ref('')
