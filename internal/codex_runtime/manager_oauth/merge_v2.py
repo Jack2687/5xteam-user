@@ -1,4 +1,5 @@
 """Pro-only Team login and export/deactivate; original login mechanics stay shared."""
+import re
 import time
 from urllib.parse import urlsplit, urljoin, quote
 
@@ -7,6 +8,21 @@ from .adapter import ProjectProtocolLogin
 
 EXPORT_URL = "https://chatgpt.com/backend-api/accounts/export_and_deactivate"
 SAFARI_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
+
+
+def invitation_response_evidence(data):
+    # Keep protocol identifiers, never messages, credentials or the raw body.
+    error = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(error, dict):
+        error = data if isinstance(data, dict) else {}
+    out = {"body_kind": "json" if isinstance(data, (dict, list)) else "unknown"}
+    for source, target in (("code", "error_code"), ("type", "error_type")):
+        value = error.get(source)
+        if isinstance(value, str):
+            value = bridge.redact(value)
+            if re.fullmatch(r"[a-z][a-z0-9_]{1,79}", value):
+                out[target] = value
+    return out
 
 
 class TeamProtocolLogin(ProjectProtocolLogin):
@@ -106,6 +122,7 @@ class TeamProtocolLogin(ProjectProtocolLogin):
         bridge.call("merge_v2_accepting", team_id=self.target_team)
         url = "https://chatgpt.com/backend-api/accounts/" + quote(self.target_team, safe="") + "/invites/accept"
         accepted = False
+        started = time.monotonic()
         try:
             resp = self.web_session.request("POST", url,
                 headers=self.headers(url, {**headers, "chatgpt-account-id": self.target_team}),
@@ -116,10 +133,14 @@ class TeamProtocolLogin(ProjectProtocolLogin):
                 data = {}
             accepted = 200 <= resp.status_code < 300 and isinstance(data, dict) and data.get("success") is True
             bridge.emit("merge_v2_team", "invite_accept_response", "接受已有目标团队邀请返回",
-                        http_status=resp.status_code, details={"invitation_accepted": accepted})
+                        http_status=resp.status_code, duration_ms=int((time.monotonic()-started)*1000),
+                        response={"http_status": resp.status_code, **invitation_response_evidence(data)},
+                        details={"invitation_accepted": accepted})
         except Exception as exc:
             bridge.emit("merge_v2_team", "invite_accept_exception", "接受邀请连接中断，仅读取成员关系核实",
-                        level="warning", details={"error_type": type(exc).__name__, "error": bridge.redact(exc)[:500]})
+                        level="warning", duration_ms=int((time.monotonic()-started)*1000),
+                        details={"error_type": type(exc).__name__, "error": bridge.redact(exc)[:500],
+                                 "curl_code": int(getattr(exc, "code", 0) or 0)})
         if not accepted:
             accepted = member()
         if not accepted:
@@ -172,12 +193,14 @@ class TeamProtocolLogin(ProjectProtocolLogin):
         started = time.monotonic()
         bridge.emit("merge_v2_submit", "export_start", "提交导出停用请求，已保存提交检查点",
                     request={"method": "POST", "url": EXPORT_URL, "timeout_seconds": 60,
-                             "impersonate": "chrome", "allow_redirects": False})
+                             "impersonate": upstream.OPENAI_IMPERSONATE, "allow_redirects": False})
         try:
+            # Inherit login TLS settings so a floating Chrome alias does not
+            # force another connection (and another dynamic proxy exit).
             # Deliberately bypass login request retries; exactly one destructive POST.
             resp = self.web_session.request("POST", EXPORT_URL, headers=headers,
                                             timeout=60, allow_redirects=False,
-                                            impersonate="chrome", default_headers=False)
+                                            default_headers=False)
         except Exception as exc:
             bridge.emit("merge_v2_submit", "export_exception", "导出停用请求中断，保留未知提交检查点",
                         level="error", duration_ms=int((time.monotonic()-started)*1000),

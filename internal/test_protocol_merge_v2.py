@@ -39,7 +39,8 @@ class MergeV2ProtocolTests(unittest.TestCase):
         self.assertEqual(args,("POST",merge_v2.EXPORT_URL))
         self.assertNotIn("json",kw);self.assertNotIn("data",kw)
         self.assertNotIn("chatgpt-account-id",{k.lower() for k in kw["headers"]})
-        self.assertEqual(kw["timeout"],60);self.assertEqual(kw["impersonate"],"chrome")
+        self.assertEqual(kw["timeout"],60);self.assertNotIn("impersonate",kw)
+        self.assertEqual(f.web_session.impersonate,upstream.OPENAI_IMPERSONATE)
         self.assertFalse(kw["allow_redirects"]);self.assertFalse(kw["default_headers"])
         self.assertEqual(kw["headers"]["User-Agent"],merge_v2.SAFARI_UA)
         self.assertEqual(kw["headers"]["Origin"],"https://chatgpt.com")
@@ -193,6 +194,31 @@ class MergeV2ProtocolTests(unittest.TestCase):
             self.assertEqual(caught.exception.code,'team_invitation_accepted' if joined else 'team_invitation_unknown')
             mutation.assert_called_once()
             self.assertNotIn('merge_v2_submitting',[c.args[0] for c in rpc.call_args_list])
+
+    def test_invitation_rejection_records_code_without_body_or_repeated_accept(self):
+        f=self.flow();merge_v2.bridge.configure(f.payload)
+        body={"error":{"code":"seat_limit_exceeded","type":"invalid_request_error",
+                       "message":"private card or account details","token":session()["accessToken"]}}
+        read=upstream.ProtocolResponse(200,'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27',{},'{"accounts":{}}')
+        with patch.object(f,'request',return_value=read) as reads,patch.object(f.web_session,'request',return_value=self.response(400,body)) as mutation,patch.object(merge_v2.bridge,'call') as rpc,patch.object(merge_v2.bridge,'emit') as emit,self.assertRaises(upstream.LoginFlowError) as caught:
+            f.recover_invited_membership(session('personal'))
+        self.assertEqual(caught.exception.code,'team_invitation_unknown')
+        mutation.assert_called_once();self.assertEqual(reads.call_count,2)
+        self.assertEqual([c.args[0] for c in rpc.call_args_list],['merge_v2_accepting'])
+        event=next(c for c in emit.call_args_list if c.args[1]=='invite_accept_response')
+        self.assertEqual(event.kwargs['response'],{'http_status':400,'body_kind':'json','error_code':'seat_limit_exceeded','error_type':'invalid_request_error'})
+        self.assertFalse(event.kwargs['details']['invitation_accepted'])
+        self.assertNotIn('private card',str(emit.call_args_list))
+        self.assertNotIn(session()['accessToken'],str(emit.call_args_list))
+        for bad in ({'error':{'code':session()['accessToken'],'type':'https://private.invalid'}}, {'error':{'code':['seat_limit_exceeded']}}, None):
+            self.assertNotIn('error_code',merge_v2.invitation_response_evidence(bad))
+
+    def test_export_diagnostic_uses_actual_login_tls_profile(self):
+        f=self.flow()
+        with patch.object(f.web_session,'request',return_value=self.response()),patch.object(merge_v2.bridge,'call'),patch.object(merge_v2.bridge,'emit') as emit:
+            self.assertTrue(f.submit_export(session())['success'])
+        event=next(c for c in emit.call_args_list if c.args[1]=='export_start')
+        self.assertEqual(event.kwargs['request']['impersonate'],f.web_session.impersonate)
 
     def test_stop_or_previous_invite_checkpoint_prevents_acceptance(self):
         f=self.flow()
