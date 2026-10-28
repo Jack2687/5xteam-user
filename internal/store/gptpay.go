@@ -96,8 +96,17 @@ func (s *Store) saveGPTPaySettingsTx(tx *sql.Tx, v *gptpay.Settings, key string)
 			return err
 		}
 	}
+	if err = s.saveGPTPayProviderSettingsTx(tx, v, key); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO gptpay_settings(id,profile,encrypted_key) SELECT 1,profile,encrypted_key FROM gptpay_provider_settings WHERE provider=? ON CONFLICT(id) DO UPDATE SET profile=excluded.profile,encrypted_key=excluded.encrypted_key`, v.Provider)
+	return err
+}
+
+// Update an inactive supplier without switching the active configuration.
+func (s *Store) saveGPTPayProviderSettingsTx(tx *sql.Tx, v *gptpay.Settings, key string) error {
 	var sealed string
-	err = tx.QueryRow("SELECT encrypted_key FROM gptpay_provider_settings WHERE provider=?", v.Provider).Scan(&sealed)
+	err := tx.QueryRow("SELECT encrypted_key FROM gptpay_provider_settings WHERE provider=?", v.Provider).Scan(&sealed)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -108,10 +117,7 @@ func (s *Store) saveGPTPaySettingsTx(tx *sql.Tx, v *gptpay.Settings, key string)
 		}
 	}
 	v.KeyPresent = sealed != ""
-	if _, err = tx.Exec(`INSERT INTO gptpay_provider_settings(provider,profile,encrypted_key) VALUES(?,?,?) ON CONFLICT(provider) DO UPDATE SET profile=excluded.profile,encrypted_key=excluded.encrypted_key`, v.Provider, mustJSON(v), sealed); err != nil {
-		return err
-	}
-	_, err = tx.Exec(`INSERT INTO gptpay_settings(id,profile,encrypted_key) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET profile=excluded.profile,encrypted_key=excluded.encrypted_key`, mustJSON(v), sealed)
+	_, err = tx.Exec(`INSERT INTO gptpay_provider_settings(provider,profile,encrypted_key) VALUES(?,?,?) ON CONFLICT(provider) DO UPDATE SET profile=excluded.profile,encrypted_key=excluded.encrypted_key`, v.Provider, mustJSON(v), sealed)
 	return err
 }
 func (s *Store) GPTPayCard(id string) (gptpay.Card, gptpay.CardSecret, error) {

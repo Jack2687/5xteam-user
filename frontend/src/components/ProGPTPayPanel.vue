@@ -6,7 +6,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { api } from '../api'
 import { CreditCard, CalendarClock, SlidersHorizontal, Workflow, Settings2, ChevronRight, Save, ShieldCheck } from 'lucide-vue-next'
 import { formatTime } from '../utils'
-import { supplierCredits, xupayStates, parseCardText, payStatusName, proPlanName, supplierPaymentLabel, payProviderName, catalogProPlans, tokenseekCatalog, paymentCountries, paymentCountryLabel } from '../gptpay'
+import { supplierCredits, xupayStates, parseCardText, payStatusName, proPlanName, supplierPaymentLabel, payProviderName, paymentCountryLabel } from '../gptpay'
 import MessageBar from './MessageBar.vue'
 import PaymentCardStatus from './PaymentCardStatus.vue'
 import CardOccupancy from './CardOccupancy.vue'
@@ -14,6 +14,7 @@ import { providerName } from '../nexovcc'
 import { isClosedCard } from '../card-status'
 import Pagination from './Pagination.vue'
 import ProSchedulePanel from './ProSchedulePanel.vue'
+import ProProviderRow from './ProProviderRow.vue'
 import ProPurchaseGroups from './ProPurchaseGroups.vue'
 import { caseSummary, cardHasCase } from '../ejh'
 import ReturnCaseLine from './ReturnCaseLine.vue'
@@ -22,61 +23,17 @@ import NexovccProCasesDialog from './NexovccProCasesDialog.vue'
 
 const props = defineProps({ mode: String, defaultPageSize: { type: Number, default: 10 }, adminAccounts: { type: Array, default: () => [] } })
 const emit = defineEmits(['saved','open-card'])
-const settings = reactive({ terms_accepted: false, provider: 'tokenseek', country: 'PH', credit_quantity: 0, url: 'https://gptpay.tokenseek.app/api/v1', plan_code: 'pro5', key_present: false, api_key: '', session_timeout_minutes: 30,card_account_limit:3 })
-const providerDrafts = new Map()
-const savedURLs = new Map(), catalogEpoch = ref(0)
+const settings = reactive({ terms_accepted: false, provider: 'tokenseek', backup_provider: '', country: 'PH', credit_quantity: 0, url: 'https://gptpay.tokenseek.app/api/v1', plan_code: 'pro5', key_present: false, api_key: '', session_timeout_minutes: 30,card_account_limit:3 })
+const providerIDs = ['tokenseek', 'cmsnav', 'xupay']
+const providerRows = ref([]), savedProvider = ref(''), savedBackup = ref(''), savedVersion = ref(0)
+function setProviderRole(provider, role) {
+  if (role === 'primary') {
+    settings.provider = provider
+    if (settings.backup_provider === provider) settings.backup_provider = ''
+  } else if (role === 'backup' && provider !== settings.provider) settings.backup_provider = provider
+  else if (role === 'disabled' && settings.backup_provider === provider) settings.backup_provider = ''
+}
 const queryProvider = ref('tokenseek')
-const catalog = ref(null), catalogLoading = ref(false), catalogError = ref('')
-const catalogPlans = computed(() => catalogProPlans(catalog.value, settings.provider))
-const planGroups = computed(() => ['普通订阅', 'Plus 升级', 'Codex 点数'].map(label => ({ label, plans: catalogPlans.value.filter(p => p.category === label) })).filter(g => g.plans.length))
-const availableCountries = computed(() => paymentCountries(settings.provider, catalog.value, settings.plan_code))
-const catalogCountry = computed(() => availableCountries.value.find(c => c.code === settings.country))
-const selectedPlan = computed(() => catalogPlans.value.find(p => p.code === settings.plan_code))
-const countryPickerDisabled = computed(() => catalogLoading.value || (settings.provider === 'cmsnav' && !catalog.value))
-const countrySearch = ref('')
-const filteredCountries = computed(() => {
-  const terms = countrySearch.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  return availableCountries.value.filter(country => {
-    const text = `${country.name} ${country.code} ${country.currency || ''}`.toLocaleLowerCase()
-    return terms.every(term => text.includes(term))
-  })
-})
-const selectedCountryFiltered = computed(() => catalogCountry.value && !filteredCountries.value.some(country => country.code === settings.country))
-const catalogSelectionInvalid = computed(() => catalogLoading.value || (settings.provider === 'cmsnav' && !catalog.value) || !catalogCountry.value || !selectedPlan.value?.available || (settings.plan_code === 'codex_point' && (!Number.isInteger(settings.credit_quantity) || settings.credit_quantity < 250 || settings.credit_quantity > 250000 || settings.credit_quantity % 250 !== 0)))
-let catalogTimer, catalogController, catalogGeneration = 0
-async function loadCatalog() {
-  clearTimeout(catalogTimer)
-  catalogController?.abort()
-  const generation = ++catalogGeneration
-  if (disposed) return
-  catalogLoading.value = true; catalogError.value = ''; catalog.value = null
-  const provider = settings.provider
-  if (['tokenseek', 'xupay'].includes(provider) && (!settings.key_present || settings.api_key.trim() || settings.url.trim().replace(/\/$/, '') !== savedURLs.get(provider)?.replace(/\/$/, ''))) {
-    catalogLoading.value = false; catalogError.value = '请先保存当前地址和 API Key，再读取账户可用套餐与报价。'; return
-  }
-  const controller = catalogController = new AbortController()
-  try {
-    const params = new URLSearchParams({ provider, url: settings.url.trim() })
-    const result = await api(provider !== 'tokenseek' ? '/api/gptpay/catalog?' + params : '/api/gptpay/account?provider=tokenseek', { signal: controller.signal })
-    if (disposed || generation !== catalogGeneration) return
-    catalog.value = provider !== 'tokenseek' ? result : tokenseekCatalog(result)
-  } catch (e) {
-    if (!disposed && generation === catalogGeneration && !controller.signal.aborted) catalogError.value = e.message
-  } finally {
-    if (!disposed && generation === catalogGeneration) catalogLoading.value = false
-  }
-}
-async function changeProvider(event) {
-  const provider = event.target.value, previous = settings.provider
-  providerDrafts.set(previous, { ...settings })
-  await action(async () => {
-    let draft = providerDrafts.get(provider)
-    if (!draft) { draft = await api('/api/gptpay/settings?provider=' + provider); savedURLs.set(provider, draft.url) }
-    if (disposed) return
-    Object.assign(settings, { ...draft, terms_accepted: !!draft.terms_accepted, credit_quantity: draft.credit_quantity || 0, provider, api_key: draft.api_key || '', card_account_limit: settings.card_account_limit, session_timeout_minutes: settings.session_timeout_minutes })
-  })
-  event.target.value = settings.provider
-}
 const automation = reactive({ balance_fallback_enabled:false,purchase_schedule_enabled:false,purchase_windows:[],ejh_plan_templates:{},nexovcc_plan_templates:{}, scheduled_enabled:false,max_unmerged:5,schedule_interval_seconds:120,quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120, auto_merge_enabled: false, auto_delete_enabled: false, auto_merchant_enabled:false,auto_merge_v2_enabled:false,merchant_success_fee_usd:'0.00', merchant_api_url:'https://refunds.llmrefund.com/v1/refunds', merchant_key_present:false, deletion_check_interval_seconds: 300, target_admin_id: '', target_seat_type: 'default', concurrency: 2, merge_concurrency: 2, retry_count: 2, retry_interval_seconds: 3 })
 automation.oai_confirmation=normalizeOAISettings()
 automation.oai_confirmation_concurrency=2
@@ -138,17 +95,7 @@ const cardFilter = ref('available')
 const queryIDs = ref(''), queryRows = ref([]), emailFilter = ref('')
 const editor = ref(null), rawCard = ref('')
 let disposed = false, requestID = 0
-watch(() => [settings.provider, settings.url, settings.api_key, settings.key_present, settingsReady.value, catalogEpoch.value], () => {
-  clearTimeout(catalogTimer); catalogController?.abort(); catalogGeneration++
-  catalog.value = null; catalogError.value = ''; catalogLoading.value = false
-  if (props.mode === 'settings' && settingsReady.value) {
-    catalogLoading.value = true
-    catalogTimer = setTimeout(loadCatalog, 250)
-  }
-})
 const notify = (text = '', type = '') => Object.assign(message, { text, type })
-watch(() => settings.provider, () => { countrySearch.value = '' })
-watch(() => settings.plan_code, code => { if (code === 'codex_point' && !settings.credit_quantity) settings.credit_quantity = 250; else if (code !== 'codex_point') settings.credit_quantity = 0 })
 async function action(fn) { if (busy.value) return; busy.value = true; notify(); try { await fn() } catch (e) { notify(e.message, 'error') } finally { busy.value = false } }
 async function load() {
   const id = ++requestID
@@ -171,11 +118,11 @@ function changeCardFilter(value) {
   })
 }
 async function saveSettings() {
-  if (!settingsReady.value || catalogSelectionInvalid.value) return
+  if (!settingsReady.value || providerRows.value.length !== 3) return
   await action(async () => {
-    const saved = await api('/api/pro-settings/automation', { method: 'PUT', body: { automation:{...automation,merchant_success_fee_usd:String(automation.merchant_success_fee_usd??'0.00')}, gptpay: settings, merchant_api_key:merchantAPIKey.value } })
-    Object.assign(settings, saved.gptpay, { api_key: '' }); Object.assign(automation, saved.automation); merchantAPIKey.value=''
-    savedURLs.set(settings.provider, settings.url); catalogEpoch.value++
+    const saved = await api('/api/pro-settings/automation', { method: 'PUT', body: { automation:{...automation,merchant_success_fee_usd:String(automation.merchant_success_fee_usd??'0.00')}, gptpay: settings, providers: providerRows.value, merchant_api_key:merchantAPIKey.value } })
+    Object.assign(settings, saved.gptpay, { api_key: '', backup_provider: saved.gptpay.backup_provider || '' }); Object.assign(automation, saved.automation); merchantAPIKey.value=''
+    providerRows.value = saved.providers.map(row => ({ ...row, api_key: '' })); savedProvider.value = saved.gptpay.provider; savedBackup.value = settings.backup_provider; savedVersion.value++
     notify('Pro 全自动配置已保存', 'success'); emit('saved')
   })
 }
@@ -213,16 +160,18 @@ async function queryOrders() {
 onMounted(() => action(async () => {
   if (props.mode === 'settings') {
     const [ejh,nex]=await Promise.all([api('/api/ejh/settings'),api('/api/nexovcc/settings')]);ejhTemplates.value=oaiTemplates(ejh.templates);nexovccTemplates.value=oaiTemplates(nex.templates)
-    const [pay, pro] = await Promise.all([api('/api/gptpay/settings'), api('/api/pro-settings')])
+    const [pay, pro, providers] = await Promise.all([api('/api/gptpay/settings'), api('/api/pro-settings'), Promise.all(providerIDs.map(provider => api('/api/gptpay/settings?provider=' + provider)))])
     if (disposed) return
-    Object.assign(settings, pay); savedURLs.set(settings.provider, settings.url); Object.assign(automation, pro); settingsReady.value = true
+    Object.assign(settings, pay); savedProvider.value = pay.provider; savedBackup.value = pay.backup_provider || ''
+    providerRows.value = providers.map(row => ({ ...(row.provider === pay.provider ? pay : row), api_key: '' }))
+    Object.assign(automation, pro); settingsReady.value = true
     if (automation.purchase_windows?.some(w => w.extra_sub2_group_ids?.length)) void loadPurchaseGroups()
   } else {
     if (props.mode === 'orders') { const config = await api('/api/gptpay/settings'); queryProvider.value = config.provider || 'tokenseek' }
     await load()
   }
 }))
-onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogController?.abort(); purchaseGroupsController?.abort(); catalogGeneration++; editor.value = null; rawCard.value = ''; settings.api_key = ''; providerDrafts.clear() })
+onBeforeUnmount(() => { disposed = true; purchaseGroupsController?.abort(); editor.value = null; rawCard.value = ''; settings.api_key = ''; providerRows.value.forEach(row => { row.api_key = '' }); providerRows.value = [] })
 </script>
 
 <template>
@@ -245,29 +194,10 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
         <div class="config-body">
           <header class="config-section-heading"><span>配置 / {{ currentConfigSection.label }}</span><h3>{{ currentConfigSection.label }}</h3><p>{{ currentConfigSection.hint }}</p></header>
           <section v-show="configSection === 'purchase'" data-config-section="purchase">
-            <div class="settings-fields">
-        <label class="field"><span>开通供应商</span><select :value="settings.provider" :disabled="busy || !settingsReady" @change="changeProvider"><option value="tokenseek">GPTPay · Tokenseek</option><option value="cmsnav">GPTPay · CMSNav</option><option value="xupay">序付 · XUPAY</option></select><small>分别保存地址和密钥；保存后用于手动及全自动开通，已有订单仍使用原供应商。</small></label>
-        <label class="field wide"><span> {{ settings.provider === 'xupay' ? '序付 API 地址' : 'GPTPay API 地址' }}</span><input v-model="settings.url" required :placeholder="settings.provider === 'xupay' ? 'http://104.160.172.162:5496/api/v1' : 'https://gptpay.tokenseek.app/api/v1'" /></label>
-        <label class="field wide"><span> {{ settings.provider === 'xupay' ? '序付 API Key' : 'GPTPay API Key' }}</span><input v-model="settings.api_key" type="password" autocomplete="new-password" :placeholder="settings.key_present ? '已保存，留空不修改' : '填写供应商 API Key'" /></label>
-        <p v-if="settings.provider === 'xupay'" class="muted wide">填写序付站点地址（或 /api/v1）和开发者中心的 API Key，保存后刷新套餐与报价。使用 Space 所选卡片，账单由序付后台抽取；提链、付款及关闭续费由序付后台执行。</p>
-            </div>
-            <label v-if="['cmsnav', 'xupay'].includes(settings.provider)" class="cmsnav-terms"><input v-model="settings.terms_accepted" type="checkbox" :disabled="busy" /><span>我已阅读并接受 <a href="https://openai.com/policies/terms-of-use/" target="_blank" rel="noopener noreferrer">OpenAI 使用条款</a>，用于 {{ payProviderName(settings.provider) }} 手动及自动开通。</span></label><p v-if="['cmsnav', 'xupay'].includes(settings.provider) && !settings.terms_accepted" class="muted">确认并保存后才能创建新的 {{ payProviderName(settings.provider) }} 付款订单。</p><div class="config-divider"><h4>套餐与支付地区</h4><p>供应商报价是服务费，不是银行卡扣款金额。</p></div>
-            <div class="settings-fields">        <label class="field"><span>开通套餐</span><select v-model="settings.plan_code" aria-label="开通套餐" :disabled="countryPickerDisabled"><optgroup v-for="group in planGroups" :key="group.label" :label="group.label"><option v-for="plan in group.plans" :key="plan.code" :value="plan.code" :disabled="!plan.available">{{ plan.label }}</option></optgroup></select><small>报价为供应商服务费，不是银行卡扣款金额。</small><small v-if="settings.plan_code.endsWith('_up')">仅支持已有 Plus 的账号；供应商最终校验升级资格。</small><small v-if="settings.plan_code === 'codex_point'">账号须已有有效订阅，Free 不可购买；服务费按每单收取。</small></label>
-        <label v-if="settings.plan_code === 'codex_point'" class="field"><span>Codex 点数数量</span><input v-model.number="settings.credit_quantity" type="number" min="250" max="250000" step="250" required /><small>250～250000，必须为 250 的倍数；表示本次购买数量。</small></label>
-        <div class="field country-picker">
-          <label for="pro-payment-country"><span>支付国家</span></label>
-          <input v-model="countrySearch" type="search" aria-label="搜索支付国家" placeholder="搜索国家名称、代码或币种" :disabled="countryPickerDisabled" @keydown.enter.prevent />
-          <select id="pro-payment-country" v-model="settings.country" required :disabled="countryPickerDisabled">
-            <option v-if="!catalogCountry" :value="settings.country" disabled>{{ settings.country }}（{{ catalogLoading ? '正在读取目录' : '不在当前目录中' }}）</option>
-            <option v-else-if="selectedCountryFiltered" :value="settings.country">当前已选：{{ catalogCountry.name }} · {{ catalogCountry.code }}{{ catalogCountry.currency ? ' · ' + catalogCountry.currency : '' }}</option>
-            <option v-for="country in filteredCountries" :key="country.code" :value="country.code">{{ country.name }} · {{ country.code }}{{ country.currency ? ' · ' + country.currency : '' }}</option>
-          </select>
-          <small v-if="countrySearch.trim()" aria-live="polite">{{ filteredCountries.length ? `找到 ${filteredCountries.length} 个国家/地区` : '没有匹配的国家/地区，请换个关键词；当前选择保持不变。' }}</small>
-          <small v-if="catalogCountry"><template v-if="settings.provider !== 'tokenseek'">结算币种：{{ catalogCountry.currency || '供应商未提供' }}；</template>下单使用国家代码 {{ settings.country }}。</small>
-          <button v-if="settings.provider === 'tokenseek'" class="btn ghost compact" type="button" :disabled="countryPickerDisabled" @click="settings.country = selectedPlan.defaultCountry">使用套餐默认国家（{{ selectedPlan?.defaultCountry }}）</button>
-        </div>
-        <div class="catalog-status wide" aria-live="polite"><span v-if="catalogLoading">正在读取国家、货币与套餐…</span><span v-else-if="catalogError" class="danger-text">目录读取失败：{{ catalogError }}<span v-if="settings.provider !== 'cmsnav'"> 当前显示文档选项，实际可购买套餐以账户报价为准。</span></span><span v-else-if="catalog">已读取 {{ availableCountries.length }} 个国家/地区。<span v-if="catalogSelectionInvalid" class="danger-text">请选择目录内的国家和可用套餐，并检查点数数量。</span></span><button class="btn ghost compact" type="button" :disabled="busy || catalogLoading" @click="loadCatalog">刷新国家与套餐</button></div>
-</div>
+            <div class="provider-heading"><div><h4>供应商套餐与支付地区</h4><p>可设置一家主供应商和一家备用供应商。修改后点击底部“保存 Pro 配置”生效。</p></div><span v-if="savedProvider" class="config-badge enabled"><span></span>主启用：{{ payProviderName(savedProvider) }}</span></div>
+            <p v-if="!settingsReady" class="muted">正在读取三家供应商的已有配置…</p>
+            <div v-else class="table-shell provider-table-shell"><table class="provider-table"><thead><tr><th>供应商 / 接口配置</th><th>开通套餐</th><th>支付地区</th><th>启用状态</th><th>操作</th></tr></thead><tbody><ProProviderRow v-for="row in providerRows" :key="row.provider" :row="row" :selected="settings.provider" :backup="settings.backup_provider" :saved-provider="savedProvider" :saved-backup="savedBackup" :saved-version="savedVersion" :disabled="busy" @role="setProviderRole(row.provider, $event)" /></tbody></table></div>
+            <p class="provider-note">报价为供应商服务费，不是银行卡扣款金额。新任务默认使用主供应商，已有订单沿用原供应商。备用选择仅保存配置，尚未接入自动切备。</p>
             <div class="config-divider"><h4>分时开通</h4><p>用于自动补货与定时全自动；手动开通自行选择。时段外使用默认套餐和卡台。</p></div>
             <label class="toggle-row"><div><strong>时段外／手动开通允许备用卡台</strong><small>未命中分时时段时使用此设置；时段内按下方每个时段单独设置。仅明确余额不足时切换另一卡台同套餐 OAI 模板。</small></div><input v-model="automation.balance_fallback_enabled" type="checkbox"/><i></i></label>
             <label class="toggle-row"><div><strong>启用分时开通</strong><small>北京时间，支持跨天；每日禁补规则仍独立生效。</small></div><input v-model="automation.purchase_schedule_enabled" type="checkbox"/><i></i></label>
@@ -362,7 +292,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
           </section>
         </div>
       </div>
-      <footer class="config-savebar"><span>{{ busy ? '正在处理，请稍候…' : !settingsReady ? '正在读取配置…' : catalogSelectionInvalid ? '请在开通设置中检查套餐与国家' : '修改应用于后续任务，已有订单保留原供应商。' }}</span><button class="btn primary" :disabled="busy || !settingsReady || catalogSelectionInvalid"><Save :size="16"/>保存 Pro 配置</button></footer>
+      <footer class="config-savebar"><span>{{ busy ? '正在处理，请稍候…' : !settingsReady ? '正在读取配置…' : '修改应用于后续任务，已有订单保留原供应商。' }}</span><button class="btn primary" :disabled="busy || !settingsReady"><Save :size="16"/>保存 Pro 配置</button></footer>
     </form>
 
     <template v-else-if="mode === 'cards'">
@@ -417,6 +347,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(catalogTimer); catalogCont
 </template>
 
 <style scoped>
+.provider-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px;flex-wrap:wrap}.provider-heading h4{font-size:15px;margin:0}.provider-heading p,.provider-note{font-size:12px;line-height:1.7;color:var(--muted);margin-top:7px}.provider-table-shell{max-width:100%;border:1px solid var(--line);border-radius:10px}.provider-table{min-width:850px}.provider-table th{font-size:11px;padding:12px;white-space:nowrap}.provider-note{margin-top:12px}
 .oai-markers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}.oai-confirmation-settings textarea{min-height:150px}@media(max-width:650px){.oai-markers{grid-template-columns:1fr}}
 .purchase-window{padding:18px 0;border-bottom:1px solid var(--line);margin-bottom:16px}.purchase-window .settings-fields{margin-bottom:12px}
 

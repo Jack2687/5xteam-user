@@ -34,6 +34,7 @@ func Provider(v string) string {
 type Settings struct {
 	TermsAccepted         bool   `json:"terms_accepted"`
 	Provider              string `json:"provider"`
+	BackupProvider        string `json:"backup_provider,omitempty"`
 	Country               string `json:"country"`
 	CardAccountLimit      int    `json:"card_account_limit"`
 	URL                   string `json:"url"`
@@ -260,6 +261,9 @@ func NormalizeSettings(v Settings) (Settings, error) {
 	v.Provider = Provider(v.Provider)
 	if v.Provider != Tokenseek && v.Provider != CMSNav && v.Provider != XUPay {
 		return v, fmt.Errorf("请选择有效供应商")
+	}
+	if v.BackupProvider != "" && (v.BackupProvider == v.Provider || (v.BackupProvider != Tokenseek && v.BackupProvider != CMSNav && v.BackupProvider != XUPay)) {
+		return v, fmt.Errorf("备用供应商须与主供应商不同，或不设置备用")
 	}
 	v.PlanCode = strings.TrimSpace(v.PlanCode)
 	if v.PlanCode == "" {

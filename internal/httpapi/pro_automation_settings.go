@@ -12,12 +12,10 @@ import (
 
 func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		MerchantAPIKey string            `json:"merchant_api_key"`
-		Automation     model.ProSettings `json:"automation"`
-		GPTPay         struct {
-			gptpay.Settings
-			APIKey string `json:"api_key"`
-		} `json:"gptpay"`
+		MerchantAPIKey string                 `json:"merchant_api_key"`
+		Automation     model.ProSettings      `json:"automation"`
+		GPTPay         gptpay.SettingsInput   `json:"gptpay"`
+		Providers      []gptpay.SettingsInput `json:"providers"`
 	}
 	current, subPassword, _, readErr := s.store.ProSettings()
 	if readErr != nil {
@@ -93,7 +91,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		writeAPI(w, 400, nil, "开启自动合并前请选择目标母号")
 		return
 	}
-	pay, err := gptpay.NormalizeSettings(input.GPTPay.Settings)
+	pay, key, err := gptpay.NormalizeProviderSettings(input.GPTPay.Settings, input.GPTPay.APIKey, input.Providers)
 	if err != nil {
 		writeAPI(w, 400, nil, err.Error())
 		return
@@ -108,10 +106,18 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		writeAPI(w, 400, nil, err.Error())
 		return
 	}
-	v, pay, err = s.store.SaveProAutomationSettings(v, pay, input.GPTPay.APIKey, input.MerchantAPIKey)
+	v, pay, err = s.store.SaveProAutomationProviderSettings(v, pay, key, input.Providers, input.MerchantAPIKey)
 	if err != nil {
 		writeAPI(w, 500, nil, "保存 Pro 全自动配置失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"automation": v, "gptpay": pay}, "")
+	result := map[string]any{"automation": v, "gptpay": pay}
+	if input.Providers != nil {
+		rows := make([]gptpay.Settings, len(input.Providers))
+		for i, row := range input.Providers {
+			rows[i] = row.Settings
+		}
+		result["providers"] = rows
+	}
+	writeAPI(w, 200, result, "")
 }

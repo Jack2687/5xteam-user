@@ -15,6 +15,14 @@ import (
 // Only automation fields are changed here. Downstream credentials and groups
 // may be edited separately, so never overwrite them from an automation form.
 func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Settings, key string, merchantKeys ...string) (model.ProSettings, gptpay.Settings, error) {
+	return s.saveProAutomationSettings(input, pay, key, nil, merchantKeys...)
+}
+
+func (s *Store) SaveProAutomationProviderSettings(input model.ProSettings, pay gptpay.Settings, key string, rows []gptpay.SettingsInput, merchantKey string) (model.ProSettings, gptpay.Settings, error) {
+	return s.saveProAutomationSettings(input, pay, key, rows, merchantKey)
+}
+
+func (s *Store) saveProAutomationSettings(input model.ProSettings, pay gptpay.Settings, key string, rows []gptpay.SettingsInput, merchantKeys ...string) (model.ProSettings, gptpay.Settings, error) {
 	merchantURL, urlErr := refundmerchant.NormalizeSubmitURL(input.MerchantAPIURL)
 	if urlErr != nil {
 		return input, pay, urlErr
@@ -30,7 +38,7 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	if err := input.ValidatePurchaseWindows(); err != nil {
 		return input, pay, err
 	}
-	pay, err := gptpay.NormalizeSettings(pay)
+	pay, key, err := gptpay.NormalizeProviderSettings(pay, key, rows)
 	if err != nil {
 		return input, pay, err
 	}
@@ -106,6 +114,17 @@ func (s *Store) SaveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	}
 	if err = s.saveGPTPaySettingsTx(tx, &pay, key); err != nil {
 		return v, pay, err
+	}
+	// Save the active supplier first so archiving its previous configuration
+	// cannot overwrite an edited inactive row when the selection changes.
+	for i := range rows {
+		if rows[i].Provider == pay.Provider {
+			rows[i].Settings = pay
+			continue
+		}
+		if err = s.saveGPTPayProviderSettingsTx(tx, &rows[i].Settings, rows[i].APIKey); err != nil {
+			return v, pay, err
+		}
 	}
 	if v.DeletionCheckInterval() != previousDeletionInterval {
 		if err = rescheduleProDeactivationsTx(tx, v.DeletionCheckInterval()); err != nil {
