@@ -202,6 +202,9 @@ type Snapshot struct {
 	Accounts            []Account   `json:"accounts"`
 }
 type Task struct {
+	// Opaque read version used only for monitoring compare-and-swap. Never exposed.
+	ObservedPayload string `json:"-"`
+
 	PaymentRiskPending  bool                    `json:"payment_risk_pending,omitempty"`
 	PaymentRiskSource   string                  `json:"payment_risk_source,omitempty"`
 	BalanceFallbackFrom string                  `json:"balance_fallback_from,omitempty"`

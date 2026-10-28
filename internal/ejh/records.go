@@ -6,6 +6,8 @@ import (
 )
 
 type Operation struct {
+	RestockTaskID string `json:"restock_task_id,omitempty"`
+
 	ErrorCode    string `json:"error_code,omitempty"`
 	Platform     string `json:"platform"`
 	TemplateName string `json:"template_name,omitempty"`

@@ -64,7 +64,7 @@ func (s *Store) DetachFailedProRestock(email, flowID, orderID string) error {
 		return errors.New("原补货任务已就绪，不能重新开通")
 	}
 	if p.ProAuto.ID == "" && task.CardProvider == "nexovcc" {
-		if task.Status != "attention" && task.StoppedAt == nil {
+		if task.Status != "attention" && task.Status != "failed" && task.StoppedAt == nil {
 			return errors.New("补货任务仍在排队或启动中，请等待当前任务")
 		}
 		// Issuance precedes the workflow ID. No payment does not prove that

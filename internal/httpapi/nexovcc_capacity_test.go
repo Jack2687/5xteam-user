@@ -355,12 +355,14 @@ func TestNexovccCapacityRestockWaitPreservesOriginalTask(t *testing.T) {
 		return base(ctx, r)
 	}
 	windowTick(t, s)
+	waitRestockPreparationIdle(t, s)
 	tasks, err := s.store.ProRestockTasks()
 	if err != nil || len(tasks) != 1 || tasks[0].Status != "reserved" || tasks[0].Email != email || tasks[0].SubmittedAt != nil {
 		t.Fatal(tasks, err)
 	}
 	id := tasks[0].ID
 	windowTick(t, s)
+	waitRestockPreparationIdle(t, s)
 	tasks, err = s.store.ProRestockTasks()
 	if err != nil || len(tasks) != 1 || tasks[0].ID != id || tasks[0].Status != "reserved" || tasks[0].Email != email || f.opens.Load() != 0 {
 		t.Fatal(tasks, err)

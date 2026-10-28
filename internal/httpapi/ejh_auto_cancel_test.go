@@ -13,7 +13,7 @@ import (
 	"chatgpt-space-merge/internal/store"
 )
 
-func ejhAutoCancelAPIFixture(t *testing.T) (*Server, ejh.CardRecord, []ejh.Trade) {
+func ejhAutoCancelAPIFixture(t *testing.T, netReversal ...bool) (*Server, ejh.CardRecord, []ejh.Trade) {
 	t.Helper()
 	s, _ := ejhTestServer(t, 200)
 	cfg, _, _ := s.store.EJHSettings()
@@ -42,10 +42,21 @@ func ejhAutoCancelAPIFixture(t *testing.T) (*Server, ejh.CardRecord, []ejh.Trade
 	r.Type = "5"
 	r.BillAmount = "18.8"
 	r.BillCurrency = "USD"
+	if len(netReversal) > 0 && netReversal[0] {
+		p.Status, p.AuthCode, p.CardAmount, p.CardCurrency, p.TradeAmount, p.BillAmount = "1", "same-auth", "8919.64", "PHP", "0", "0"
+		r.Status, r.Type, r.AuthCode, r.CardAmount, r.CardCurrency, r.TradeAmount, r.BillAmount = "1", "2", "same-auth", "8900.03", "PHP", "0.00", "0.00"
+		p.TradeTime = time.Now().Format(time.RFC3339Nano)
+		r.TradeTime = time.Now().Add(time.Second).Format(time.RFC3339Nano)
+	}
 	if err = s.store.EJHSaveTrades(card.ID, []ejh.Trade{p, r}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.store.EJHMatchTrade(store.EJHID("trade", r.OrderNo+"|return|5"), "auto-payment", store.EJHID("trade", p.OrderNo+"|original|1"), "20", "USD", "fixture refund", true); err != nil {
+	if len(netReversal) > 0 && netReversal[0] {
+		err = s.store.EJHReconcile()
+	} else {
+		err = s.store.EJHMatchTrade(store.EJHID("trade", r.OrderNo+"|return|"+r.Type), "auto-payment", store.EJHID("trade", p.OrderNo+"|original|1"), r.CardAmount, r.CardCurrency, "fixture refund", true)
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	var saved ejh.CardRecord
@@ -59,9 +70,9 @@ func ejhAutoCancelAPIFixture(t *testing.T) (*Server, ejh.CardRecord, []ejh.Trade
 }
 
 func TestEJHAutoCancelRefreshAndSingleSubmission(t *testing.T) {
-	for _, scenario := range []string{"completed", "timeout", "processing", "pending_category", "closed_card", "disabled", "query_error", "wrong_card", "empty_snapshot", "missing_refund", "changed_amount", "raised_limit", "switch_off_during_check", "issuer_closing", "issuer_busy"} {
+	for _, scenario := range []string{"completed_net_reversal", "completed", "timeout", "processing", "pending_category", "closed_card", "disabled", "query_error", "wrong_card", "empty_snapshot", "missing_refund", "changed_amount", "raised_limit", "switch_off_during_check", "issuer_closing", "issuer_busy"} {
 		t.Run(scenario, func(t *testing.T) {
-			s, card, trades := ejhAutoCancelAPIFixture(t)
+			s, card, trades := ejhAutoCancelAPIFixture(t, scenario == "completed_net_reversal")
 			remote := card.Remote
 			var methods []string
 			submitted := false
@@ -93,7 +104,7 @@ func TestEJHAutoCancelRefreshAndSingleSubmission(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					if submitted && scenario == "completed" {
+					if submitted && (scenario == "completed" || scenario == "completed_net_reversal") {
 						v.Status = "2"
 					}
 					if submitted && scenario == "processing" {
@@ -149,7 +160,7 @@ func TestEJHAutoCancelRefreshAndSingleSubmission(t *testing.T) {
 			if scenario == "issuer_busy" {
 				s.ejh.mu.Unlock()
 			}
-			want := scenario == "completed" || scenario == "timeout" || scenario == "processing"
+			want := scenario == "completed_net_reversal" || scenario == "completed" || scenario == "timeout" || scenario == "processing"
 			if submitted != want {
 				var state ejhAutoCancelState
 				_ = s.store.EJHGet("auto_cancel", "latest", &state)
@@ -188,7 +199,7 @@ func TestEJHAutoCancelRefreshAndSingleSubmission(t *testing.T) {
 			if err := s.store.EJHGet("operation", store.EJHID("auto-cancel", card.ID), &op); err != nil {
 				t.Fatal(err)
 			}
-			wantStatus := map[string]string{"completed": "completed", "timeout": "unknown", "processing": "processing"}[scenario]
+			wantStatus := map[string]string{"completed_net_reversal": "completed", "completed": "completed", "timeout": "unknown", "processing": "processing"}[scenario]
 			if op.Status != wantStatus || !op.Automatic {
 				t.Fatal(op.Status)
 			}

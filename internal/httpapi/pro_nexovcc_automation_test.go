@@ -144,6 +144,7 @@ func TestProNexovccRestockCanRecoverBeforeWorkflowCreated(t *testing.T) {
 				return errors.New("fixture stops after safe startup")
 			}}
 			windowTick(t, s)
+			waitRestockPreparationIdle(t, s)
 			tasks, _ := s.store.ProRestockTasks()
 			wantStatus := "attention"
 			if mode == "import_pending" {
@@ -174,8 +175,14 @@ func TestProNexovccRestockCanRecoverBeforeWorkflowCreated(t *testing.T) {
 			}
 			message := tasks[0].Message
 			windowTick(t, s)
+			waitRestockPreparationIdle(t, s)
 			tasks, _ = s.store.ProRestockTasks()
-			if tasks[0].Message != message {
+			if mode == "budget" {
+				if tasks[0].Status != "failed" || !strings.Contains(tasks[0].Message, message) {
+					t.Fatal("safe preparation failure was not released with its original cause", tasks)
+				}
+				message = tasks[0].Message
+			} else if tasks[0].Message != message {
 				t.Fatal("startup cause overwritten", tasks[0].Message, message)
 			}
 			r := httptest.NewRequest("GET", "/", nil)

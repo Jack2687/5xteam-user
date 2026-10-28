@@ -23,7 +23,7 @@ const proAccountsCTE = `WITH accounts AS (
   WHEN json_extract(profile,'$.space_merged_once')=1 THEN 'merged'
   WHEN json_extract(profile,'$.pro_merge_v2') IS NOT NULL OR COALESCE(json_extract(profile,'$.pro_merchant.request_id'),'')<>'' OR COALESCE(json_extract(profile,'$.pro_deactivation.status'),'')<>''
    OR COALESCE(json_extract(profile,'$.pro_auto.id'),'')<>''
-			OR COALESCE(json_extract(profile,'$.pro_auto.status'),'') NOT IN ('','not_started','pending')
+			OR COALESCE(json_extract(profile,'$.pro_auto.status'),'') NOT IN ('','not_started','pending','stopped')
 			OR COALESCE(json_extract(profile,'$.pro_auto.stage'),'')<>''
 			OR EXISTS (SELECT 1 FROM json_each(profile,'$.pro_auto.steps') WHERE COALESCE(value,'') NOT IN ('','not_started','pending') AND NOT (key='login' AND value='completed'))
 			OR EXISTS (SELECT 1 FROM json_each(profile,'$.pro_manual_stages') WHERE COALESCE(json_extract(value,'$.status'),'') NOT IN ('','not_started','pending') AND NOT (key='login' AND json_extract(value,'$.status')='completed'))

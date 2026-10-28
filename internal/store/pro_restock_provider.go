@@ -51,7 +51,7 @@ func restockDispatchTask(q proCapacityQuery, id string) (restock.Task, error) {
 		return t, err
 	}
 	if !t.Active() || t.Status == "reserved" || (t.CardProvider != "ejh" && t.CardProvider != "nexovcc") {
-		return t, fmt.Errorf("补货任务尚未领取或卡台信息无效")
+		return t, fmt.Errorf("补货任务当前无法分配卡片（状态=%s，卡台=%s）", t.Status, t.CardProvider)
 	}
 	return t, nil
 }

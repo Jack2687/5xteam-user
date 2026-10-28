@@ -1,6 +1,7 @@
 package store
 
 import (
+	"chatgpt-space-merge/internal/ejh"
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
 	"database/sql"
@@ -32,7 +33,7 @@ func (s *Store) FinishUnsubmittedRestockPreparation(expected *restock.Task) (boo
 	if current.UpdatedAt != expected.UpdatedAt && !current.UpdatedAt.Equal(expected.UpdatedAt) {
 		return false, nil
 	}
-	if current.CardProvider != "nexovcc" || current.OrderID != "" || current.CardID != "" {
+	if !current.Active() || current.Status == "reserved" || current.StoppedAt != nil || (current.CardProvider != "nexovcc" && current.CardProvider != "ejh") || current.OrderID != "" || current.CardID != "" {
 		return false, nil
 	}
 	var raw string
@@ -47,7 +48,45 @@ func (s *Store) FinishUnsubmittedRestockPreparation(expected *restock.Task) (boo
 		return false, nil
 	}
 	var unsafe bool
-	err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM gptpay_orders WHERE email=? AND (json_extract(profile,'$.status')<>'failed' OR json_extract(profile,'$.succeeded_at') IS NOT NULL)) OR EXISTS(SELECT 1 FROM nexovcc_operations WHERE json_extract(profile,'$.restock_task_id')=? AND (status<>'failed' OR coalesce(json_extract(profile,'$.serial_no'),'')<>'' OR coalesce(json_extract(profile,'$.card_id'),'')<>''))`, current.Email, current.ID).Scan(&unsafe)
+	err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM gptpay_orders WHERE email=? AND (json_extract(profile,'$.status')<>'failed' OR json_extract(profile,'$.succeeded_at') IS NOT NULL)) OR EXISTS(SELECT 1 FROM nexovcc_operations WHERE json_extract(profile,'$.restock_task_id')=? AND (status<>'failed' OR coalesce(json_extract(profile,'$.serial_no'),'')<>'' OR coalesce(json_extract(profile,'$.card_id'),'')<>'')) OR EXISTS(SELECT 1 FROM pro_card_reservations WHERE email=?)`, current.Email, current.ID, current.Email).Scan(&unsafe)
+	if err != nil || unsafe {
+		return false, err
+	}
+	// Include both issuers: a configured balance fallback may have already
+	// issued a card on the other platform. Legacy EJH operations lack a task
+	// link, so conservatively retain any possible automatic issuance since
+	// reservation rather than treating an unknown charge as a safe failure.
+	rows, err := tx.Query(`SELECT sealed FROM ejh_records WHERE kind='operation'`)
+	if err != nil {
+		return false, err
+	}
+	for rows.Next() {
+		var sealed string
+		if err = rows.Scan(&sealed); err != nil {
+			break
+		}
+		var clear string
+		clear, err = s.decrypt(sealed)
+		if err != nil {
+			break
+		}
+		var op ejh.Operation
+		if err = json.Unmarshal([]byte(clear), &op); err != nil {
+			break
+		}
+		if op.Method != "open" {
+			continue
+		}
+		matching := op.RestockTaskID == current.ID || (op.RestockTaskID == "" && op.Automatic && (op.CreatedAt.IsZero() || !op.CreatedAt.Before(current.CreatedAt)))
+		if matching && (op.Status != "failed" || op.ErrorCode == "" || op.CardID != "" || op.OrderNo != "" || op.Result != nil) {
+			unsafe = true
+			break
+		}
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
 	if err != nil || unsafe {
 		return false, err
 	}

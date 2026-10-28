@@ -1,6 +1,7 @@
 package store
 
 import (
+	"chatgpt-space-merge/internal/ejh"
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/nexovcc"
 	"chatgpt-space-merge/internal/restock"
@@ -124,6 +125,59 @@ func TestBalanceFallbackPreservesRouteAndRefusesUncertainIssuance(t *testing.T) 
 			}
 			if s.SwitchRestockCardForBalance(task.ID, "ejh", model.ProPurchaseRoute{CardProvider: "nexovcc"}) == nil {
 				t.Fatal("fallback oscillation accepted")
+			}
+		})
+	}
+}
+
+func TestEJHPreparationOnlyReleasesProvenUnsubmitted(t *testing.T) {
+	for _, scenario := range []string{"no_intent", "rejected", "unknown", "completed", "unlinked_unknown", "unrelated_task", "reservation", "payment", "workflow"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, task := preparationFixture(t)
+			task.CardProvider, task.Status, task.Message = "ejh", "attention", "补货任务尚未领取或卡台信息无效"
+			if err := s.SaveProRestockTask(task); err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "reservation":
+				if _, err := s.db.Exec(`INSERT INTO pro_card_reservations VALUES(?,?)`, task.Email, "fixture-key"); err != nil {
+					t.Fatal(err)
+				}
+			case "payment":
+				o := transferOrder(task.Email, "unknown", "submission_unknown")
+				if err := s.CreateGPTPayOrder(o.Order, o.Snapshot); err != nil {
+					t.Fatal(err)
+				}
+			case "workflow":
+				s.UpdateProAccount(task.Email, func(p *model.MailAccountProfile) { p.ProAuto.ID = "live" })
+			case "rejected", "unknown", "completed", "unlinked_unknown", "unrelated_task":
+				op := ejh.Operation{ID: "open", Method: "open", Status: "unknown", Automatic: true, RestockTaskID: task.ID, CreatedAt: time.Now()}
+				if scenario == "rejected" {
+					op.Status, op.ErrorCode = "failed", "100004"
+				}
+				if scenario == "completed" {
+					op.Status, op.CardID = "completed", "issued-card"
+				}
+				if scenario == "unlinked_unknown" {
+					op.RestockTaskID = ""
+				}
+				if scenario == "unrelated_task" {
+					op.RestockTaskID = "other"
+				}
+				if err := s.EJHPut("operation", op.ID, op); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done, err := s.FinishUnsubmittedRestockPreparation(&task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := scenario == "no_intent" || scenario == "rejected" || scenario == "unrelated_task"
+			if done != want {
+				t.Fatalf("%s: released=%v", scenario, done)
+			}
+			if done && (task.Active() || task.Cost != 0 || task.Stage != "card") {
+				t.Fatal("failure still occupies batch")
 			}
 		})
 	}

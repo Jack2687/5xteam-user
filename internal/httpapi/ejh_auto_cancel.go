@@ -94,6 +94,7 @@ func (s *Server) tickEJHAutoCancel(ctx context.Context) {
 		}
 		if err = s.store.EJHAutoCancelCheck(card.ID); err != nil {
 			state.Skipped++
+			_ = s.store.EJHPut("auto_cancel_check", card.ID, ejhAutoCancelCheck{CardID: card.ID, At: time.Now(), Reason: err.Error()})
 			if !errors.Is(err, store.ErrEJHAutoCancelIneligible) {
 				state.Error = err.Error()
 			}
@@ -118,12 +119,18 @@ func (s *Server) tickEJHAutoCancel(ctx context.Context) {
 		if checkErr != nil {
 			state.Error = fmt.Sprintf("卡片尾号 %s：%s", ejhAutoCancelLast4(card.Remote.Number), checkErr)
 		}
+		reason := "已提交销卡，进度见操作记录"
+		if checkErr != nil {
+			reason = checkErr.Error()
+		}
+		_ = s.store.EJHPut("auto_cancel_check", card.ID, ejhAutoCancelCheck{CardID: card.ID, At: time.Now(), Reason: reason})
 	}
 }
 
 type ejhAutoCancelCheck struct {
 	CardID string    `json:"card_id"`
 	At     time.Time `json:"at"`
+	Reason string    `json:"reason,omitempty"`
 }
 
 func ejhAutoCancelLast4(number string) string {

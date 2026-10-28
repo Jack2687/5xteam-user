@@ -55,7 +55,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			t.Status = "attention"
 			t.Message = "账号无法读取，保留在途与预算等待核验"
 			t.ETA = nil
-			if err = s.store.SaveProRestockTask(*t); err != nil {
+			if err = s.store.SaveProRestockObservation(t); err != nil {
 				return nil, 0, err
 			}
 			continue
@@ -73,7 +73,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 				t.Status, t.Stage, t.ETA = "failed", "dead", nil
 				t.UpdatedAt = now
 				t.Message = "已确认死号，不再计入供给；关联卡片禁止再次开通"
-				if err = s.store.SaveProRestockTask(*t); err != nil {
+				if err = s.store.SaveProRestockObservation(t); err != nil {
 					return nil, 0, err
 				}
 				continue
@@ -88,7 +88,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if waiting, err := s.trackRestockCardImport(t, profile); err != nil {
 			return nil, 0, err
 		} else if waiting {
-			if err = s.store.SaveProRestockTask(*t); err != nil {
+			if err = s.store.SaveProRestockObservation(t); err != nil {
 				return nil, 0, err
 			}
 			continue
@@ -116,7 +116,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			t.Message = "已完成推送并进入合并／移出阶段，不再占用补货在途；当前可用容量以监控组为准"
 			// No readiness observation was made: do not invent ReadyAt and count
 			// the account's entire consumption lifetime as provisioning latency.
-			if err = s.store.SaveProRestockTask(*t); err != nil {
+			if err = s.store.SaveProRestockObservation(t); err != nil {
 				return nil, 0, err
 			}
 			continue
@@ -125,7 +125,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			t.Status, t.ETA = "unknown", nil
 			t.UpdatedAt = now
 			t.Message = "账号已进入合并／移出，但原付款记录尚未核清，保留订单与在途；不承诺新增容量"
-			if err = s.store.SaveProRestockTask(*t); err != nil {
+			if err = s.store.SaveProRestockObservation(t); err != nil {
 				return nil, 0, err
 			}
 			continue
@@ -239,7 +239,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			t.Message = firstNonEmpty(t.Message, "启动结果待核验，保留预留，避免重复发卡")
 		}
 		t.UpdatedAt = now
-		if err = s.store.SaveProRestockTask(*t); err != nil {
+		if err = s.store.SaveProRestockObservation(t); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -383,6 +383,12 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if !t.Active() || t.Status == "unknown" || t.Status == "attention" || t.Status == "waiting_card" {
 			continue
 		}
+		s.proAutoMu.Lock()
+		preparing := s.proRestockStartJobs[t.ID] != nil
+		s.proAutoMu.Unlock()
+		if preparationActive || preparing {
+			continue
+		}
 		remaining := lead
 		if t.SubmittedAt != nil {
 			remaining = restockRemainingLead(*t, tasks, c.LeadSamples, lead, now)
@@ -390,7 +396,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 				t.ETA = nil
 				t.Message = "已超过预计到货时间；仍占在途，不承诺未来容量"
 				if t.DecisionID != "" {
-					_ = s.store.SaveProRestockTask(*t)
+					_ = s.store.SaveProRestockObservation(t)
 				}
 				continue
 			}
@@ -403,7 +409,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 			}
 			queued++
 			if t.DecisionID != "" {
-				if err := s.store.SaveProRestockTask(*t); err != nil {
+				if err := s.store.SaveProRestockObservation(t); err != nil {
 					return nil, 0, err
 				}
 			}
@@ -412,7 +418,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		eta := now.Add(time.Duration(remaining * float64(time.Minute)))
 		t.ETA = &eta
 		if t.DecisionID != "" {
-			if err := s.store.SaveProRestockTask(*t); err != nil {
+			if err := s.store.SaveProRestockObservation(t); err != nil {
 				return nil, 0, err
 			}
 		}
@@ -742,7 +748,7 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		if !restockSnapshotFresh(c, snap, now) || c.NoRestockReason(now) != "" {
 			return
 		}
-		t.Status = "submitting"
+		t.Status, t.Stage = "submitting", "card"
 		t.SubmittedAt = &now
 		t.UpdatedAt = now
 		s.proCardAdmissionMu.Lock()

@@ -54,6 +54,7 @@ func ValidateAutoCancelReturns(card CardRecord, cases []Case, trades []TradeReco
 			return fmt.Errorf("原付款金额无效")
 		}
 		sum := new(big.Rat)
+		linkedReturns := []TradeRecord{}
 		for _, r := range trades {
 			if r.OrderID != c.ID {
 				continue
@@ -81,8 +82,9 @@ func ValidateAutoCancelReturns(card CardRecord, cases []Case, trades []TradeReco
 			}
 			returns[chargeKey(r)] = true
 			sum.Add(sum, n)
+			linkedReturns = append(linkedReturns, r)
 		}
-		if sum.Cmp(want) != 0 {
+		if sum.Cmp(want) != 0 && !completeAuthorizationReversal(p, linkedReturns, transactionCurrency) {
 			return fmt.Errorf("回款本金未全部到账或金额待核实")
 		}
 		used[chargeKey(p)] = true
@@ -100,4 +102,21 @@ func ValidateAutoCancelReturns(card CardRecord, cases []Case, trades []TradeReco
 		}
 	}
 	return nil
+}
+
+// EJH's explicit authorization-cancellation event releases the hold before
+// settlement. Its net card-currency credit may differ from the original hold.
+// Only accept the zero transaction/settlement amount format with one uniquely
+// linked reversal of that exact authorization. Captured payments and ordinary
+// partial refunds still require the full-principal checks above.
+func completeAuthorizationReversal(payment TradeRecord, returns []TradeRecord, transactionCurrency bool) bool {
+	if transactionCurrency || len(returns) != 1 {
+		return false
+	}
+	p, r := payment.Trade, returns[0].Trade
+	zero := func(v string) bool { n, err := Money(v); return err == nil && n.Sign() == 0 }
+	return p.Type == "1" && p.Status == "1" && r.Type == "2" && r.Status == "1" &&
+		p.AuthCode != "" && p.AuthCode == r.AuthCode && p.OrderNo == r.OrderNo &&
+		p.CardCurrency == r.CardCurrency && ReturnReceived(r) &&
+		zero(p.TradeAmount) && zero(r.TradeAmount) && zero(p.BillAmount) && zero(r.BillAmount)
 }

@@ -72,10 +72,13 @@ func (s *Store) ProRestockTasks() ([]restock.Task, error) {
 func (s *Store) ProRestockDecisionTasks(id string) ([]restock.Task, error) {
 	return s.proRestockTasksWhere("json_extract(payload,'$.decision_id')=?", id)
 }
+
+const proRestockTaskProjectionSQL = `json_set(payload,'$.force_merge_source',coalesce((SELECT source FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id),''),'$.payment_risk_pending',json(CASE WHEN EXISTS(SELECT 1 FROM pro_restock_payment_risk WHERE task_id=pro_restock_tasks.id AND replacement_id IS NULL AND paused=0) THEN 'true' ELSE 'false' END),'$.payment_risk_source',coalesce((SELECT task_id FROM pro_restock_payment_risk WHERE replacement_id=pro_restock_tasks.id),''))`
+
 func (s *Store) proRestockTasksWhere(where string, arg any) ([]restock.Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT json_set(payload,'$.force_merge_source',coalesce((SELECT source FROM pro_restock_replacements WHERE task_id=pro_restock_tasks.id),''),'$.payment_risk_pending',json(CASE WHEN EXISTS(SELECT 1 FROM pro_restock_payment_risk WHERE task_id=pro_restock_tasks.id AND replacement_id IS NULL AND paused=0) THEN 'true' ELSE 'false' END),'$.payment_risk_source',coalesce((SELECT task_id FROM pro_restock_payment_risk WHERE replacement_id=pro_restock_tasks.id),'')) FROM pro_restock_tasks WHERE "+where+" ORDER BY created_at", arg)
+	rows, err := s.db.Query("SELECT "+proRestockTaskProjectionSQL+",payload FROM pro_restock_tasks WHERE "+where+" ORDER BY created_at", arg)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +87,7 @@ func (s *Store) proRestockTasksWhere(where string, arg any) ([]restock.Task, err
 	for rows.Next() {
 		var raw string
 		var t restock.Task
-		if err = rows.Scan(&raw); err != nil {
+		if err = rows.Scan(&raw, &t.ObservedPayload); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(raw), &t); err != nil {

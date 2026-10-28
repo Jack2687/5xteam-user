@@ -84,7 +84,7 @@ func (s *Server) getProAutomation(w http.ResponseWriter, r *http.Request) {
 	state.Error = progress.Errors[state.Stage]
 	restockRetryAvailable := false
 	if state.ID == "" && state.OrderID == "" && p.ProRestockTaskID != "" {
-		if task, e := s.store.ProRestockTask(p.ProRestockTaskID); e == nil && ((task.CardProvider == "nexovcc" && task.Status == "attention") || task.StoppedAt != nil) {
+		if task, e := s.store.ProRestockTask(p.ProRestockTaskID); e == nil && ((task.CardProvider == "nexovcc" && task.Status == "attention") || task.Status == "failed" || task.StoppedAt != nil) {
 			restockRetryAvailable = true
 			state.Error = task.Message
 		}

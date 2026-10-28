@@ -171,10 +171,20 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ejh.ApplyReversalFeeRates(trades, cases)
+	checks, e := store.EJHRecords[ejhAutoCancelCheck](s.store, "auto_cancel_check")
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	checkByCard := map[string]ejhAutoCancelCheck{}
+	for _, check := range checks {
+		checkByCard[check.CardID] = check
+	}
 	type row struct {
 		ejh.CardRecord
-		Local  *gptpay.Card `json:"local,omitempty"`
-		Linked bool         `json:"issuer_linked"`
+		AutoCancelCheck *ejhAutoCancelCheck `json:"auto_cancel_check,omitempty"`
+		Local           *gptpay.Card        `json:"local,omitempty"`
+		Linked          bool                `json:"issuer_linked"`
 	}
 	rows := []row{}
 	visibleCards := map[string]bool{}
@@ -190,6 +200,9 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		c.Remote.Number = maskEJH(c.Remote.Number)
 		c.Remote.CVV = ""
 		v := row{CardRecord: c, Linked: true}
+		if check, ok := checkByCard[c.ID]; ok {
+			v.AutoCancelCheck = &check
+		}
 		if local, _, e := s.store.GPTPayCard(c.ID); e == nil {
 			v.Local = &local
 		}
@@ -347,6 +360,7 @@ func (s *Server) ejhOpenLocked(ctx context.Context, id string, input ejh.OpenInp
 		}
 	}
 	op := ejh.Operation{ID: id, Method: "open", Status: "submitting", Amount: input.CardAmount, Currency: input.CardCurrency, Automatic: automatic, CreatedAt: time.Now(), UpdatedAt: time.Now(), Request: input}
+	op.RestockTaskID, _ = ctx.Value(proRestockContextKey{}).(string)
 	if len(templateIDs) > 0 {
 		op.TemplateID = templateIDs[0]
 		for _, t := range c.Templates {

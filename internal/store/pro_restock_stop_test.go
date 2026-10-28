@@ -132,3 +132,23 @@ func TestStoppedRestockCanBeExplicitlyRetried(t *testing.T) {
 		t.Fatal("old stop changed new flow")
 	}
 }
+
+func TestStoppedUnstartedRestockDoesNotEnterInProgress(t *testing.T) {
+	s, task := preparationFixture(t)
+	if _, _, err := s.StopProRestockTask(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, total, _, err := s.ProAccountsPage(task.Email, "in_progress", 10, 0)
+	if err != nil || total != 0 {
+		t.Fatalf("unstarted stopped task entered in-progress: %d %v", total, err)
+	}
+	_, total, _, err = s.ProAccountsPage(task.Email, "unmerged", 10, 0)
+	if err != nil || total != 1 {
+		t.Fatalf("unstarted account lost: %d %v", total, err)
+	}
+	s.UpdateProAccount(task.Email, func(p *model.MailAccountProfile) { p.ProAuto.ID = "actual-flow" })
+	_, total, _, err = s.ProAccountsPage(task.Email, "in_progress", 10, 0)
+	if err != nil || total != 1 {
+		t.Fatalf("actual stopped workflow hidden: %d %v", total, err)
+	}
+}
