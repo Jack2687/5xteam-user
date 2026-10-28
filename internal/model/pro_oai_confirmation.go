@@ -122,6 +122,7 @@ type ProOAIConfirmation struct {
 	Mode                 string               `json:"mode"`
 	Status               string               `json:"status"`
 	DelaySeconds         int                  `json:"delay_seconds"`
+	RequestedAt          *time.Time           `json:"requested_at,omitempty"`
 	CompletedAt          time.Time            `json:"completed_at"`
 	NotBefore            *time.Time           `json:"not_before,omitempty"`
 	CheckedAt            *time.Time           `json:"checked_at,omitempty"`
@@ -169,8 +170,14 @@ func NewProOAIConfirmation(mode string, rule ProOAIConfirmationRule) *ProOAIConf
 	return &ProOAIConfirmation{Mode: mode, Status: "preparing", DelaySeconds: rule.DelaySeconds, RetryIntervalSeconds: rule.RetryIntervalSeconds, MaxAttempts: rule.MaxAttempts}
 }
 
+// RequestedAt authorizes a standalone mailbox inquiry, without claiming the
+// subscription was merged, deleted, refunded, or processed by a merchant.
+func (v *ProOAIConfirmation) InquiryReady() bool {
+	return v != nil && (!v.CompletedAt.IsZero() || v.Manual && v.RequestedAt != nil)
+}
+
 func (v *ProOAIConfirmation) Due(now time.Time) bool {
-	if v == nil || v.CompletedAt.IsZero() || v.ConfirmedAt != nil || v.Status == "confirmed" {
+	if !v.InquiryReady() || v.ConfirmedAt != nil || v.Status == "confirmed" {
 		return false
 	}
 	if v.Status == "waiting" {
@@ -244,7 +251,7 @@ func (p MailAccountProfile) OAIConfirmationPrerequisite(mode string) bool {
 
 func (p MailAccountProfile) OAIAvailableModes() []string {
 	var modes []string
-	if p.ManagementScope != "pro" {
+	if !p.ProActionsAllowed() {
 		return modes
 	}
 	for _, mode := range ProDispositionModes {
@@ -259,13 +266,21 @@ func (p MailAccountProfile) OAIAvailableModes() []string {
 // change or a quota refresh. Each mode retains its own result and delay.
 func (p *MailAccountProfile) PrepareOAIConfirmation(previous MailAccountProfile, settings ProOAIConfirmationSettings, now time.Time) {
 	for mode, rule := range settings.Normalized() {
-		if previous.OAIConfirmationPrerequisite(mode) || !p.OAIConfirmationPrerequisite(mode) || (p.ProOAIConfirmations[mode] != nil && !p.ProOAIConfirmations[mode].CompletedAt.IsZero()) {
+		v := p.ProOAIConfirmations[mode]
+		if previous.OAIConfirmationPrerequisite(mode) || !p.OAIConfirmationPrerequisite(mode) || v != nil && !v.CompletedAt.IsZero() {
 			continue
 		}
 		if p.ProOAIConfirmations == nil {
 			p.ProOAIConfirmations = map[string]*ProOAIConfirmation{}
 		}
-		v := p.ProOAIConfirmations[mode]
+		if v != nil && v.RequestedAt != nil {
+			// A manual inquiry before this final step does not confirm the new
+			// outcome. Preserve its replies and schedule a new configured inquiry.
+			old := v
+			v = NewProOAIConfirmation(mode, rule)
+			v.Generation, v.Replies = old.Generation+1, old.Replies
+			v.FreshLogin = true
+		}
 		if v == nil {
 			v = NewProOAIConfirmation(mode, rule)
 		}

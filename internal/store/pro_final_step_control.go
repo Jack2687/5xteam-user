@@ -12,7 +12,7 @@ import (
 func (s *Store) DuePausedProMergeV2(now time.Time) ([]model.MailAccountProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro'
+	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE (json_extract(profile,'$.management_scope')='pro' OR (json_extract(profile,'$.management_scope')='mail' AND json_type(profile,'$.mail_pro_actions')='object'))
 	AND json_extract(profile,'$.pro_merge_v2.completed_at') IS NULL
 	AND json_extract(profile,'$.pro_merge_v2.status')='interrupted'
 	AND (json_extract(profile,'$.pro_merge_v2.submitted_at') IS NULL OR json_extract(profile,'$.pro_merge_v2.accepted_at') IS NOT NULL)

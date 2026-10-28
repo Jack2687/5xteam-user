@@ -55,6 +55,42 @@ window.fetch = async (path, options = {}) => {
   const url = new URL(path, location.origin)
   const body = options.body ? JSON.parse(options.body) : {}
   fixture.requests.push({ path: url.pathname, query: url.search, body })
+  const mailAction = url.pathname.match(/^\/api\/mail\/accounts\/([^/]+)\/(pro-actions|final-step(?:\/stop)?|oai-confirmation|events(?:\/export)?)$/)
+  if (mailAction) {
+    const item = items.find(item => item.email === decodeURIComponent(mailAction[1]))
+    if (!item) return new Response(JSON.stringify({ ok: false, error: '账号不存在' }), {status:404})
+    const configuredMode = fixture.finalMode === undefined ? 'merge_v2' : fixture.finalMode
+    const mode = item.mail_pro_actions?.final_mode || configuredMode
+    const now = new Date().toISOString()
+    if (mailAction[2] === 'pro-actions') return json({account:item, mode, oai_mode:mode || 'merge', final_completed:!!item.pro_merge_v2?.completed_at,auto_paused:false})
+    if (mailAction[2] === 'events') return json({account:item, events:[],has_more:false})
+    if (mailAction[2] === 'final-step') {
+      if (!mode || body.mode !== mode) return new Response(JSON.stringify({ok:false,error:'收尾设置已变化，请刷新'}),{status:409})
+      item.mail_pro_actions = {enabled_at:now,final_mode:mode}
+      item.pro_workflow_running = true
+      item.pro_merge_v2 = {status:'running',steps:{invite:'completed',login:'running'}}
+      setTimeout(() => {
+        if (item.pro_auto?.stop_requested) return
+        item.pro_workflow_running = false
+        item.pro_merge_v2 = {status:'completed',completed_at:new Date().toISOString(),steps:{invite:'completed',login:'completed',submit:'completed',remove:'completed',groups:'completed'}}
+      }, fixture.finalDelay || 500)
+      return json(item)
+    }
+    if (mailAction[2] === 'final-step/stop') { item.pro_auto={stop_requested:true};item.pro_workflow_running=false;return json(item) }
+    if (mailAction[2] === 'oai-confirmation') {
+      item.mail_pro_actions ||= {enabled_at:now}
+      item.pro_oai_confirmations ||= {}
+      const previous=item.pro_oai_confirmations[body.mode]
+      if (body.action === 'stop') { previous.status='stopped';return json(item) }
+      const record={mode:body.mode,manual:true,requested_at:now,status:'running',steps:{wait:'completed',login:'running'},replies:previous?.replies||[]}
+      item.pro_oai_confirmations[body.mode]=record
+      setTimeout(() => {
+        if (record.status !== 'running') return
+        Object.assign(record,{status:'confirmed',confirmed_at:new Date().toISOString(),answer:'已查询该订阅，退款已处理。预计 5 至 10 个工作日入账。\n已成功',steps:{wait:'completed',login:'completed',authorize:'completed',send:'completed',reply:'completed',confirm:'confirmed'}})
+      },fixture.oaiDelay || 500)
+      return json(item)
+    }
+  }
   if (url.pathname === '/api/mail/accounts/import') {
     let imported = 0, updated = 0
     for (const account of body.accounts) {

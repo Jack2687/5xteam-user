@@ -50,6 +50,7 @@ type MailAccountProfile struct {
 	Label                      string                         `json:"label"`
 	Group                      string                         `json:"group"`
 	ManagementScope            string                         `json:"management_scope,omitempty"`
+	MailProActions             *MailProActions                `json:"mail_pro_actions,omitempty"`
 	ProManagedAt               *time.Time                     `json:"pro_managed_at,omitempty"`
 	MailPasswordPresent        bool                           `json:"mail_password_present"`
 	ClientIDPresent            bool                           `json:"client_id_present"`

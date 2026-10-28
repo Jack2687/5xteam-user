@@ -568,7 +568,7 @@ func (s *Server) currentProCredential(ctx context.Context, email string) (model.
 	if err != nil {
 		return profile, credentials, err
 	}
-	if !strings.EqualFold(profile.ManagementScope, "pro") {
+	if !profile.ProActionsAllowed() {
 		return profile, credentials, errors.New("账号不在 Pro 管理中")
 	}
 	if settings, _, _, e := s.proAccountPushSettings(profile); e == nil && settings.Sub2.AuthMode == "siwc" {
@@ -1295,7 +1295,7 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	if profile.IsProDead() {
 		return profile, errProAccountDead
 	}
-	if profile.ManagementScope != "pro" {
+	if !profile.ProFinalStepAllowed("merge") {
 		return profile, errors.New("账号不在 Pro 管理中")
 	}
 	notice := &mergeNoticeState{}
@@ -1378,6 +1378,9 @@ func (s *Server) performProMerge(ctx context.Context, email string) (out model.M
 	needsChild := profile.AcceptStatus != "completed" || profile.TransferStatus != "completed"
 	if needsChild {
 		s.auditProEvent(profile, "credentials", "running", v.Provider, "准备子号空间操作凭据", map[string]any{"execution_id": executionID})
+		if err = s.prepareMailMergeCredential(ctx, profile, credentials); err != nil {
+			return profile, err
+		}
 		profile, credentials, err = s.currentProCredential(ctx, email)
 		if err != nil {
 			return profile, err

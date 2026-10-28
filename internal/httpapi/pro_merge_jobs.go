@@ -48,7 +48,7 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 	if p.IsProDead() {
 		return p, errProAccountDead
 	}
-	if p.ManagementScope != "pro" {
+	if !p.ProActionsAllowed() {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
 	manual := action == "manual_deactivate" || action == "manual_merge" || action == "manual_merchant" || action == "manual_merge_v2"
@@ -89,6 +89,9 @@ func (s *Server) startProEndJob(email string, unlock func(), quality *proQuality
 		if p.MergeV2Started() {
 			action = "merge_v2"
 		}
+	}
+	if !p.ProFinalStepAllowed(action) {
+		return p, errors.New("邮件账号只能执行已选择的收尾流程")
 	}
 	if action == "merchant" && p.MerchantCompleted() && p.ProMerchant.RetiredAt != nil && !p.ProPostMergeGroupsPending() && !p.ProVM2CleanupPending() {
 		return p, errors.New("API 商户已处理成功，无需重复执行")

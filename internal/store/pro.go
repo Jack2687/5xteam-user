@@ -261,7 +261,7 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return p, err
 	}
-	if normalizeMailManagementScope(p.ManagementScope) != "pro" {
+	if !p.ProActionsAllowed() {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
 	if !expected.IsZero() && !p.UpdatedAt.Equal(expected) {
@@ -437,7 +437,7 @@ func (s *Store) RecoverProWorkflows() error {
 			continue
 		}
 		var p model.MailAccountProfile
-		if json.Unmarshal([]byte(raw), &p) != nil || normalizeMailManagementScope(p.ManagementScope) != "pro" {
+		if json.Unmarshal([]byte(raw), &p) != nil || !p.ProActionsAllowed() {
 			continue
 		}
 		legacyCancelled := p.TransferStatus == "failed" && (strings.Contains(p.ProLastError, "context canceled") || strings.Contains(p.ProLastError, "context deadline exceeded"))

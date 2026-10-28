@@ -1278,9 +1278,22 @@ func (s *Server) guardProAutomation(next http.Handler) http.Handler {
 			if strings.Contains(email, "@") && action != "auto-pro" && action != "oai-confirmation" {
 				s.proAutoMu.Lock()
 				running := s.proAutoJobs[strings.ToLower(email)] != nil
-				if !running && len(parts) >= 5 && parts[1] == "mail" && (action == "login" || action == "oauth") {
+				if !running && len(parts) >= 5 && parts[1] == "mail" && action != "final-step" {
+					if p, _, err := s.store.MailAccountCredential(email); err == nil && p.MailProActions != nil {
+						_, oaiRunning := s.proOAIJobs.Load(strings.ToLower(email))
+						running = p.ProWorkflowRunning || oaiRunning
+					}
+				}
+				if !running && len(parts) >= 5 && parts[1] == "mail" && (action == "login" || action == "oauth" || action == "siwc") {
 					// Hold the startup gate until the asynchronous login is registered.
 					defer s.proAutoMu.Unlock()
+					value, _ := s.proLocks.LoadOrStore("account:"+strings.ToLower(email), &sync.Mutex{})
+					lock := value.(*sync.Mutex)
+					if !lock.TryLock() {
+						writeAPI(w, 409, nil, "该账号正在执行操作，请稍后重试")
+						return
+					}
+					defer lock.Unlock()
 					next.ServeHTTP(w, r)
 					return
 				}

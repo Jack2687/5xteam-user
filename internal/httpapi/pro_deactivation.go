@@ -118,7 +118,7 @@ func (s *Server) performProDeactivation(ctx context.Context, email string) (out 
 	if p.IsProDead() {
 		return p, errProAccountDead
 	}
-	if p.ManagementScope != "pro" {
+	if !p.ProFinalStepAllowed("deactivate") {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
 	if err = s.endSIWCService(ctx, p); err != nil {

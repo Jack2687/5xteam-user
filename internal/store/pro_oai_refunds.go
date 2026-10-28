@@ -25,7 +25,7 @@ func (s *Store) SyncProOAIRefundConfirmations() ([]string, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro'`)
+	rows, err := tx.Query(`SELECT profile FROM mail_accounts WHERE (json_extract(profile,'$.management_scope')='pro' OR (json_extract(profile,'$.management_scope')='mail' AND json_type(profile,'$.mail_pro_actions')='object'))`)
 	if err != nil {
 		return nil, err
 	}

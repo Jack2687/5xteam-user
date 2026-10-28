@@ -135,8 +135,10 @@ func proMergeState(p model.MailAccountProfile) map[string]any {
 
 func (s *Server) proLogProfile(w http.ResponseWriter, r *http.Request) (model.MailAccountProfile, bool) {
 	p, _, err := s.store.MailAccountCredential(r.PathValue("email"))
-	if err != nil || p.ManagementScope != "pro" {
-		writeAPI(w, 404, nil, "Pro 账号不存在")
+	mail := strings.HasPrefix(r.URL.Path, "/api/mail/accounts/")
+	allowed := p.ManagementScope == "pro" && !mail || mail && p.ManagementScope == "mail" && p.MailProActions != nil
+	if err != nil || !allowed {
+		writeAPI(w, 404, nil, "当前管理列表中没有该账号的执行记录")
 		return p, false
 	}
 	return p, true

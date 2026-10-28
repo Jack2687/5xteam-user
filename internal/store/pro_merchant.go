@@ -33,7 +33,7 @@ func (s *Store) PrepareProMerchant(email string) (model.MailAccountProfile, ProM
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return p, submission, err
 	}
-	if p.ManagementScope != "pro" || p.ProAuto.StopRequested {
+	if !p.ProFinalStepAllowed("merchant") || p.ProAuto.StopRequested {
 		return p, submission, errors.New("账号不在 Pro 管理中或流程已停止")
 	}
 	var requestID, encrypted string
@@ -129,7 +129,7 @@ func (s *Store) PrepareProMerchant(email string) (model.MailAccountProfile, ProM
 func (s *Store) DueProMerchants(now time.Time) ([]model.MailAccountProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro'
+	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE (json_extract(profile,'$.management_scope')='pro' OR (json_extract(profile,'$.management_scope')='mail' AND json_type(profile,'$.mail_pro_actions')='object'))
 	AND json_extract(profile,'$.pro_merchant.request_id') IS NOT NULL
 	AND json_extract(profile,'$.pro_merchant.completed_at') IS NULL
 	AND COALESCE(json_extract(profile,'$.pro_merchant.status'),'')<>'failed'

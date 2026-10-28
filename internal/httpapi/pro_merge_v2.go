@@ -157,7 +157,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 	if p.IsProDead() {
 		return p, errProAccountDead
 	}
-	if p.ManagementScope != "pro" {
+	if !p.ProFinalStepAllowed("merge_v2") {
 		return p, errors.New("账号不在 Pro 管理中")
 	}
 	if p.MergeV2Completed() {

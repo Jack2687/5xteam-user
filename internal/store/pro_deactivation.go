@@ -26,7 +26,7 @@ func (s *Store) SaveProDeletionSession(email, session string) error {
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return err
 	}
-	if p.ManagementScope != "pro" {
+	if !p.ProFinalStepAllowed("deactivate") {
 		return errors.New("账号不在 Pro 管理中")
 	}
 	plain, err := s.decrypt(sealed)
@@ -48,7 +48,7 @@ func (s *Store) SaveProDeletionSession(email, session string) error {
 func (s *Store) DueProDeactivations(now time.Time) ([]model.MailAccountProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro' AND json_extract(profile,'$.pro_deactivation.submitted_at') IS NOT NULL AND COALESCE(json_extract(profile,'$.pro_workflow_running'),0)=0 AND COALESCE(json_extract(profile,'$.pro_auto.stop_requested'),0)=0 AND COALESCE(json_extract(profile,'$.pro_migration.paused'),0)=0 AND julianday(json_extract(profile,'$.pro_deactivation.next_check_at'))<=julianday(?) ORDER BY julianday(json_extract(profile,'$.pro_deactivation.next_check_at'))`, now.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE (json_extract(profile,'$.management_scope')='pro' OR (json_extract(profile,'$.management_scope')='mail' AND json_type(profile,'$.mail_pro_actions')='object')) AND json_extract(profile,'$.pro_deactivation.submitted_at') IS NOT NULL AND COALESCE(json_extract(profile,'$.pro_workflow_running'),0)=0 AND COALESCE(json_extract(profile,'$.pro_auto.stop_requested'),0)=0 AND COALESCE(json_extract(profile,'$.pro_migration.paused'),0)=0 AND julianday(json_extract(profile,'$.pro_deactivation.next_check_at'))<=julianday(?) ORDER BY julianday(json_extract(profile,'$.pro_deactivation.next_check_at'))`, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (s *Store) DueProDeactivations(now time.Time) ([]model.MailAccountProfile, 
 // Apply an edited interval to existing waits without restarting stopped work
 // or changing a request already in flight. Configuration and clocks commit together.
 func rescheduleProDeactivationsTx(tx *sql.Tx, interval time.Duration) error {
-	rows, err := tx.Query(`SELECT email,profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro' AND json_extract(profile,'$.pro_deactivation.submitted_at') IS NOT NULL AND COALESCE(json_extract(profile,'$.pro_workflow_running'),0)=0 AND COALESCE(json_extract(profile,'$.pro_auto.status'),'')<>'running'`)
+	rows, err := tx.Query(`SELECT email,profile FROM mail_accounts WHERE (json_extract(profile,'$.management_scope')='pro' OR (json_extract(profile,'$.management_scope')='mail' AND json_type(profile,'$.mail_pro_actions')='object')) AND json_extract(profile,'$.pro_deactivation.submitted_at') IS NOT NULL AND COALESCE(json_extract(profile,'$.pro_workflow_running'),0)=0 AND COALESCE(json_extract(profile,'$.pro_auto.status'),'')<>'running'`)
 	if err != nil {
 		return err
 	}

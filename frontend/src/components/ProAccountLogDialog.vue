@@ -5,7 +5,7 @@ import { api, downloadFile } from '../api'
 import { formatTime } from '../utils'
 import IconButton from './IconButton.vue'
 
-const props=defineProps({defaultPageSize:{type:Number,default:10}})
+const props=defineProps({defaultPageSize:{type:Number,default:10},endpointPrefix:{type:String,default:"/api/pro-accounts"},mailScope:Boolean})
 const view = reactive({ account: null, events: [], cursor: '', hasMore: false, loading: false, error: '', exporting: false })
 const root = ref(null)
 const sentinel = ref(null)
@@ -16,7 +16,7 @@ let observer
 const labels = { quality_result: '降智结果', quality_action: '降智处理', login: '首次登录', recharge: '开通 Pro', oauth: '获取新 RT/AT', merge: '自动合并', invite: '邀请空间', accept: '进入空间', transfer: '合并空间', remove: '移出空间', post_merge_groups: '移出后调整分组', space_merge: '四步流程', credentials: '准备凭据', push: '推送', quota: '额度查询', stage: '手动修正' }
 const statuses = { running: '执行中', completed: '成功', failed: '失败', unknown: '待确认', pending: '待处理', not_started: '未开始' }
 const label = event => labels[event.stage] || labels[event.operation] || event.stage || event.type
-const path = account => `/api/pro-accounts/${encodeURIComponent(account.email)}/events`
+const path = account => `${props.endpointPrefix}/${encodeURIComponent(account.email)}/events`
 watch([root, sentinel], ([container, target]) => {
   observer?.disconnect()
   if (!container || !target) return
@@ -77,10 +77,10 @@ defineExpose({ open })
 
 <template>
   <Teleport to="body">
-    <div v-if="view.account" class="modal-backdrop" @click.self="close" @keydown.esc="close">
-      <section ref="root" class="modal pro-log-dialog" role="dialog" aria-modal="true" aria-label="Pro 账号执行日志" tabindex="-1">
+    <div v-if="view.account" class="modal-backdrop" :style="mailScope ? { zIndex: 120 } : undefined" @click.self="close" @keydown.esc="close">
+      <section ref="root" class="modal pro-log-dialog" role="dialog" aria-modal="true" :aria-label="mailScope ? '邮件账号执行日志' : 'Pro 账号执行日志'" tabindex="-1">
         <header class="modal-heading"><div><h2>{{ view.account.email }}</h2><small>{{ view.hasMore ? '已加载' : '共' }} {{ view.events.length }} 条 · 最近 2 天</small></div><div class="heading-actions"><IconButton label="刷新账号日志" :disabled="view.loading" @click="open(view.account)"><RefreshCw :size="15" /></IconButton><button class="btn ghost" :disabled="view.exporting" @click="exportLogs"><Download :size="15" />导出账号日志</button><IconButton label="关闭日志" @click="close"><X :size="16" /></IconButton></div></header>
-        <div class="log-summary"><span v-for="stage in ['invite', 'accept', 'transfer', 'remove']" :key="stage">{{ labels[stage] }}：{{ statuses[view.account['pro_' + stage + '_status']] || view.account['pro_' + stage + '_status'] || '待处理' }}</span><span>空间：{{ view.account.target_team_id || '未关联' }}</span></div>
+        <div v-if="!mailScope" class="log-summary"><span v-for="stage in ['invite', 'accept', 'transfer', 'remove']" :key="stage">{{ labels[stage] }}：{{ statuses[view.account['pro_' + stage + '_status']] || view.account['pro_' + stage + '_status'] || '待处理' }}</span><span>空间：{{ view.account.target_team_id || '未关联' }}</span></div>
         <div class="log-timeline">
           <article v-for="event in view.events" :key="event.id" class="log-event" :class="{ failed: event.level === 'error' || event.to_status === 'failed' }">
             <div class="event-heading"><time>{{ formatTime(event.created_at) }}</time><strong>{{ label(event) }}</strong><span>{{ statuses[event.to_status] || '' }}</span></div>

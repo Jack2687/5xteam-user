@@ -43,7 +43,7 @@ func (s *Store) FinishProManualStage(email, stage, id, status, message string) e
 func (s *Store) RecoverProManualStages() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT email,profile FROM mail_accounts WHERE json_extract(profile,'$.management_scope')='pro' AND json_type(profile,'$.pro_manual_stages')='object'`)
+	rows, err := s.db.Query(`SELECT email,profile FROM mail_accounts WHERE (json_extract(profile,'$.management_scope')='pro' OR (json_extract(profile,'$.management_scope')='mail' AND json_type(profile,'$.mail_pro_actions')='object')) AND json_type(profile,'$.pro_manual_stages')='object'`)
 	if err != nil {
 		return err
 	}

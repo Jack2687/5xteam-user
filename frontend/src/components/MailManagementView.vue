@@ -25,6 +25,8 @@ import {
   KeyRound,
   LoaderCircle,
   Mail,
+  MessageSquareText,
+  ShieldCheck,
   Plus,
   RefreshCw,
   MoreHorizontal,
@@ -52,6 +54,10 @@ import Pagination from "./Pagination.vue";
 import TeamVisitCount from "./TeamVisitCount.vue";
 import MailGPTInfoProgress from "./MailGPTInfoProgress.vue";
 import AccountCredentialsDialog from "./AccountCredentialsDialog.vue";
+import MailProActionsDialog from "./MailProActionsDialog.vue";
+import { dispositionLabels } from "../pro-disposition";
+import { oaiStatusLabel, mailFinalStatusLabel, mailActionsPending } from "../mailProActions.js";
+const mailProActions = ref(null);
 import { gptPlanLabel, gptCreatedTime, gptInfoTitle } from "../mailGPTInfo";
 
 const gptInfoProgress = ref(null);
@@ -1267,7 +1273,7 @@ onMounted(() => {
   refreshAll();
   startTimer(() => {
     if (!document.hidden && activeTab.value === "accounts" && !accountsLoading.value &&
-        (spaceFilterCounts.recovering > 0 || spaceFilter.value === "recovering")) loadAccountsHandled();
+        (spaceFilterCounts.recovering > 0 || spaceFilter.value === "recovering" || accounts.value.some(mailActionsPending))) loadAccountsHandled();
   }, 5000);
   document.addEventListener("click", closeActionMenu);
 });
@@ -1570,6 +1576,8 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
                     >
                       <Crown :size="14" />Pro 管理
                     </button>
+                    <button class="btn ghost compact" type="button" :disabled="!!busy" title="仅执行 Pro 管理所选的最后一步，账号留在邮件管理" @click="mailProActions?.open(account, 'final')"><ShieldCheck :size="14"/>{{account.pro_workflow_running ? '收尾进度' : '执行收尾'}}</button>
+                    <button class="btn ghost compact" type="button" :disabled="!!busy" title="询问 OAI 处理结果；在邮件管理查看进度和回答" @click="mailProActions?.open(account, 'oai')"><MessageSquareText :size="14"/>OAI 确认</button>
                     <div class="action-menu" @mouseenter="showActionMenu(account, $event)" @mouseleave="scheduleCloseActionMenu">
                       <button
                         class="icon-button"
@@ -1638,6 +1646,10 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
                         </button>
                       </div></Teleport>
                     </div>
+                  </div>
+                  <div v-if="account.mail_pro_actions" class="mail-pro-summary">
+                    <button v-if="account.mail_pro_actions.final_mode" type="button" @click="mailProActions?.open(account, 'final', false)">{{dispositionLabels[account.mail_pro_actions.final_mode]}} · {{mailFinalStatusLabel(account)}}</button>
+                    <button v-if="Object.keys(account.pro_oai_confirmations||{}).length" type="button" @click="mailProActions?.open(account, 'oai', false)">OAI · {{oaiStatusLabel(account.pro_oai_confirmations)}}</button>
                   </div>
                 </td>
               </tr>
@@ -1937,6 +1949,7 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
       </section>
     </div>
 
+    <MailProActionsDialog ref="mailProActions" :default-page-size="props.defaultPageSize" @updated="loadAccountsHandled"/>
     <AccountCredentialsDialog ref="credentialViewer" @exported="setMessage($event, 'success')" @saved="loadAccountsHandled" />
 
     <div v-if="atCheckDialog.open" class="modal-backdrop login-dialog-backdrop">
@@ -3140,4 +3153,8 @@ onBeforeUnmount(() => document.removeEventListener("click", closeActionMenu));
     margin-left: 18px;
   }
 }
+</style>
+
+<style scoped>
+.mail-pro-summary{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;color:var(--muted);font-size:11px}.mail-pro-summary button:hover{color:var(--green-strong);text-decoration:underline}
 </style>

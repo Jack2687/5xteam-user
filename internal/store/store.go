@@ -603,6 +603,10 @@ func preserveMailPlanCheck(profile *model.MailAccountProfile, old model.MailAcco
 }
 
 func preserveProProfile(profile *model.MailAccountProfile, old model.MailAccountProfile) {
+	profile.MailProActions = old.MailProActions
+	if old.MailProActions != nil {
+		profile.ProMergeV2, profile.ProMerchant, profile.ProDeactivation = old.ProMergeV2, old.ProMerchant, old.ProDeactivation
+	}
 	profile.ProDead = old.ProDead
 	profile.ProOAIConfirmations = old.ProOAIConfirmations
 	profile.ProDailyMerge, profile.ProMergeTrigger = old.ProDailyMerge, old.ProMergeTrigger
@@ -656,6 +660,9 @@ func (s *Store) UpdateMailAccountManagementScope(email, scope string) (model.Mai
 	now := time.Now()
 	if scope != "pro" && profile.VM2 != nil && profile.VM2.DeletedAt == nil {
 		return profile, errors.New("账号仍绑定 vm2api，请先完成移出清理或在 Pro 管理中删除账号")
+	}
+	if profile.MailProActions != nil && mailProActionPending(profile) {
+		return profile, errors.New("邮件账号的收尾或 OAI 确认尚未结束，请先完成或停止")
 	}
 	profile.ManagementScope, profile.UpdatedAt = scope, now
 	if scope == "pro" {
@@ -943,6 +950,9 @@ func (s *Store) deleteMailAccountLocked(email string, pro bool) error {
 		var p model.MailAccountProfile
 		if err = json.Unmarshal([]byte(raw), &p); err != nil {
 			return err
+		}
+		if p.MailProActions != nil && mailProActionPending(p) {
+			return errors.New("账号的收尾或 OAI 确认尚未结束，请先完成或停止")
 		}
 		if !pro && normalizeMailManagementScope(p.ManagementScope) == "pro" {
 			return errors.New("请从 Pro 管理删除账号，以核对任务和开通订单")

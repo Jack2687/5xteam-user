@@ -54,7 +54,7 @@ func (s *Server) proOAICheckpoint(ctx context.Context, email, mode string, gener
 	}
 	_, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		v := p.ProOAIConfirmations[mode]
-		if v == nil || v.Generation != generation || v.Status == "stopped" || v.ConfirmedAt != nil || p.ProAuto.StopRequested {
+		if v == nil || v.Generation != generation || v.Status == "stopped" || v.ConfirmedAt != nil || p.OAIBlockedByAccountStop(mode) {
 			checkpointErr = errors.New("OAI 确认任务已停止或更新")
 			return
 		}
@@ -81,7 +81,7 @@ func (s *Server) proOAICheckpoint(ctx context.Context, email, mode string, gener
 				checkpointErr = errors.New("OAI 询问开关已关闭")
 				return
 			}
-			if prepare || v.SentAt != nil || v.CompletedAt.IsZero() {
+			if prepare || v.SentAt != nil || !v.InquiryReady() {
 				checkpointErr = errors.New("已有提问记录或流程未完成，禁止重复发送")
 				return
 			}
@@ -163,7 +163,7 @@ func (s *Server) runProOAI(ctx context.Context, email, mode string) error {
 	var generation int
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		v := p.ProOAIConfirmations[mode]
-		if ctx.Err() != nil || !v.Due(time.Now()) || (!cfg.OAIConfirmation[mode].Enabled && !v.Manual) || p.ProAuto.StopRequested || p.ProWorkflowRunning {
+		if ctx.Err() != nil || !v.Due(time.Now()) || (!cfg.OAIConfirmation[mode].Enabled && !v.Manual) || p.OAIBlockedByAccountStop(mode) || p.ProWorkflowRunning {
 			return
 		}
 		if v.MaxAttempts < 1 {
@@ -379,6 +379,10 @@ func (s *Server) dispatchProOAI(ctx context.Context) {
 		if !lock.TryLock() {
 			continue
 		}
+		if s.proLoginAlreadyRunning(item.Email) {
+			lock.Unlock()
+			continue
+		}
 		call, cancel := context.WithTimeout(ctx, 8*time.Minute)
 		job := &proOAIJob{Mode: item.Mode, Cancel: cancel}
 		s.proOAIJobs.Store(item.Email, job)
@@ -395,6 +399,10 @@ func (s *Server) dispatchProOAI(ctx context.Context) {
 }
 
 func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
+	s.manageOAIConfirmation(w, r, false)
+}
+
+func (s *Server) manageOAIConfirmation(w http.ResponseWriter, r *http.Request, mail bool) {
 	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	var in struct {
 		Mode    string `json:"mode"`
@@ -419,16 +427,49 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
+	if mail && in.Action != "stop" {
+		p, c, readErr := s.store.MailAccountCredential(email)
+		if readErr != nil {
+			writeAPI(w, 404, nil, "邮件账号不存在")
+			return
+		}
+		if err := s.checkMailActionAvailable(p); err != nil {
+			writeAPI(w, 409, nil, err.Error())
+			return
+		}
+		if p.ProOAIConfirmations[in.Mode] == nil {
+			mode := mailFinalMode(p, cfg)
+			if mode == "" {
+				mode = cfg.Disposition()
+			}
+			if in.Mode != mode {
+				writeAPI(w, 409, nil, "确认流程设置已变化，请刷新后操作")
+				return
+			}
+			if c.GptPassword == "" || c.TotpSecret == "" {
+				writeAPI(w, 409, nil, "请先在邮件管理补齐 ChatGPT 密码和 2FA")
+				return
+			}
+		}
+	}
 	var actionErr error
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		v := p.ProOAIConfirmations[in.Mode]
+		if (mail && p.ManagementScope != "mail") || (!mail && p.ManagementScope != "pro") {
+			actionErr = errors.New("账号已移出邮件管理，请刷新")
+			return
+		}
+		if mail && in.Action != "stop" && (p.ProWorkflowRunning || p.ProAuto.Status == "running") {
+			actionErr = errors.New("收尾流程正在执行，请完成后再确认")
+			return
+		}
 		if in.OrderID != "" && ((v != nil && v.OrderID != "" && v.OrderID != in.OrderID) || (v == nil && p.ProAuto.OrderID != "" && p.ProAuto.OrderID != in.OrderID)) {
 			actionErr = errors.New("账号已关联其他开通订单，请刷新后操作")
 			return
 		}
 		// Explicit manual catch-up is allowed for an already completed historical
 		// outcome; enabling settings alone never backfills old accounts.
-		if (in.Action == "retry" || in.Action == "restart") && v == nil && p.ManagementScope == "pro" && p.OAIConfirmationPrerequisite(in.Mode) && !p.ProAuto.StopRequested {
+		if (in.Action == "retry" || in.Action == "restart") && v == nil && p.ProActionsAllowed() && p.OAIConfirmationPrerequisite(in.Mode) && !p.ProAuto.StopRequested {
 			v = model.NewProOAIConfirmation(in.Mode, cfg.OAIConfirmation[in.Mode])
 			v.OrderID = p.ProAuto.OrderID
 			v.CompletedAt = time.Now()
@@ -444,7 +485,16 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 			}
 			p.ProOAIConfirmations[in.Mode] = v
 		}
-		if p.ManagementScope != "pro" || v == nil || v.CompletedAt.IsZero() {
+		if mail && (in.Action == "retry" || in.Action == "restart") && v == nil && !p.ProWorkflowRunning && p.ProAuto.Status != "running" {
+			v = model.NewProOAIConfirmation(in.Mode, cfg.OAIConfirmation[in.Mode])
+			now := time.Now()
+			v.RequestedAt, v.Manual = &now, true
+			if p.ProOAIConfirmations == nil {
+				p.ProOAIConfirmations = map[string]*model.ProOAIConfirmation{}
+			}
+			p.ProOAIConfirmations[in.Mode] = v
+		}
+		if !p.ProActionsAllowed() || (!mail && p.ManagementScope != "pro") || !v.InquiryReady() {
 			actionErr = errors.New("该流程尚未完成，没有 OAI 确认任务")
 			return
 		}
@@ -456,7 +506,7 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 			actionErr = errors.New("OAI 确认正在执行")
 			return
 		}
-		if in.Action != "stop" && p.ProAuto.StopRequested {
+		if in.Action != "stop" && p.ProAuto.StopRequested && !mail {
 			actionErr = errors.New("账号全自动已停止，请先恢复账号流程")
 			return
 		}
@@ -468,6 +518,9 @@ func (s *Server) manageProOAI(w http.ResponseWriter, r *http.Request) {
 			v.Error = "已手动停止 OAI 确认"
 			v.Step(v.Stage, "interrupted", now)
 		} else {
+			if mail {
+				v.RequestedAt = &now
+			}
 			if in.Action == "restart" {
 				// Retain history, but acquire a fresh login and Help authorization.
 				v.FreshLogin = true

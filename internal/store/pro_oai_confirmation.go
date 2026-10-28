@@ -16,7 +16,15 @@ type ProOAIWorkItem struct {
 
 func (s *Store) ProOAIWork(now time.Time, recoverRunning bool) ([]ProOAIWorkItem, error) {
 	s.mu.Lock()
-	rows, err := s.db.Query(`SELECT m.email,j.key,j.value,coalesce(json_extract(m.profile,'$.pro_auto.stop_requested'),0) OR coalesce(json_extract(m.profile,'$.pro_workflow_running'),0) FROM pro_oai_confirmation_accounts c JOIN mail_accounts m ON m.email=c.email JOIN json_each(c.profile) j WHERE json_extract(m.profile,'$.management_scope')='pro' AND json_extract(j.value,'$.status') IN ('waiting','failed','unconfirmed','review','running') ORDER BY json_extract(j.value,'$.completed_at'),m.email,j.key`)
+	rows, err := s.db.Query(`SELECT m.email,j.key,j.value,
+	(coalesce(json_extract(m.profile,'$.pro_auto.stop_requested'),0) AND NOT
+	 (json_extract(m.profile,'$.management_scope')='mail' AND json_type(m.profile,'$.mail_pro_actions')='object'
+	  AND coalesce(json_extract(j.value,'$.manual'),0) AND json_type(j.value,'$.requested_at') IS 'text'))
+	OR coalesce(json_extract(m.profile,'$.pro_workflow_running'),0)
+	FROM pro_oai_confirmation_accounts c JOIN mail_accounts m ON m.email=c.email JOIN json_each(c.profile) j
+	WHERE (json_extract(m.profile,'$.management_scope')='pro' OR (json_extract(m.profile,'$.management_scope')='mail' AND json_type(m.profile,'$.mail_pro_actions')='object'))
+	AND json_extract(j.value,'$.status') IN ('waiting','failed','unconfirmed','review','running')
+	ORDER BY json_extract(j.value,'$.completed_at'),m.email,j.key`)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
@@ -89,7 +97,7 @@ func (s *Store) SaveProOAISession(email, mode string, generation int, session ma
 		return err
 	}
 	v := p.ProOAIConfirmations[mode]
-	if v == nil || v.Generation != generation || v.Status == "stopped" || v.ConfirmedAt != nil || p.ProAuto.StopRequested {
+	if v == nil || v.Generation != generation || v.Status == "stopped" || v.ConfirmedAt != nil || p.OAIBlockedByAccountStop(mode) {
 		return errors.New("Help 会话所属任务已停止或更新")
 	}
 	sealed, err := s.encrypt(raw)
