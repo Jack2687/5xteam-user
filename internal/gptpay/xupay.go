@@ -21,6 +21,29 @@ func XUPayCountry(country string) bool {
 	return false
 }
 
+// New subscriptions need a web refresh credential. Check before reserving a
+// card; immutable legacy order replays do not pass through this admission check.
+func XUPayRefreshable(session Session) bool {
+	snapshot := NewSnapshot(Settings{Provider: XUPay}, "", CardSecret{}, session)
+	if token := snapshot.WebSessionToken; token != "" {
+		return len(token) <= 32768 && (&http.Cookie{Name: "__Secure-next-auth.session-token", Value: token}).Valid() == nil
+	}
+	var raw struct {
+		Cookies string `json:"cookies"`
+	}
+	if json.Unmarshal(session.Raw, &raw) != nil || len(raw.Cookies) > 65536 || strings.ContainsAny(raw.Cookies, "\r\n") {
+		return false
+	}
+	for _, cookie := range (&http.Request{Header: http.Header{"Cookie": {raw.Cookies}}}).Cookies() {
+		if xupaySessionCookie.MatchString(cookie.Name) && cookie.Value != "" && cookie.Valid() == nil {
+			return true
+		}
+	}
+	return false
+}
+
+var xupaySessionCookie = regexp.MustCompile(`^__Secure-(?:next-auth|platform)\.session-token(?:\.[0-9]{1,2})?$`)
+
 func (e *APIError) xupayMessage() string {
 	message := map[string]string{
 		"API_KEY_INVALID": "API Key 无效或已过期", "RESOURCE_FORBIDDEN": "账户或接口权限不足",
@@ -162,6 +185,7 @@ func (v xupayDetail) remote(id string) (RemoteOrder, error) {
 	} else {
 		r.PaymentAmountMinor, r.PaymentCurrency, r.PaymentAmountSource = p.Amount, p.Currency, "quoted"
 	}
+	r.PaymentCurrency = strings.ToUpper(strings.TrimSpace(r.PaymentCurrency))
 	r.PaymentCountry = o.Country
 	if r.PaymentAmountMinor != nil && *r.PaymentAmountMinor >= 0 && r.PaymentCurrency != "" {
 		// Card ledgers store decimal amounts, including JPY (zero minor digits).

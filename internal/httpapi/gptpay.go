@@ -300,6 +300,9 @@ func gptPaySession(p model.MailAccountProfile, c model.MailAccountCredentials) (
 var gptPayRequestID = regexp.MustCompile(`^[A-Za-z0-9_-]{16,80}$`)
 
 func validateGPTPaySession(provider string, session gptpay.Session) error {
+	if provider == gptpay.XUPay && !gptpay.XUPayRefreshable(session) {
+		return fmt.Errorf("序付订阅需要包含 sessionToken 或有效会话 Cookie 的完整 Session，请重新登录或使用全自动开通；仅 AT 无法办理")
+	}
 	if provider == gptpay.CMSNav && len(session.Raw) == 0 {
 		return fmt.Errorf("CMSNav 需要与当前 AT 匹配的完整 Session，请先获取临时 AT 或使用全自动开通")
 	}

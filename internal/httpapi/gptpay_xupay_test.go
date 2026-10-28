@@ -54,6 +54,18 @@ func TestXUPayEndToEndOriginalOrderAndPaidFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := map[string]any{"request_id": "xupay-order-test001", "provider": gptpay.XUPay, "plan_code": "pro20", "card_id": "test-card"}
+	if rec := payCall(t, s.createGPTPayOrder, "email", email, input); rec.Code != 400 || posts != 0 {
+		t.Fatal("AT-only session must stop before a supplier submission")
+	}
+	p, c, err := st.MailAccountCredential(email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"accessToken": c.AccessToken, "session_token": "fixture-web-session", "user": map[string]any{"email": email}, "account": map[string]any{"id": "personal-id"}})
+	c.ChatGPTSession = string(raw)
+	if _, err = st.SaveMailAccount(p, c); err != nil {
+		t.Fatal(err)
+	}
 	o := payOrder(t, payCall(t, s.createGPTPayOrder, "email", email, input))
 	if o.Status != "submission_unknown" || !o.SubmissionStarted || posts != 1 {
 		t.Fatal(o)

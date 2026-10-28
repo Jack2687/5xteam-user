@@ -179,3 +179,53 @@ func TestXUPaySettingsAndPreflight(t *testing.T) {
 		}
 	}
 }
+
+func TestXUPayRefreshCredentialAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      bool
+	}{
+		{"at_only", `{"accessToken":"fixture-at"}`, false},
+		{"oauth_refresh_only", `{"refresh_token":"fixture-oauth-rt"}`, false},
+		{"session_token", `{"sessionToken":"fixture-web-session"}`, true},
+		{"saved_login_alias", `{"session_token":"fixture-web-session"}`, true},
+		{"cookie", `{"cookies":"__Secure-platform.session-token=fixture-cookie"}`, true},
+		{"chunked_cookie", `{"cookies":"__Secure-next-auth.session-token.0=part-one; __Secure-next-auth.session-token.1=part-two"}`, true},
+		{"unrelated_cookie", `{"cookies":"analytics=fixture-cookie"}`, false},
+		{"empty_cookie", `{"cookies":"__Secure-next-auth.session-token="}`, false},
+		{"invalid_token", `{"sessionToken":"invalid\r\nvalue"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var session Session
+			if err := json.Unmarshal([]byte(tc.raw), &session); err != nil {
+				t.Fatal(err)
+			}
+			if got := XUPayRefreshable(session); got != tc.want {
+				t.Fatalf("refreshable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestXUPayCurrencyCasePreservesMinorUnits(t *testing.T) {
+	for _, currency := range []string{"jpy", "JPY", "php", "PHP"} {
+		for _, charged := range []bool{false, true} {
+			v := xupayDetail{}
+			v.Order.ID, v.Order.Product, v.Order.Workflow, v.Order.Status = "order-currency", "pro", "subscription", "succeeded"
+			v.Order.Activation, v.Payment.State = "active", "succeeded"
+			amount := int64(30000)
+			v.Payment.Amount, v.Payment.Currency = &amount, currency
+			if charged {
+				v.Payment.ChargedAmount, v.Payment.ChargedCurrency = &amount, currency
+			}
+			r, err := v.remote(v.Order.ID)
+			want := "300.00"
+			if strings.EqualFold(currency, "JPY") {
+				want = "30000"
+			}
+			if err != nil || r.PaymentAmount != want || r.PaymentCurrency != strings.ToUpper(currency) || *r.PaymentAmountMinor != amount {
+				t.Fatalf("currency=%s charged=%v: %+v, %v", currency, charged, r, err)
+			}
+		}
+	}
+}

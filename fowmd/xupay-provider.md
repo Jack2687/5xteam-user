@@ -11,7 +11,7 @@
 
 ## 后台调用
 
-Space 后台使用 `Authorization: Bearer <序付 API Key>` 提交 `POST /api/v1/orders`，发送本次完整 Session、所选卡片、套餐、地区、`workflow=subscription`、`seats=1`、`accepted=true`、`keep_renewal=false`。账单资料由序付后台从已启用正式池抽取，Space 不生成或覆盖。
+Space 后台使用 `Authorization: Bearer <序付 API Key>` 提交 `POST /api/v1/orders`，发送本次含 sessionToken 或受支持会话 Cookie 的完整 Session、所选卡片、套餐、地区、`workflow=subscription`、`seats=1`、`accepted=true`、`keep_renewal=false`。账单资料由序付后台从已启用正式池抽取，Space 不生成或覆盖。
 
 `Idempotency-Key` 固定使用 Space 原订单 ID，完整请求与供应商地址、密钥以现有加密快照保存。请求超时只能重放原订单、原参数及原幂等键；拿到序付订单 ID 后只调用 `GET /api/v1/orders/{id}` 查询。首次提交前持久记录提交标记，避免重启或超时后遇到限流、过期 Session 等拒绝时把已受理的订单误记失败。
 
@@ -36,3 +36,17 @@ Space 后台使用 `Authorization: Bearer <序付 API Key>` 提交 `POST /api/v1
 查询和错误投影只保留需要的订单字段、固定错误分类及状态；不返回完整 Session、银行卡号、CVV、API Key 或原始上游响应。生产配置和真实密钥不放入源码。
 
 本次验证采用本地模拟序付 HTTP 接口与隔离浏览器，覆盖幂等回放、超时后限流、配置切换、已付款保护、订阅确认/续费状态、金额单位与密钥隔离；不进行真实银行卡扣款。
+
+## 2026-10-28 cs-live 协议升级适配（本地，尚未发布）
+
+序付 OpenAPI 1.6.0 保留原 12 路径 / 13 操作，以及 Bearer、幂等键、订单及金额字段。新的订阅必须有网页刷新凭据，Space 新单在提交前检查；仅 AT 或 OAuth refresh_token 不够，需要重新登录获取匹配的完整 Session。旧订单重放保持原加密快照，不修改其原参数或幂等键。
+
+序付订阅在服务端执行提链、付款、生效与续费，固定原订单出口和随机账单副本。付款后先出现 payment.state=succeeded，再按 order.activation 和 order.renewal 分别判定。Space 将付款成功且生效 active 作为“开通成功”，仍继续查询 pending/retrying 的取消状态；取消失败单独提示，不重付。生效 review 或付款未知保留人工核实，不自动调用新的付款入口。
+
+payment.can_check 是序付原交易接续提示。Space 仍只查询原单；需接续时在序付操作，可能继续原交易批准、生效或续费，不能将整个 payment/check 当成纯只读。
+
+序付付款币种可返回小写，Space 统一大写后计算金额：30000 jpy 是 30000 日元，30000 php 是 300.00 PHP；实收优先于报价，服务费 cent_R 独立计价。
+
+本轮未改变正式供应商配置或 API Key，未提交真实付款。
+
+本轮验证：gptpay 全包、XUPay HTTP 集成、Pro 全自动 XUPay 分支、相关 vet 与 Linux 编译通过。merge/user 基线同树且改动逐字节相同，复用验证。实际 Space 客户端连接本机隔离序付 API 完成 Pro5/PH 与 Pro20/JP 创建、幂等重放、详情状态和实收单位检查；未运行真实上游付款，详情终态仅测试数据库模拟。
