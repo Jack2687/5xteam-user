@@ -8,6 +8,31 @@ import (
 	"chatgpt-space-merge/internal/ejh"
 )
 
+// Caller already persisted EJHBeginOperation. Never retry this mutation: a
+// timeout retains its claim and the existing query-only monitor takes over.
+func (s *Server) submitEJHCancellationLocked(ctx context.Context, cfg ejh.Settings, key string, op ejh.Operation) (ejh.Operation, error) {
+	var out struct {
+		OrderNo string `json:"orderNo"`
+		Status  string `json:"status"`
+	}
+	err := s.ejhClientLocked().Call(ctx, cfg, key, "card.cancel.info", map[string]any{"orderNo": op.OrderNo}, &out)
+	op.Status = "unknown"
+	if err != nil {
+		op.Error = err.Error()
+	} else if out.OrderNo != op.OrderNo || out.Status != "SUCCESS" {
+		op.Error = "返回状态或订单号不匹配，请核对"
+	} else {
+		op.Status, op.Note = "processing", "销卡申请已提交，正在查询卡台处理结果"
+	}
+	op.UpdatedAt = time.Now()
+	if err = s.store.EJHPut("operation", op.ID, op); err != nil {
+		return op, err
+	}
+	job, done := context.WithTimeout(ctx, 12*time.Second)
+	defer done()
+	return s.checkEJHCancellationLocked(job, cfg, key, op)
+}
+
 // Query only: never replay card.cancel.info, including after timeouts/restarts.
 func (s *Server) checkEJHCancellationLocked(ctx context.Context, cfg ejh.Settings, key string, op ejh.Operation) (ejh.Operation, error) {
 	var remote ejh.Card

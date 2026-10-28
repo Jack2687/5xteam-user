@@ -10,24 +10,25 @@ type Operation struct {
 	Platform     string `json:"platform"`
 	TemplateName string `json:"template_name,omitempty"`
 
-	PlanCode    string     `json:"plan_code,omitempty"`
-	TemplateID  string     `json:"template_id,omitempty"`
-	ID          string     `json:"id"`
-	Method      string     `json:"method"`
-	CardID      string     `json:"card_id"`
-	OrderNo     string     `json:"order_no"`
-	Status      string     `json:"status"`
-	Error       string     `json:"error"`
-	Amount      string     `json:"amount"`
-	Currency    string     `json:"currency"`
-	Automatic   bool       `json:"automatic"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	Request     OpenInput  `json:"request"`
-	Result      *Card      `json:"result,omitempty"`
-	Note        string     `json:"note"`
-	NextCheckAt *time.Time `json:"next_check_at,omitempty"`
-	CheckError  string     `json:"check_error,omitempty"`
+	PlanCode           string     `json:"plan_code,omitempty"`
+	TemplateID         string     `json:"template_id,omitempty"`
+	ID                 string     `json:"id"`
+	Method             string     `json:"method"`
+	CardID             string     `json:"card_id"`
+	OrderNo            string     `json:"order_no"`
+	Status             string     `json:"status"`
+	Error              string     `json:"error"`
+	Amount             string     `json:"amount"`
+	Currency           string     `json:"currency"`
+	Automatic          bool       `json:"automatic"`
+	AutoCheckStartedAt *time.Time `json:"auto_check_started_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	Request            OpenInput  `json:"request"`
+	Result             *Card      `json:"result,omitempty"`
+	Note               string     `json:"note"`
+	NextCheckAt        *time.Time `json:"next_check_at,omitempty"`
+	CheckError         string     `json:"check_error,omitempty"`
 }
 type CardRecord struct {
 	NormalPending   bool       `json:"normal_pending,omitempty"`

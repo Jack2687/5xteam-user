@@ -12,18 +12,20 @@ import (
 )
 
 type Settings struct {
-	Enabled             bool       `json:"enabled"`
-	URL                 string     `json:"url"`
-	AppKey              string     `json:"app_key"`
-	SecretPresent       bool       `json:"secret_present"`
-	DefaultMaxAccounts  int        `json:"default_max_accounts"`
-	SingleActiveAccount bool       `json:"single_active_account"`
-	SyncEnabled         bool       `json:"sync_enabled"`
-	SyncIntervalSeconds int        `json:"sync_interval_seconds"`
-	PageRefreshSeconds  int        `json:"page_refresh_seconds"`
-	AlertHours          int        `json:"alert_hours"`
-	ReversalFeePercent  float64    `json:"reversal_fee_percent"`
-	Templates           []Template `json:"templates"`
+	Enabled                   bool       `json:"enabled"`
+	URL                       string     `json:"url"`
+	AppKey                    string     `json:"app_key"`
+	SecretPresent             bool       `json:"secret_present"`
+	DefaultMaxAccounts        int        `json:"default_max_accounts"`
+	SingleActiveAccount       bool       `json:"single_active_account"`
+	SyncEnabled               bool       `json:"sync_enabled"`
+	SyncIntervalSeconds       int        `json:"sync_interval_seconds"`
+	AutoCancelEnabled         bool       `json:"auto_cancel_enabled"`
+	AutoCancelIntervalSeconds int        `json:"auto_cancel_interval_seconds"`
+	PageRefreshSeconds        int        `json:"page_refresh_seconds"`
+	AlertHours                int        `json:"alert_hours"`
+	ReversalFeePercent        float64    `json:"reversal_fee_percent"`
+	Templates                 []Template `json:"templates"`
 }
 type Template struct {
 	Platform  string `json:"platform"`
@@ -110,7 +112,7 @@ func (t Trade) Kind() string {
 	return "other"
 }
 func DefaultSettings() Settings {
-	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SingleActiveAccount: true, SyncIntervalSeconds: 300, PageRefreshSeconds: 30, AlertHours: 24, ReversalFeePercent: 6, Templates: []Template{}}
+	return Settings{URL: "https://www.ejhcard.com", DefaultMaxAccounts: 3, SingleActiveAccount: true, SyncIntervalSeconds: 300, AutoCancelIntervalSeconds: 300, PageRefreshSeconds: 30, AlertHours: 24, ReversalFeePercent: 6, Templates: []Template{}}
 }
 
 var decimal = regexp.MustCompile(`^\d{1,12}(\.\d{1,6})?$`)
@@ -139,6 +141,12 @@ func Positive(v string) error {
 	return nil
 }
 func Normalize(v Settings) (Settings, error) {
+	if v.AutoCancelIntervalSeconds == 0 {
+		v.AutoCancelIntervalSeconds = 300
+	}
+	if v.AutoCancelIntervalSeconds < 60 || v.AutoCancelIntervalSeconds > 86400 {
+		return v, fmt.Errorf("自动销卡检查间隔须为 60～86400 秒")
+	}
 	if v.PageRefreshSeconds == 0 {
 		v.PageRefreshSeconds = 30
 	}

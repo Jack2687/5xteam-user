@@ -170,6 +170,14 @@ func (s *Store) EJHBeginOperation(op ejh.Operation) error {
 		if err = json.Unmarshal([]byte(raw), &card); err != nil {
 			return err
 		}
+		if op.Automatic {
+			if op.OrderNo != card.Remote.OrderNo || op.ID != EJHID("auto-cancel", card.ID) || op.AutoCheckStartedAt == nil {
+				return fmt.Errorf("自动销卡请求编号或卡片归属不一致")
+			}
+			if err = s.ejhAutoCancelCheckTx(tx, card, *op.AutoCheckStartedAt); err != nil {
+				return err
+			}
+		}
 		switch card.Remote.Status {
 		case "1", "3", "4", "5", "6", "7":
 		default:

@@ -21,11 +21,12 @@ import (
 )
 
 type ejhRuntime struct {
-	lifecycle sync.Mutex
-	mu        sync.Mutex
-	client    *ejh.Client
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	lifecycle    sync.Mutex
+	autoCancelMu sync.Mutex
+	mu           sync.Mutex
+	client       *ejh.Client
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
 }
 
 func (s *Server) ejhClientLocked() *ejh.Client {
@@ -95,6 +96,8 @@ func (s *Server) saveEJHSettings(w http.ResponseWriter, r *http.Request) {
 	in.SingleActiveAccount = current.SingleActiveAccount
 	in.ReversalFeePercent = current.ReversalFeePercent
 	in.PageRefreshSeconds = current.PageRefreshSeconds
+	in.AutoCancelEnabled = current.AutoCancelEnabled
+	in.AutoCancelIntervalSeconds = current.AutoCancelIntervalSeconds
 	if decodeJSON(w, r, &in, 256<<10) != nil {
 		return
 	}
@@ -302,7 +305,9 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, "读取卡片回款方式失败")
 		return
 	}
-	writeAPI(w, 200, map[string]any{"payment_policies": policies, "merchant_fees": merchantFees, "cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "refund_fees": refundFees, "reversal_fee_percent": settings.ReversalFeePercent, "page_refresh_seconds": settings.PageRefreshSeconds, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
+	var autoCancel ejhAutoCancelState
+	_ = s.store.EJHGet("auto_cancel", "latest", &autoCancel)
+	writeAPI(w, 200, map[string]any{"auto_cancel": autoCancel, "payment_policies": policies, "merchant_fees": merchantFees, "cards": rows, "operations": ops, "trades": trades, "cases": cases, "sync": syncState, "balance": balance, "recharge_ledger": ledger, "refund_fees": refundFees, "reversal_fee_percent": settings.ReversalFeePercent, "page_refresh_seconds": settings.PageRefreshSeconds, "consumption_history": usage, "audit": audit, "server_time": time.Now()}, "")
 }
 func maskEJH(n string) string {
 	if len(n) > 4 {
@@ -608,16 +613,21 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 500, nil, e.Error())
 		return
 	}
-	method := "card.change.info"
 	if in.Action == "cancel" {
-		method = "card.cancel.info"
+		op, e = s.submitEJHCancellationLocked(r.Context(), c, k, op)
+		if e != nil {
+			writeAPI(w, 500, nil, "销卡已提交，查询记录保存失败，请查看操作记录")
+			return
+		}
+		writeAPI(w, 200, op, "")
+		return
 	}
 	var out struct {
 		OrderNo string `json:"orderNo"`
 		Status  string `json:"status"`
 		Balance string `json:"billAmount"`
 	}
-	e = s.ejhClientLocked().Call(r.Context(), c, k, method, data, &out)
+	e = s.ejhClientLocked().Call(r.Context(), c, k, "card.change.info", data, &out)
 	op.Status = "completed"
 	if e != nil {
 		op.Status, op.Error = "unknown", e.Error()
@@ -637,17 +647,6 @@ func (s *Server) ejhCardAction(w http.ResponseWriter, r *http.Request) {
 	op.UpdatedAt = time.Now()
 	if e = s.store.EJHPut("operation", op.ID, op); e != nil {
 		writeAPI(w, 500, nil, e.Error())
-		return
-	}
-	if in.Action == "cancel" {
-		job, done := context.WithTimeout(r.Context(), 12*time.Second)
-		op, e = s.checkEJHCancellationLocked(job, c, k, op)
-		done()
-		if e != nil {
-			writeAPI(w, 500, nil, "销卡已提交，查询记录保存失败，请查看操作记录")
-			return
-		}
-		writeAPI(w, 200, op, "")
 		return
 	}
 	if e = s.store.EJHPut("card", card.ID, card); e != nil {
@@ -871,6 +870,9 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 	zone := time.FixedZone("CST", 8*3600)
 	today := time.Now().In(zone).Format("2006-01-02")
 	for _, o := range ops {
+		if o.Method != "open" {
+			continue
+		}
 		if o.Automatic && o.Status == "failed" && o.ErrorCode != "100004" && o.ErrorCode != "800003" && time.Since(o.UpdatedAt) < 5*time.Minute {
 			return gptpay.Card{}, fmt.Errorf("自动开卡失败后冷却 5 分钟，请先核对失败原因")
 		}
