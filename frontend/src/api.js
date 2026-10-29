@@ -1,18 +1,39 @@
 export async function api(path, options = {}) {
   const request = { ...options }
-  if (request.body && typeof request.body !== 'string') request.body = JSON.stringify(request.body)
-  const response = await fetch(path, {
-    ...request,
-    headers: { 'Content-Type': 'application/json', ...(request.headers || {}) },
-  })
-  let payload
-  try {
-    payload = await response.json()
-  } catch {
-    throw new Error(`服务响应异常（HTTP ${response.status}）`)
+  const timeoutMs = request.timeoutMs
+  delete request.timeoutMs
+  const parentSignal = request.signal
+  const controller = timeoutMs > 0 ? new AbortController() : null
+  let timedOut = false, timer
+  const abort = () => controller?.abort()
+  if (controller) {
+    request.signal = controller.signal
+    if (parentSignal?.aborted) abort()
+    else parentSignal?.addEventListener('abort', abort, { once: true })
+    timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMs)
   }
-  if (!response.ok || !payload.ok) { const error = new Error(payload.error || `请求失败（HTTP ${response.status}）`); error.status = response.status; throw error }
-  return payload.data
+  try {
+    if (request.body && typeof request.body !== 'string') request.body = JSON.stringify(request.body)
+    const response = await fetch(path, {
+      ...request,
+      headers: { 'Content-Type': 'application/json', ...(request.headers || {}) },
+    })
+    let payload
+    try {
+      payload = await response.json()
+    } catch {
+      if (request.signal?.aborted) throw new Error('请求已取消')
+      throw new Error(`服务响应异常（HTTP ${response.status}）`)
+    }
+    if (!response.ok || !payload.ok) { const error = new Error(payload.error || `请求失败（HTTP ${response.status}）`); error.status = response.status; throw error }
+    return payload.data
+  } catch (error) {
+    if (timedOut) throw new Error('读取数据超时，请重试；已显示的数据会保留')
+    throw error
+  } finally {
+    clearTimeout(timer)
+    parentSignal?.removeEventListener('abort', abort)
+  }
 }
 
 export async function downloadFile(path, fallbackName = 'download.json', options = {}) {

@@ -8,6 +8,7 @@ import vm from 'node:vm'
 import { ref, reactive, computed, watch } from 'vue'
 import * as ejh from '../src/ejh.js'
 import { createEJHRefreshGate } from '../src/ejhRefresh.js'
+import { createLatestRequest } from '../src/latestRequest.js'
 import { activationPlan } from '../src/proActivationPlan.js'
 
 const paid = (id, plan, created_at, payment_status = 'success') => ({ id, plan, created_at, payment_status })
@@ -23,24 +24,25 @@ const tick = () => new Promise(resolve=>setImmediate(resolve))
 let time=100000
 const saved = new Map(), storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
 const gate=createEJHRefreshGate({now:()=>time,storage:()=>storage})
-function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[]}={}) {
+function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[],holdDashboard=false,holdSettings=false,failDashboard=false}={}) {
  const calls=[],mounts=[],unmounts=[],confirmations=[]
  let release,savedPercent=6,failSave=false
  const blocked=new Promise(resolve=>{release=resolve})
- const context=vm.createContext({applyPaymentPolicies,applyRefundFeeOverrides,sortCardsByReturnState,cardOrigin,...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
+ const context=vm.createContext({createLatestRequest,applyPaymentPolicies,applyRefundFeeOverrides,sortCardsByReturnState,cardOrigin,...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
  async api(url,options={}){
   calls.push({url,options})
   if(url==='/api/ejh/settings'){
+   if(holdSettings)await blocked
    if(options.method==='PUT'){if(failSave)throw Error('save failed');savedPercent=options.body.reversal_fee_percent}
    return {enabled,reversal_fee_percent:savedPercent}
   }
-  if(url==='/api/ejh/dashboard')return {cards:[],cases:savedCases,trades:[],operations:[],audit:[],sync:{},reversal_fee_percent:savedPercent}
+  if(url==='/api/ejh/dashboard'){if(holdDashboard)await blocked;if(failDashboard)throw Error('read timed out');return {cards:[],cases:savedCases,trades:[],operations:[],audit:[],sync:{},reversal_fee_percent:savedPercent}}
   if(options.method==='DELETE')return deleteResult
   if(url==='/api/ejh/sync'){if(holdSync)await blocked;if(failSync)throw Error('sync failed')}
   return {}
  }})
  context.watch=watch
- vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates,caseCategory,caseCounts,setCaseCategory,deleteUnopenedCase,page,pageSize,visible,settings,save,load};',context)
+ vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates,caseCategory,caseCounts,setCaseCategory,deleteUnopenedCase,page,pageSize,visible,settings,save,load,ready,loading,initializing,initialError,pollSavedData};',context)
  return {...context.exposed,calls,confirmations,release,setFailSave:value=>{failSave=value},unmount:()=>unmounts.forEach(fn=>fn())}
 }
 let f=fixture();await f.initialize()
@@ -173,3 +175,33 @@ assert.equal(f.calls.filter(r=>r.url==='/api/ejh/sync').length,1,'disabled manua
 assert.equal(f.calls.filter(r=>r.url==='/api/ejh/balance').length,1,'disabled manual balance blocked')
 f.unmount()
 console.log('Passed: disabled EJH skips automatic refresh and permits manual refresh')
+
+// Reading saved data is independent of settings and slow supplier refreshes.
+time+=30000
+f=fixture({holdSettings:true,savedCases:[normalRow]})
+let pending=f.initialize();await tick()
+assert.equal(f.data.value.cases.length,1,'slow settings hid available dashboard')
+assert.equal(f.busy.value,false,'initial reads locked card operations')
+assert.equal(f.calls.find(c=>c.url==='/api/ejh/dashboard').options.timeoutMs,15000)
+f.release();await pending;f.unmount()
+time+=30000
+f=fixture({holdSync:true,savedCases:[normalRow]})
+pending=f.initialize();await tick()
+assert.equal(f.ready.value,true);assert.equal(f.data.value.cases.length,1)
+const before=f.calls.filter(c=>c.url==='/api/ejh/dashboard').length
+f.pollSavedData();await tick()
+assert.equal(f.calls.filter(c=>c.url==='/api/ejh/dashboard').length,before+1,'supplier refresh stopped saved-data polling')
+f.release();await pending;f.unmount()
+f=fixture({enabled:false,holdDashboard:true})
+pending=f.initialize();await tick()
+const reads=Array.from({length:20},()=>f.load({background:true}));await tick()
+assert.equal(f.calls.filter(c=>c.url==='/api/ejh/dashboard').length,1,'slow dashboard produced overlapping polls')
+const signal=f.calls.find(c=>c.url==='/api/ejh/dashboard').options.signal
+f.unmount();assert.equal(signal.aborted,true)
+f.release();await pending;await Promise.all(reads)
+assert.equal(f.data.value.cases.length,0)
+f=fixture({enabled:false,failDashboard:true});await f.initialize()
+assert.match(f.initialError.value,/read timed out/)
+assert.equal(f.initializing.value,false);assert.equal(f.busy.value,false)
+assert.equal(f.ready.value,false);f.unmount()
+console.log('Passed: independent first load, visible data during sync, no overlapping polling, bounded reads and unmount cancellation')

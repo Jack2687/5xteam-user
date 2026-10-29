@@ -227,7 +227,29 @@ func (s *Store) DeleteGPTPayCard(id string) error {
 func (s *Store) GPTPayCards(limit, offset int, enabledOnly bool, oaiOnly ...bool) ([]gptpay.Card, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT profile,encrypted_secret FROM gptpay_cards ORDER BY created_at DESC,id DESC")
+	return s.gptPayCardsLocked(limit, offset, enabledOnly, "", oaiOnly...)
+}
+
+// Display only the requested physical card type. Filtering before decoration
+// avoids decrypting and calculating occupancy for another issuer's entire pool.
+func (s *Store) GPTPayCardsByType(cardType string) ([]gptpay.Card, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cardType != "ejh" && cardType != "nexovcc" && cardType != "other" {
+		return nil, fmt.Errorf("银行卡类型无效")
+	}
+	cards, _, err := s.gptPayCardsLocked(1000000, 0, false, cardType)
+	return cards, err
+}
+
+func (s *Store) gptPayCardsLocked(limit, offset int, enabledOnly bool, cardType string, oaiOnly ...bool) ([]gptpay.Card, int, error) {
+	query := "SELECT c.profile,c.encrypted_secret FROM gptpay_cards c"
+	args := []any{}
+	if cardType != "" {
+		query += " LEFT JOIN pro_card_identities i ON i.card_id=c.id LEFT JOIN pro_card_types t ON t.card_key=i.card_key WHERE COALESCE(t.card_type,'other')=?"
+		args = append(args, cardType)
+	}
+	rows, err := s.db.Query(query+" ORDER BY c.created_at DESC,c.id DESC", args...)
 	if err != nil {
 		return nil, 0, err
 	}

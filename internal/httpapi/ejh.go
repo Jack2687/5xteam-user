@@ -75,7 +75,13 @@ func (s *Server) ejhRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/ejh/trades/{id}/unmatch", s.unmatchEJHTrade)
 }
 func (s *Server) getEJHSettings(w http.ResponseWriter, r *http.Request) {
-	c, _, e := s.store.EJHSettings()
+	reader, e := s.store.ProListReader(r.Context())
+	if e != nil {
+		writeAPI(w, 500, nil, "读取 EJH 配置失败")
+		return
+	}
+	defer reader.Close()
+	c, _, e := reader.EJHSettings()
 	if e != nil {
 		writeAPI(w, 500, nil, e.Error())
 		return
@@ -150,6 +156,19 @@ func (s *Server) testEJH(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, 200, out, "")
 }
 func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
+	// The dashboard is a pure local projection. A dedicated WAL snapshot keeps
+	// it consistent and independent of long-running background store writes.
+	reader, err := s.store.ProListReader(r.Context())
+	if err != nil {
+		writeAPI(w, 500, nil, "读取 EJH 数据失败")
+		return
+	}
+	defer reader.Close()
+	view := &Server{store: reader}
+	view.ejhDashboardSnapshot(w, r)
+}
+
+func (s *Server) ejhDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	cards, e := store.EJHRecords[ejh.CardRecord](s.store, "card")
 	if e != nil {
 		writeAPI(w, 500, nil, e.Error())
@@ -188,6 +207,15 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := []row{}
 	visibleCards := map[string]bool{}
+	locals, e := s.store.GPTPayCardsByType("ejh")
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	localByID := make(map[string]gptpay.Card, len(locals))
+	for _, local := range locals {
+		localByID[local.ID] = local
+	}
 	for _, c := range cards {
 		kind, err := s.store.ProCardTypeForNumber(c.Remote.Number)
 		if err != nil {
@@ -203,16 +231,11 @@ func (s *Server) ejhDashboard(w http.ResponseWriter, r *http.Request) {
 		if check, ok := checkByCard[c.ID]; ok {
 			v.AutoCancelCheck = &check
 		}
-		if local, _, e := s.store.GPTPayCard(c.ID); e == nil {
+		if local, ok := localByID[c.ID]; ok {
 			v.Local = &local
 		}
 		rows = append(rows, v)
 		visibleCards[c.ID] = true
-	}
-	locals, _, e := s.store.GPTPayCards(1000000, 0, false)
-	if e != nil {
-		writeAPI(w, 500, nil, e.Error())
-		return
 	}
 	for _, local := range locals {
 		if local.CardType != "ejh" || visibleCards[local.ID] || local.Source == "ejh" {
