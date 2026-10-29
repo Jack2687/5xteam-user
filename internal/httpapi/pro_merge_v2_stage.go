@@ -52,7 +52,7 @@ func (s *Server) updateProMergeV2Stage(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "步骤状态已变化，请刷新")
 		return
 	}
-	if m.CompletedAt != nil || (m.AcceptedAt != nil && (input.Stage == "submit" || input.Stage == "invite" || input.Stage == "login")) {
+	if m.CompletedAt != nil || (p.MergeV2Resolved() && (input.Stage == "submit" || input.Stage == "invite" || input.Stage == "login")) {
 		writeAPI(w, 409, nil, "已受理或已完成的事实不可重置；不会重复提交")
 		return
 	}
@@ -91,8 +91,17 @@ func (s *Server) updateProMergeV2Stage(w http.ResponseWriter, r *http.Request) {
 					m.SubmittedAt = &now
 				}
 				m.AcceptedAt = &now
+				if m.Recovery != nil {
+					m.Recovery.Phase = "tail"
+					m.Recovery.Attempts = 0
+					m.Recovery.NextAt = nil
+					m.Recovery.Exhausted = false
+				}
 			} else {
 				m.SubmittedAt = nil
+				// An explicit reviewed rejection starts a new manual budget.
+				// Earlier evidence remains in the append-only account audit.
+				m.Recovery = nil
 			}
 		}
 		if input.Stage == "groups" && input.Status == "completed" {

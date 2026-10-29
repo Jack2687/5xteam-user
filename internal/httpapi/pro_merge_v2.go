@@ -13,7 +13,7 @@ import (
 	"chatgpt-space-merge/internal/workflow"
 )
 
-var errMergeV2Unknown = errors.New("导出停用请求结果待确认：保留团队成员；核实已受理后将提交步骤改为完成，确认未受理才能改回待处理")
+var errMergeV2Unknown = errors.New("导出停用结果待确认；自动恢复按配置移出原团队并核验个人套餐，不直接重复提交")
 
 type mergeV2LoginKey struct{}
 type mergeV2LoginOptions struct {
@@ -82,7 +82,7 @@ func (s *Server) mergeV2Checkpoint(ctx context.Context, email, team string, meth
 				checkpointErr = context.Canceled
 				return
 			}
-			if m.SubmittedAt != nil || p.MergeV2Accepted() || p.MergeV2Completed() {
+			if m.SubmittedAt != nil || p.MergeV2Resolved() || p.MergeV2Completed() {
 				checkpointErr = errMergeV2Unknown
 				return
 			}
@@ -145,7 +145,7 @@ func (s *Server) mergeV2Checkpoint(ctx context.Context, email, team string, meth
 			m.Message = "上游已受理导出并停用请求；不代表停用或退款已完成"
 			m.UpdatedAt = now
 		case "merge_v2_rejected":
-			if p.MergeV2Accepted() {
+			if p.MergeV2Resolved() {
 				checkpointErr = errors.New("已受理请求不可撤销检查点")
 				return
 			}
@@ -162,7 +162,7 @@ func (s *Server) mergeV2Checkpoint(ctx context.Context, email, team string, meth
 	return true, nil
 }
 
-func (s *Server) performProMergeV2(ctx context.Context, email string) (out model.MailAccountProfile, runErr error) {
+func (s *Server) performProMergeV2Attempt(ctx context.Context, email string) (out model.MailAccountProfile, runErr error) {
 	p, _, err := s.store.MailAccountCredential(email)
 	if err != nil {
 		return p, err
@@ -189,7 +189,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 	if err = check(); err != nil {
 		return p, err
 	}
-	if p.ProMergeV2 != nil && p.ProMergeV2.SubmittedAt != nil && !p.MergeV2Accepted() {
+	if p.ProMergeV2 != nil && p.ProMergeV2.SubmittedAt != nil && !p.MergeV2Resolved() {
 		return p, errMergeV2Unknown
 	}
 	settings, _, _, err := s.proAccountPushSettings(p)
@@ -211,7 +211,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 		var saveErr error
 		out, saveErr = s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 			m := p.ProMergeV2
-			if m == nil || m.CompletedAt != nil || (m.SubmittedAt != nil && m.AcceptedAt == nil) {
+			if m == nil || m.CompletedAt != nil || (m.SubmittedAt != nil && !p.MergeV2Resolved()) {
 				return
 			}
 			m.Status, m.Error, p.ProLastError = "interrupted", "", ""
@@ -254,6 +254,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 	if err != nil {
 		return p, err
 	}
+	unlock = sync.OnceFunc(unlock)
 	defer unlock()
 	release, err := s.proMergeSlot(ctx)
 	if err != nil {
@@ -305,7 +306,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 				m.Error = redactSensitiveText(runErr.Error())
 				p.ProLastError = m.Error
 				m.Status = "failed"
-				if m.SubmittedAt != nil && m.AcceptedAt == nil {
+				if m.SubmittedAt != nil && !p.MergeV2Resolved() {
 					m.Status = "unknown"
 					m.Error = errMergeV2Unknown.Error()
 				}
@@ -314,6 +315,10 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 				}
 			} else {
 				m.AutoResumeAt = nil
+				if m.Recovery != nil {
+					m.Recovery.NextAt = nil
+					m.Recovery.Error = ""
+				}
 				m.Status = "completed"
 				m.CompletedAt = &m.UpdatedAt
 				m.Error = ""
@@ -353,7 +358,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 			return p, err
 		}
 	}
-	if !p.MergeV2Accepted() {
+	if !p.MergeV2Resolved() {
 		if _, err = s.mergeV2Update(email, "login", "running", "重新登录并选择受邀团队"); err != nil {
 			return p, err
 		}
@@ -381,7 +386,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 		if err != nil {
 			return p, err
 		}
-		if !p.MergeV2Accepted() {
+		if !p.MergeV2Resolved() {
 			return p, errMergeV2Unknown
 		}
 	}
@@ -423,6 +428,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 	if err = check(); err != nil {
 		return p, err
 	}
+	unlock() // Downstream grouping cannot hold the mother lock.
 	if _, err = s.mergeV2Update(email, "groups", "running", "处理合并移出后分组"); err != nil {
 		return p, err
 	}

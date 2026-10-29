@@ -27,6 +27,9 @@ type ProDeactivation struct {
 }
 
 func (s ProSettings) ValidateDisposition() error {
+	if err := s.MergeV2RecoveryConfig().Validate(); err != nil {
+		return err
+	}
 	if err := s.OAIInquiry.Validate(); err != nil {
 		return err
 	}

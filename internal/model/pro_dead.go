@@ -13,5 +13,5 @@ type ProDeadState struct {
 func (p MailAccountProfile) IsProDead() bool { return p.ProDead != nil }
 
 func (p MailAccountProfile) CanMarkProDead() bool {
-	return p.ManagementScope == "pro" && !p.DeletionSubmitted() && !p.MergeV2Accepted() && !p.MerchantAccepted() && !p.SpaceMergedOnce && p.TransferStatus != "completed"
+	return p.ManagementScope == "pro" && !p.DeletionSubmitted() && !p.MergeV2Resolved() && !p.MerchantAccepted() && !p.SpaceMergedOnce && p.TransferStatus != "completed"
 }

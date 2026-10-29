@@ -396,6 +396,11 @@ func (s *Store) updateProAccount(email string, expected time.Time, mutate func(*
 			return p, err
 		}
 	}
+	if !previous.MergeV2Resolved() && p.ProMergeV2 != nil && p.ProMergeV2.CompletionBasis == "plan_free" && p.ProMergeV2.SubmittedAt != nil {
+		if err = ejhMarkRequestedTx(tx, p.Email, p.ProAuto.OrderID, "merge_v2_plan_free", *p.ProMergeV2.SubmittedAt); err != nil {
+			return p, err
+		}
+	}
 	if !wasMerchantAccepted && p.MerchantAccepted() {
 		if err = ejhMarkRequestedTx(tx, p.Email, p.ProAuto.OrderID, "api_merchant", *p.ProMerchant.AcceptedAt); err != nil {
 			return p, err
@@ -456,6 +461,17 @@ func (s *Store) RecoverProWorkflows() error {
 		if p.MerchantNeedsContinuation() && p.ProMerchant.NextCheckAt == nil && !p.ProAuto.StopRequested {
 			next := time.Now().Add(15 * time.Second)
 			p.ProMerchant.NextCheckAt = &next
+			merchantReconciled = true
+		}
+
+		if m := p.ProMergeV2; m != nil && m.CompletedAt == nil && m.Recovery != nil && !m.Recovery.Exhausted && m.Recovery.NextAt == nil {
+			r := m.Recovery
+			if r.Attempts >= settings.MergeV2RecoveryConfig().MaxAttempts {
+				r.Exhausted = true
+			} else {
+				next := time.Now().Add(time.Duration(settings.MergeV2RecoveryConfig().RetrySeconds) * time.Second)
+				r.NextAt = &next
+			}
 			merchantReconciled = true
 		}
 		stopReconciled := p.ReconcileProStop()

@@ -1092,6 +1092,31 @@ func (s *Server) executeOpenAILoginContext(parent context.Context, email, creden
 			return nil, errors.New("OAI 确认需要账号的 ChatGPT 密码和 2FA")
 		}
 	}
+
+	if _, ok := parent.Value(mergeV2PlanKey{}).(*mergeV2PlanOptions); ok {
+		login = selectOAuthLogin("password_totp", credentials)
+		if login.selected != "password_totp" {
+			return nil, errors.New("套餐兜底需要账号密码及2FA，禁止降级为未知身份")
+		}
+	}
+	_, mergeLogin := parent.Value(mergeV2LoginKey{}).(*mergeV2LoginOptions)
+	_, planLogin := parent.Value(mergeV2PlanKey{}).(*mergeV2PlanOptions)
+	if mergeLogin || planLogin {
+		p, _, e := s.store.MailAccountCredential(email)
+		if e != nil {
+			return nil, e
+		}
+		if p.ProMergeV2 == nil {
+			return nil, errors.New("缺少合并2.0流程")
+		}
+		proxy, e := s.store.ProMergeV2Proxy(email, p.ProMergeV2.StartedAt, "")
+		if e != nil {
+			return nil, e
+		}
+		if proxy != "" {
+			return s.executeOpenAILoginWithProxy(parent, email, proxy, "合并2.0原会话代理", 1, credentialMode, login, progress, diagnostic)
+		}
+	}
 	loginDetails := login.details()
 	loginDetails["login_method"], loginDetails["login_method_label"], loginDetails["login_auth_status"] = "not_started", "尚未执行登录", "not_started"
 	started := time.Now()
@@ -1208,6 +1233,9 @@ func (s *Server) executeOpenAILoginContext(parent context.Context, email, creden
 			}
 			result, runErr := s.executeOpenAILoginWithProxy(parent, email, proxyURL, lease.label, lease.activeCount, credentialMode, login, progress, diagnostic)
 			lease.Release()
+			if _, ok := parent.Value(mergeV2PlanKey{}).(*mergeV2PlanOptions); ok {
+				return result, runErr
+			}
 			if _, ok := parent.Value(proOAILoginKey{}).(*proOAILoginOptions); ok {
 				return result, runErr
 			}
@@ -1362,9 +1390,28 @@ func (s *Server) executeOpenAILoginWithProxy(parent context.Context, email, prox
 			}
 		}
 	}
+
+	_, mergeLogin := parent.Value(mergeV2LoginKey{}).(*mergeV2LoginOptions)
+	planOpts, planLogin := parent.Value(mergeV2PlanKey{}).(*mergeV2PlanOptions)
+	if mergeLogin || planLogin {
+		p, _, e := s.store.MailAccountCredential(email)
+		if e != nil {
+			return nil, e
+		}
+		if p.ProMergeV2 == nil {
+			return nil, errors.New("缺少合并2.0流程")
+		}
+		proxyURL, e = s.store.ProMergeV2Proxy(email, p.ProMergeV2.StartedAt, proxyURL)
+		if e != nil {
+			return nil, e
+		}
+	}
 	payload := map[string]any{"email": email, "pickup_url": login.credentials.PickupURL,
 		"proxy": proxyURL, "sms_provider": provider, "sms_config": smsCfg,
 		"allow_sms": settings.AllowSMS, "stdio_rpc": true, "credential_mode": credentialMode}
+	if planLogin {
+		payload["merge_v2_plan"] = map[string]any{"team_id": planOpts.TeamID, "user_id": planOpts.UserID, "personal_id": planOpts.PersonalID}
+	}
 	if credentialMode == "siwc" {
 		payload["siwc_host_id"] = s.store.MailSIWCHostID(email, login.credentials)
 	}

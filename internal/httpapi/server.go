@@ -92,6 +92,7 @@ type Server struct {
 	proAutoHooks              *proAutomationHooks
 	proMerchantClient         *refundmerchant.Client
 	proMergeV2Login           func(context.Context, string) (map[string]any, error)
+	proMergeV2Plan            func(context.Context, model.MailAccountProfile) (map[string]any, error)
 	proOAILogin               func(context.Context, string) (map[string]any, error)
 	proOAIJobs                sync.Map
 	proOAIMu                  sync.Mutex

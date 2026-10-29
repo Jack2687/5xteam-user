@@ -66,6 +66,9 @@ func (s *Store) saveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	v.AutoDeleteEnabled = input.AutoDeleteEnabled
 	v.AutoMerchantEnabled = input.AutoMerchantEnabled
 	v.AutoMergeV2Enabled = input.AutoMergeV2Enabled
+	if input.MergeV2Recovery != nil {
+		v.MergeV2Recovery = input.MergeV2Recovery
+	}
 	v.OAIConfirmation = input.OAIConfirmation.Normalized()
 	v.OAIConfirmationConcurrency = input.OAIConfirmationConcurrency
 	v.OAIInquiry = input.OAIInquiry.Normalized()

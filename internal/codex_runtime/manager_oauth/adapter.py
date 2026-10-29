@@ -633,7 +633,7 @@ def parse_retry_after(headers):
 
 
 def run(payload, rpc=None):
-    if payload.get("help_oai"):
+    if payload.get("help_oai") or payload.get("merge_v2_plan"):
         return _run_once(payload, rpc)  # Go owns inquiry retries and send checkpoints.
     if payload.get("credential_mode") != "chatgpt_at":
         return _run_once(payload, rpc)
@@ -683,6 +683,10 @@ def _run_once(payload, rpc=None):
                                    "mode": "mailtoken" if urlsplit(pickup).fragment else "directurl"}] if pickup else []}
     if payload.get("merge_v2") and credential_mode == "chatgpt_at":
         local["merge_v2"] = payload["merge_v2"]
+    if payload.get("merge_v2_plan") and credential_mode == "chatgpt_at":
+        local["merge_v2_plan"] = payload["merge_v2_plan"]
+        local["excluded_team"] = payload["merge_v2_plan"]["team_id"]
+        local["personal_id"] = payload["merge_v2_plan"].get("personal_id", "")
     if credential_mode == "siwc":
         local["siwc_host_id"] = str(payload.get("siwc_host_id") or "").strip()
         if not local["siwc_host_id"]:
@@ -690,6 +694,10 @@ def _run_once(payload, rpc=None):
     bridge.configure({**payload, **local}, rpc)
     flow = None
     try:
+        if local.get("merge_v2_plan"):
+            from .merge_v2_plan import PersonalLogin, run as run_plan
+            flow = PersonalLogin("local", local)
+            return run_plan(flow)
         if local.get("merge_v2"):
             from .merge_v2 import TeamProtocolLogin
             flow = TeamProtocolLogin("local", local)

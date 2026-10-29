@@ -1151,6 +1151,7 @@ func (s *Server) startProAutomationMonitor() {
 				s.tickProDeactivations(ctx)
 				s.tickProMerchants(ctx)
 				s.tickProPausedMergeV2(ctx)
+				s.tickProMergeV2Recovery(ctx)
 				s.tickProSchedule(false)
 				items, err := s.store.DueProAutomations(time.Now())
 				if err != nil {
