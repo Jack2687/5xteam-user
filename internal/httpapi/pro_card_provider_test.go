@@ -71,6 +71,23 @@ func TestProConfiguredCardListFiltersBeforePagination(t *testing.T) {
 	}
 	list("enabled=true&card_provider=configured&page_size=10", 1, []string{"earliest-other"})
 	list("enabled=true&card_provider=nexovcc&page_size=10", 10, want[1:])
+	if _, err := s.store.SetNexovccCardNormalPending(want[1], true); err != nil {
+		t.Fatal(err)
+	}
+	list("enabled=true&card_provider=nexovcc&page_size=10", 9, want[2:])
+	automatic, err := s.automaticProCards(model.ProSettings{CardProvider: "nexovcc"}, true)
+	if err != nil || len(automatic) != 9 {
+		t.Fatal("automatic pending exclusion", len(automatic), err)
+	}
+	for _, card := range automatic {
+		if card.ID == want[1] {
+			t.Fatal("pending card selected by automation")
+		}
+	}
+	if _, err = s.store.SetNexovccCardNormalPending(want[1], false); err != nil {
+		t.Fatal(err)
+	}
+	list("enabled=true&card_provider=nexovcc&page_size=10", 10, want[1:])
 	manual := context.WithValue(context.Background(), proManualCardProviderKey{}, "nexovcc")
 	if _, _, err := s.reserveProStartCard(manual, "stale-dialog@example.com", "earliest-other", false, false); err == nil {
 		t.Fatal("manual issuer allowed a mismatched card")

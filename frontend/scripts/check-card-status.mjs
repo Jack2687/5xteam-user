@@ -11,6 +11,13 @@ for (const enabled of [true, false]) {
   assert.deepEqual(cardUsage(dashboard, now), cardUsage(closed, now), 'Both views must agree; a secondary lock/error must not hide closure')
 }
 assert.equal(cardUsage(active, now).label, '可用于开通')
+for (const source of ['ejh','nexovcc']) {
+ const pending={...active,source,normal_pending:true}
+ assert.equal(cardUsage(pending,now).label,'待定','bank list must show local pending instead of usable')
+ assert.equal(cardUsage({local:pending},now).label,'待定')
+ assert.equal(cardUsage({...pending,issuer_status:source==='ejh'?'2':'4'},now).label,'已销卡')
+ assert.equal(cardUsage({...pending,normal_pending:false},now).label,'可用于开通')
+}
 assert.equal(cardUsage({ ...active, source: '', card_type: 'other', issuer_status: '2' }, now).label, '已销卡', 'Linked physical aliases still carry issuer restrictions')
 assert.equal(isClosedCard({ card_type: 'ejh', enabled: true, available: true }), false, 'A manual EJH label is not a supplier binding')
 assert.equal(cardUsage({ ...active, issuer_status: '8' }, now).label, '销卡处理中')
@@ -56,3 +63,20 @@ console.log('Passed: disabled issuer blocks Pro use while preserving physical cl
 
 assert.equal(cardUsage({...active,issuer_locked:true},now).label,'操作待核实')
 assert.equal(cardUsage({local:{...active,issuer_locked:true},remote:{status:'3',isLocked:'0'}},now).label,'操作待核实')
+
+const {cardState:ejhState,cardStates}=await import('../src/ejh.js')
+const {cardState:nexState}=await import('../src/nexovcc.js')
+for(const pending of [true,false]) {
+ assert.equal(cardStates[ejhState({normal_pending:pending,remote:{status:'1'}})],pending?'待定':'已激活')
+ assert.equal(nexState({card:{status:'1',imported:true,normal_pending:pending}}),pending?'待定':'正常')
+}
+assert.equal(cardStates[ejhState({normal_pending:true,remote:{status:'2'}})],'已销卡')
+assert.equal(nexState({card:{status:'4',normal_pending:true}}),'已销卡')
+console.log('Passed: both card managers display pending and immediately restore the issuer status on normal')
+
+const {sortCancellationCards}=await import('../src/ejh.js')
+const closingCards=[{id:'closed-newest',remote:{status:'2'},local:{issuer_cancel_status:'unknown'}},{id:'unknown',remote:{status:'1'},local:{issuer_cancel_status:'unknown'}},{id:'closed-older',remote:{status:'2'}},{id:'processing',remote:{status:'8'}},{id:'submitting',remote:{status:'1'},local:{issuer_cancel_status:'submitting'}}]
+assert.deepEqual(sortCancellationCards(closingCards).map(c=>c.id),['unknown','processing','submitting','closed-newest','closed-older'])
+assert.equal(closingCards[0].id,'closed-newest','sorting must not mutate shared records')
+assert.deepEqual(sortCancellationCards(closingCards).slice(0,2).map(c=>c.id),['unknown','processing'],'pending priority must precede pagination')
+console.log('Passed: processing and uncertain cancellation cards precede closed cards, preserving within-group order')

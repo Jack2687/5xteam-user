@@ -25,6 +25,8 @@ export function cardUsage(card, now = new Date()) {
   const { local, linked, status, locked, end } = cardInfo(card)
   const blocked = (label, detail = '不能用于开通', tone = 'danger') => ({ label, detail, tone })
   if (local.dead_account) return blocked('死号卡 · 已禁用', '禁止再次开通；保留查询、提现及销卡')
+  const closing = local.issuer_cancel_status || (local.source==='nexovcc' ? status==='4' : linked && ['2','8'].includes(status))
+  if ((local.normal_pending || card?.normal_pending) && !closing) return blocked('待定', '卡片位于正常待定分类，不参与选卡；恢复正常后才可开通', 'pending')
   if (local.source==='nexovcc') {
     if (status==='4') return blocked('已销卡')
     if (local.issuer_cancel_status) return blocked('销卡处理中','等待卡片状态及余额回款核实','pending')

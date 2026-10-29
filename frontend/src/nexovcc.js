@@ -25,6 +25,7 @@ export function nexovccOperationPayload(input) {
 export function cardState(row) {
  if (row.card.status === '4') return '已销卡'
  if (row.local?.issuer_cancel_status) return '销卡处理中'
+ if (row.card.normal_pending || row.local?.normal_pending) return '待定'
  if (row.card.control === 'frozen' || row.local?.issuer_frozen) return '已冻结'
  if (row.card.error || !row.card.imported) return '资料待同步'
  if (row.local?.issuer_locked) return '操作待核实'

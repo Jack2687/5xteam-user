@@ -44,6 +44,11 @@ assert.equal(summarizeClearingCosts([{...clear,trade:{...clear.trade,cardAmount:
 const rows=[{id:'old',trade:{tradeTime:'2026-10-15 17:24:02'}},{id:'latest',trade:{tradeTime:'2026-10-17 09:33:59'}},{id:'missing',trade:{}},{id:'middle',trade:{createdAt:'2026-10-16T01:00:00Z'}}]
 assert.deepEqual(newestReturnTrades(rows).map(r=>r.id),['latest','middle','old','missing'])
 assert.equal(rows[0].id,'old','sorting must not mutate shared issuer records')
+const delayedRefund={id:'posted-latest',trade:{tradeType:'5',tradeTime:'2026-10-28 11:51:10',createdAt:'2026-10-29 10:11:29'}}
+const earlierRefund={id:'posted-earlier',trade:{tradeType:'2',tradeTime:'2026-10-28 20:00:00',createdAt:'2026-10-29 09:00:00'}}
+assert.deepEqual(newestReturnTrades([earlierRefund,delayedRefund]).map(r=>r.id),['posted-latest','posted-earlier'],'return sorting follows posting date')
+const paymentRows=[{id:'payment-latest',trade:{tradeType:'1',tradeTime:'2026-10-29 10:00:00',createdAt:'2026-10-29 10:01:00'}},{id:'payment-earlier',trade:{tradeType:'4',tradeTime:'2026-10-28 10:00:00',createdAt:'2026-10-29 11:00:00'}}]
+assert.deepEqual(newestReturnTrades(paymentRows).map(r=>r.id),['payment-latest','payment-earlier'],'non-return trade ordering remains unchanged')
 console.log('Passed: partial clearing, outstanding principal, refunds, original/USD cost, non-cost closure differences, posting dates and descending return records')
 
 assert.equal(cardAmounts(card,evidence).rows[0].paid,'5794.64','card details retain the original authorized payment')

@@ -44,11 +44,12 @@ func (s *Store) issuerSnapshotForPhysicalCard(q proCapacityQuery, key string) (*
 		return nil, e
 	}
 	var record struct {
-		Platform     string `json:"platform"`
-		TemplateName string `json:"template_name,omitempty"`
-		TemplateID   string `json:"template_id"`
-		Error        string `json:"error"`
-		Remote       struct {
+		Platform      string `json:"platform"`
+		TemplateName  string `json:"template_name,omitempty"`
+		TemplateID    string `json:"template_id"`
+		Error         string `json:"error"`
+		NormalPending bool   `json:"normal_pending"`
+		Remote        struct {
 			OrderNo string `json:"orderNo"`
 			Status  string `json:"status"`
 			Locked  string `json:"isLocked"`
@@ -64,6 +65,7 @@ func (s *Store) issuerSnapshotForPhysicalCard(q proCapacityQuery, key string) (*
 	}
 	card := &gptpay.Card{Platform: record.Platform, TemplateID: record.TemplateID, TemplateName: record.TemplateName, Source: "ejh", IssuerOrderNo: record.Remote.OrderNo, IssuerStatus: record.Remote.Status, IssuerLocked: record.Remote.Locked == "1" || record.Error != "" || pending, IssuerEnd: record.Remote.End}
 	card.IssuerFrozen = record.Remote.Locked == "1" || record.Remote.Status == "5"
+	card.NormalPending = record.NormalPending
 	if pending {
 		var operationSealed string
 		if e = q.QueryRow(`SELECT r.sealed FROM ejh_card_links l JOIN ejh_operation_claims c ON c.scope='card:'||l.card_id JOIN ejh_records r ON r.kind='operation' AND r.id=c.operation_id WHERE l.card_key=?`, key).Scan(&operationSealed); e != nil {
@@ -96,6 +98,9 @@ func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 	if c != nil && !cardplatform.IsOAI(c.Platform) {
 		return fmt.Errorf("Pro 只能使用 OAI 银行卡")
 	}
+	if c != nil && c.NormalPending {
+		return fmt.Errorf("银行卡已移到正常待定，不能用于新的开通；请在卡片管理恢复正常后再使用")
+	}
 	if c != nil && c.IssuerDisabled {
 		name := "EJH"
 		if c.Source == "nexovcc" {
@@ -110,7 +115,7 @@ func (s *Store) validateIssuerCard(q proCapacityQuery, key string) error {
 }
 
 func issuerCardUsable(c gptpay.Card) bool {
-	if c.IssuerDisabled || !cardplatform.IsOAI(c.Platform) {
+	if c.NormalPending || c.IssuerDisabled || !cardplatform.IsOAI(c.Platform) {
 		return false
 	}
 	if c.Source == "nexovcc" {

@@ -10,8 +10,8 @@ import (
 
 var ErrNexovccClosedCategory = errors.New("已销卡的卡片不能移入正常或正常待定")
 
-// Classification is local metadata, separate from supplier status, availability,
-// balances and automatic workflows. Read-modify-write under the store lock so
+// Classification is local metadata, separate from supplier status and balances.
+// Pending cards cannot be admitted for new payments. Read-modify-write under the store lock so
 // a concurrent supplier refresh cannot overwrite it or lose newer card data.
 func (s *Store) SetNexovccCardNormalPending(id string, pending bool) (nexovcc.Card, error) {
 	s.mu.Lock()

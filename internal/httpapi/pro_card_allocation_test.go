@@ -114,6 +114,27 @@ func allocationAccount(t *testing.T, s *Server, email string) {
 	}
 }
 
+func TestEJHAllocationSkipsNormalPendingAndCreatesNormal(t *testing.T) {
+	s, issued, paid, email := allocationFixture(t)
+	pending, err := s.store.ImportEJHCard(ejh.Card{OrderNo: "pending-card", Number: "5555555555554444", CVV: "123", Validity: "1299", Status: "1", CardCurrency: "USD"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.store.SetEJHCardNormalPending(pending.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.reserveProStartCard(context.Background(), email, pending.ID, true, false); err == nil || !strings.Contains(err.Error(), "正常待定") {
+		t.Fatal("stale explicit selection accepted", err)
+	}
+	if issued.Load() != 0 || paid.Load() != 0 {
+		t.Fatal("stale pending selection caused upstream mutation")
+	}
+	card, _, err := s.reserveProStartCard(context.Background(), email, "", true, false)
+	if err != nil || card.ID == pending.ID || card.NormalPending || issued.Load() != 1 || paid.Load() != 0 {
+		t.Fatal("automatic admission did not issue a normal replacement", err, issued.Load(), paid.Load())
+	}
+}
+
 func TestEJHAllocationReviewHoldAndExistingAlternative(t *testing.T) {
 	for _, status := range []string{"manual_review", "submission_unknown", "deleted", "failed"} {
 		t.Run(status, func(t *testing.T) {

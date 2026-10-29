@@ -37,7 +37,7 @@ const clearing = computed(() => {
   <p v-else-if="amounts.paid!==null&&amounts.reason" class="return-note">{{amounts.reason}}</p>
   <p v-if="row.state_override?.state==='returned'&&!amounts.returned.length" class="return-note">人工标记已回款，尚无已确认金额</p>
   </details>
-  <ProOAICaseFlow :row="row" @updated="$emit('updated')"/><footer><span>开通时间 {{row.opened_at?formatTime(row.opened_at):'—'}}</span><span>申请时间 {{row.requested_at?formatTime(row.requested_at):'—'}}</span><span>回款时间 {{amounts.returnedAt?formatTime(amounts.returnedAt):'—'}}</span></footer>
+  <ProOAICaseFlow :row="row" @updated="$emit('updated')"/><footer><span>开通时间 {{row.opened_at?formatTime(row.opened_at):'—'}}</span><span>申请时间 {{row.requested_at?formatTime(row.requested_at):'—'}}</span><span title="优先取卡台记账时间；无有效记账时间时取交易时间">回款时间 {{amounts.returnedAt?formatTime(amounts.returnedAt):'—'}}</span></footer>
  </article>
 </template>
 

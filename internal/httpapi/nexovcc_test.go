@@ -393,6 +393,41 @@ func TestNexovccUnusedUnavailableCardStopsFurtherAutoIssue(t *testing.T) {
 	}
 }
 
+func TestNexovccNormalPendingCardDoesNotBlockNewNormalIssue(t *testing.T) {
+	s, f := nexFixtureServer(t)
+	base := s.nexovcc.transport
+	s.nexovcc.transport = func(ctx context.Context, r nexovcc.Request) (nexovcc.Response, error) {
+		response, err := base(ctx, r)
+		if err != nil {
+			return response, err
+		}
+		if r.Path == "/api/card/createUserCard" && f.opens.Load() == 2 {
+			return nexReply(map[string]any{"serial_no": "second-normal-card"}), nil
+		}
+		if r.Path == "/api/card/getUserCardDetail" && r.Body["serial_no"] == "second-normal-card" {
+			return nexReply(map[string]any{"serial_no": "second-normal-card", "status": "1", "card_no": "5555555555554444", "cvv": "123", "expire_at_str": "12/99", "pid": 267, "remark": f.remark}), nil
+		}
+		return response, nil
+	}
+	p := model.DefaultProSettings()
+	p.CardProvider, p.NexovccAutoOpen, p.NexovccTemplateID = "nexovcc", true, "template"
+	p.NexovccDailyOpenLimit, p.NexovccDailyAmountLimit = 10, "100.00"
+	if _, _, err := s.store.SaveProAutomationSettings(p, gptpay.Settings{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.ensureProviderCard(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.store.SetNexovccCardNormalPending(first.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.ensureProviderCard(context.Background())
+	if err != nil || next.ID == first.ID || next.NormalPending || f.opens.Load() != 2 {
+		t.Fatal("pending card was reused or blocked normal issue", err, f.opens.Load())
+	}
+}
+
 func TestNexovccJobReportsBusinessRejectionAsFailure(t *testing.T) {
 	s, _ := nexFixtureServer(t)
 	t.Cleanup(s.stopNexovcc)

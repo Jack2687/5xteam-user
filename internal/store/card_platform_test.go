@@ -72,8 +72,8 @@ func TestEJHNormalPendingPreservesIssuerAndClearsOnClosure(t *testing.T) {
 		t.Fatal(rec, err)
 	}
 	after, _, _ := s.GPTPayCard(c.ID)
-	if after.Available != before.Available || after.IssuerStatus != before.IssuerStatus {
-		t.Fatal("classification altered issuer/Pro policy")
+	if !before.Available || after.Available || !after.NormalPending || after.IssuerStatus != before.IssuerStatus {
+		t.Fatal("pending category must block admission while preserving issuer status")
 	}
 	if rec, err = s.SetEJHCardNormalPending(c.ID, false); err != nil || rec.NormalPending {
 		t.Fatal(rec, err)

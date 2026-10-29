@@ -33,8 +33,8 @@ func TestNexovccCardCategorySurvivesSyncAndRestart(t *testing.T) {
 		t.Fatal("sync overwrote classification or balance", c, err)
 	}
 	after, afterSecret, err := s.GPTPayCard(c.ID)
-	if err != nil || !reflect.DeepEqual(secret, afterSecret) || before.Available != after.Available || before.Enabled != after.Enabled || before.IssuerStatus != after.IssuerStatus {
-		t.Fatal("classification altered card admission or credentials", err)
+	if err != nil || !reflect.DeepEqual(secret, afterSecret) || !before.Available || after.Available || !after.NormalPending || before.Enabled != after.Enabled || before.IssuerStatus != after.IssuerStatus {
+		t.Fatal("pending category must block admission without altering credentials or issuer status", err)
 	}
 	s.Close()
 	s, err = Open(dir)

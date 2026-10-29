@@ -39,6 +39,21 @@ assert.equal(accountAmounts({charge,returns:[returned('missing','10','USD',{conf
 assert.equal(accountAmounts({charge,returns:[timedReturn('invalid','not-a-date')]}).returnedAt,0)
 assert.equal(accountAmounts({charge,returns:[timedReturn('reversal','2026-10-16 10:00:00',{trade:{tradeType:'2',tradeStatus:'1',tradeTime:'2026-10-16 10:00:00'}})]}).returnedAt,Date.parse('2026-10-16T10:00:00+08:00'))
 
+// EJH may retain yesterday's transaction date on a refund posted today.
+const postedReturn=(id,tradeTime,createdAt,extra={})=>returned(id,'10','USD',{trade:{tradeType:'5',tradeStatus:'2',tradeTime,createdAt},...extra})
+for(const [transaction,posting] of [['2026-10-28 11:51:10','2026-10-29 10:11:29'],['2026-10-28 11:51:12','2026-10-29 10:11:29'],['2026-10-28 11:51:38','2026-10-29 10:11:30'],['2026-10-31 23:59:59','2026-11-01 00:00:01']]){
+ const result=accountAmounts({charge,returns:[postedReturn('posted',transaction,posting)]})
+ assert.equal(result.returnedAt,Date.parse(posting.replace(' ','T')+'+08:00'),'return date must follow issuer posting, not transaction initiation')
+ assert.deepEqual(result.returned,[{currency:'USD',amount:'10.00'}])
+ assert.equal(result.difference,'90.30')
+}
+for(const posting of ['',undefined,'bad-date'])assert.equal(accountAmounts({charge,returns:[postedReturn('fallback','2026-10-29 10:11:29',posting)]}).returnedAt,Date.parse('2026-10-29T10:11:29+08:00'))
+assert.equal(accountAmounts({charge,returns:[postedReturn('offset','2026-10-28 11:51:10','2026-10-29T02:11:29Z')]}).returnedAt,Date.parse('2026-10-29T10:11:29+08:00'))
+const postedLatest=postedReturn('posted-latest','2026-10-28 11:51:10','2026-10-29 10:11:29')
+const initiatedLatest=postedReturn('initiated-latest','2026-10-28 20:00:00','2026-10-29 09:00:00')
+const pendingLatest=postedReturn('pending-latest','2026-10-29 12:00:00','2026-10-29 14:00:00',{confirmed:false})
+for(const returns of [[postedLatest,initiatedLatest,pendingLatest],[pendingLatest,initiatedLatest,postedLatest]])assert.equal(accountAmounts({charge,returns}).returnedAt,Date.parse('2026-10-29T10:11:29+08:00'))
+
 const code=readFileSync(new URL('../src/components/EJHCardTrades.vue',import.meta.url),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 const calls=[],unmounts=[]
 let fail=false,release,hold=false

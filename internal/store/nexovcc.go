@@ -368,6 +368,7 @@ func (s *Store) nexovccIssuer(q proCapacityQuery, key string) (*gptpay.Card, err
 	}
 	out := &gptpay.Card{Platform: c.Platform, TemplateID: c.TemplateID, TemplateName: c.TemplateName, Source: "nexovcc", IssuerOrderNo: c.Serial, IssuerStatus: c.Status, IssuerFrozen: c.Control == "frozen", IssuerLocked: pending || c.Control == "frozen" || c.Error != "" || !c.Imported}
 	var uncertain bool
+	out.NormalPending = c.NormalPending
 	if e = q.QueryRow(`SELECT EXISTS(SELECT 1 FROM pro_card_usage WHERE card_key=? AND status IN ('submission_unknown','manual_review'))`, key).Scan(&uncertain); e != nil {
 		return nil, e
 	}

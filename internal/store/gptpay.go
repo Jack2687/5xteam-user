@@ -201,6 +201,7 @@ func (s *Store) SaveGPTPayCard(v gptpay.Card, secret gptpay.CardSecret) (gptpay.
 	stored.MaxAccounts = nil
 	// Derived from the current issuer settings, never a persistent card switch.
 	stored.IssuerDisabled = false
+	stored.NormalPending = false
 	raw, _ = json.Marshal(stored)
 	if _, err = tx.Exec("INSERT INTO gptpay_cards(id,profile,encrypted_secret,enabled,created_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET profile=excluded.profile,encrypted_secret=excluded.encrypted_secret,enabled=excluded.enabled", v.ID, string(raw), sealed, v.Enabled, formatTime(v.CreatedAt)); err != nil {
 		return v, err

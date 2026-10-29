@@ -1,5 +1,6 @@
 import { summarizeCardAmountsUSD } from './ejh-card-funding.js'
 import { authorizationGroups, remainingAuthorization, casePaymentTrades } from './ejh-clearing.js'
+import { returnPostedAt } from './ejh-trade-sort.js'
 
 // Original currency totals use six decimal places and integer arithmetic.
 const scale=1000000n
@@ -66,7 +67,7 @@ export function accountAmounts(row,trades=[]){
   const n=units(t.confirmed_amount),currency=t.confirmed_currency
   if(n===null||!currencyOK(currency)){invalid=true;continue}
   totals.set(currency,(totals.get(currency)||0n)+n)
-  returnedAt=Math.max(returnedAt,tradeAt(t))
+  returnedAt=Math.max(returnedAt,returnPostedAt(t))
  }
  const returned=[...totals].sort(([a],[b])=>a.localeCompare(b)).map(([currency,n])=>({amount:format(n),currency}))
  const comparable=paid!==null&&(charge.status==='2'||charge.type==='1'&&charge.status==='1')&&!invalid&&[...totals.keys()].every(c=>c===charge.card_currency)

@@ -157,6 +157,9 @@ func (s *Server) reserveProStartCard(ctx context.Context, email, selected string
 		if card.IssuerDisabled {
 			return card, secret, fmt.Errorf("该银行卡所属卡台已停用，请开启卡台后再开通 Pro")
 		}
+		if card.NormalPending {
+			return card, secret, fmt.Errorf("银行卡已移到正常待定，请选择正常分类的可用卡片")
+		}
 		if err = gptpay.ValidateCard(secret, time.Now()); err != nil {
 			return card, secret, err
 		}

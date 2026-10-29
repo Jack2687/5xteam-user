@@ -68,7 +68,7 @@ export function caseSummary(row) { return [row.email, row.plan || '—', returnL
 export const returnStatusLabels = { ...returnStates, unverified: '待核实', unmatched: '回款待关联', unknown: '状态未知' }
 export function returnStatus(state) { return Object.hasOwn(returnStatusLabels, state) ? state : 'unknown' }
 export function cardHasCase(card, row) { return row.card_id === card.id || row.ejh_card_id === card.id }
-export const cardStates = { '1': '已激活', '2': '已销卡', '3': '活跃', '4': '未激活', '5': '卡台状态受限', '6': '销卡失败', '7': '非活跃', '8': '销卡处理中', cancel_pending: '销卡结果确认中', review: '资料待核实', unknown: '状态待核实', unlinked: '手动添加 · 未绑定卡台' }
+export const cardStates = { normal_pending: '待定', '1': '已激活', '2': '已销卡', '3': '活跃', '4': '未激活', '5': '卡台状态受限', '6': '销卡失败', '7': '非活跃', '8': '销卡处理中', cancel_pending: '销卡结果确认中', review: '资料待核实', unknown: '状态待核实', unlinked: '手动添加 · 未绑定卡台' }
 export function cardLifecycle(card) {
   return ['2','8'].includes(String(card.remote?.status ?? card.local?.issuer_status ?? '')) || !!card.local?.issuer_cancel_status ? 'closed' : card.normal_pending ? 'normal_pending' : 'normal'
 }
@@ -77,10 +77,16 @@ export function cardState(card) {
   if (String(card.remote?.status) === '2') return '2'
   if (String(card.remote?.status) === '8' || card.local?.issuer_cancel_status === 'processing') return '8'
   if (['submitting','unknown'].includes(card.local?.issuer_cancel_status)) return 'cancel_pending'
+  if (card.normal_pending || card.local?.normal_pending) return 'normal_pending'
   if (card.error) return 'review'
   if (String(card.remote?.isLocked) === '1') return '5'
   const status = String(card.remote?.status || '')
   return Object.hasOwn(cardStates, status) ? status : 'unknown'
+}
+// Prioritize unfinished cancellations before pagination; keep newest-first within each group.
+export function sortCancellationCards(cards=[]) {
+  const pending=card=>['8','cancel_pending'].includes(cardState(card))?0:1
+  return [...cards].sort((a,b)=>pending(a)-pending(b))
 }
 export function cardMatchesFilters(card, cases, state = '', returnState = '') {
   if (state && cardState(card) !== state) return false

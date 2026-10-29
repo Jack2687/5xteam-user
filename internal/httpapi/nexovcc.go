@@ -1269,7 +1269,7 @@ func (s *Server) ensureNexovccCard(ctx context.Context, checks ...func() error) 
 			if err != nil {
 				return gptpay.Card{}, fmt.Errorf("已开环球卡尚未加入银行卡列表，请同步原卡后继续")
 			}
-			if !prior.DeadAccount && prior.IssuerStatus != "4" && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
+			if !prior.NormalPending && !prior.DeadAccount && prior.IssuerStatus != "4" && prior.OpenedAccounts == 0 && prior.PendingAccounts == 0 && prior.ActiveAccounts == 0 && !prior.Available {
 				return gptpay.Card{}, fmt.Errorf("环球卡尾号 %s 尚未使用且不可用，请核实原卡，暂停自动补卡", prior.Last4)
 			}
 		}
