@@ -1,4 +1,5 @@
 import { isClosedCard } from './card-status.js'
+import { cancellationCompletionLookup } from './ejh-cancel-time.js'
 
 export const returnStates = { no_return:'只付款 · 无需回款', unopened: '未开通', opened: '已开通', waiting: '已申请待回款', returned: '已回款' }
 export const tradeKinds = { '1': '授权', '2': '授权撤销', '3': '授权失败', '4': '清算', '5': '退款', '16': '清算退款', '17': '销卡退回', '19': '销卡后清算' }
@@ -83,10 +84,13 @@ export function cardState(card) {
   const status = String(card.remote?.status || '')
   return Object.hasOwn(cardStates, status) ? status : 'unknown'
 }
-// Prioritize unfinished cancellations before pagination; keep newest-first within each group.
-export function sortCancellationCards(cards=[]) {
-  const pending=card=>['8','cancel_pending'].includes(cardState(card))?0:1
-  return [...cards].sort((a,b)=>pending(a)-pending(b))
+// Unfinished first, then successful cancellations by their completion time.
+// Unknown completion times remain after dated successes, without inventing dates.
+export function sortCancellationCards(cards=[],operations=[]) {
+  const completedAt=cancellationCompletionLookup(operations)
+  const group=card=>['8','cancel_pending'].includes(cardState(card))?0:cardState(card)==='2'?1:2
+  const times=new Map(cards.map(card=>[card.id,Date.parse(completedAt(card))||0]))
+  return [...cards].sort((a,b)=>group(a)-group(b)||(group(a)===1?times.get(b.id)-times.get(a.id):0))
 }
 export function cardMatchesFilters(card, cases, state = '', returnState = '') {
   if (state && cardState(card) !== state) return false

@@ -303,11 +303,8 @@ func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !s.proFallback.tick.TryLock() {
-		writeAPI(w, 409, nil, "兜底正在核验，请稍后保存")
-		return
-	}
-	defer s.proFallback.tick.Unlock()
+	s.proFallback.apply.Lock()
+	defer s.proFallback.apply.Unlock()
 	id := ""
 	if t.Sub2.URL != "" {
 		id, err = s.store.SaveDownstreamTarget(t)
@@ -321,6 +318,5 @@ func (s *Server) saveProFallback(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, err.Error())
 		return
 	}
-	s.proFallback.next = time.Time{}
 	writeAPI(w, 200, f, "")
 }

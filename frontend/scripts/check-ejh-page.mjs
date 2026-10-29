@@ -24,26 +24,26 @@ const tick = () => new Promise(resolve=>setImmediate(resolve))
 let time=100000
 const saved = new Map(), storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
 const gate=createEJHRefreshGate({now:()=>time,storage:()=>storage})
-function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[],holdDashboard=false,holdSettings=false,failDashboard=false}={}) {
+function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,confirmDelete=true,deleteResult={deleted:1,deleted_ids:['unopened']},savedCases=[],savedCards=[],failURLs=new Set(),holdDashboard=false,holdSettings=false,failDashboard=false}={}) {
  const calls=[],mounts=[],unmounts=[],confirmations=[]
  let release,savedPercent=6,failSave=false
  const blocked=new Promise(resolve=>{release=resolve})
  const context=vm.createContext({createLatestRequest,applyPaymentPolicies,applyRefundFeeOverrides,sortCardsByReturnState,cardOrigin,...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
  async api(url,options={}){
-  calls.push({url,options})
+  calls.push({url,options});if(failURLs.has(url))throw Error("query failed")
   if(url==='/api/ejh/settings'){
    if(holdSettings)await blocked
    if(options.method==='PUT'){if(failSave)throw Error('save failed');savedPercent=options.body.reversal_fee_percent}
    return {enabled,reversal_fee_percent:savedPercent}
   }
-  if(url==='/api/ejh/dashboard'){if(holdDashboard)await blocked;if(failDashboard)throw Error('read timed out');return {cards:[],cases:savedCases,trades:[],operations:[],audit:[],sync:{},reversal_fee_percent:savedPercent}}
+  if(url==='/api/ejh/dashboard'){if(holdDashboard)await blocked;if(failDashboard)throw Error('read timed out');return {cards:savedCards,cases:savedCases,trades:[],operations:[],audit:[],sync:{},reversal_fee_percent:savedPercent}}
   if(options.method==='DELETE')return deleteResult
   if(url==='/api/ejh/sync'){if(holdSync)await blocked;if(failSync)throw Error('sync failed')}
   return {}
  }})
  context.watch=watch
- vm.runInContext(code+';globalThis.exposed={initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates,caseCategory,caseCounts,setCaseCategory,deleteUnopenedCase,page,pageSize,visible,settings,save,load,ready,loading,initializing,initialError,pollSavedData};',context)
- return {...context.exposed,calls,confirmations,release,setFailSave:value=>{failSave=value},unmount:()=>unmounts.forEach(fn=>fn())}
+ vm.runInContext(code+';globalThis.exposed={retryFailedRefresh,progress,initialize,refreshPage,refreshAllBalances,busy,message,balanceFailures,editLimit,saveLimit,data,limitID,limitValue,lifecycleFilter,filtered,setLifecycle,clearFilters,cardStatusFilter,targetCardID,changeTab,showCaseState,tab,status,query,accountReturnStates,caseCategory,caseCounts,setCaseCategory,deleteUnopenedCase,page,pageSize,visible,settings,save,load,ready,loading,initializing,initialError,pollSavedData};',context)
+ return {...context.exposed,calls,confirmations,release,setFailSync:value=>{failSync=value},setFailSave:value=>{failSave=value},unmount:()=>unmounts.forEach(fn=>fn())}
 }
 let f=fixture();await f.initialize()
 assert.equal(fixture({defaultPageSize:50}).pageSize.value,50,'EJH lists must use the global page size')
@@ -85,7 +85,7 @@ f=fixture()
 f.data.value.cards=['1','2','5','8'].map(state=>({id:state,remote:{status:state},local:{}}))
 assert.equal(f.lifecycleFilter.value,'normal')
 assert.deepEqual(Array.from(f.filtered.value,c=>c.id),['1','5'])
-f.setLifecycle('closed');assert.deepEqual(Array.from(f.filtered.value,c=>c.id),['2','8'])
+f.setLifecycle('closed');assert.deepEqual(Array.from(f.filtered.value,c=>c.id),['8','2'])
 f.cardStatusFilter.value='5';assert.equal(f.lifecycleFilter.value,'normal');assert.equal(f.filtered.value.length,1)
 f.cardStatusFilter.value='2';assert.equal(f.lifecycleFilter.value,'closed');assert.equal(f.filtered.value[0].id,'2')
 f.clearFilters();assert.equal(f.lifecycleFilter.value,'normal')
@@ -205,3 +205,36 @@ assert.match(f.initialError.value,/read timed out/)
 assert.equal(f.initializing.value,false);assert.equal(f.busy.value,false)
 assert.equal(f.ready.value,false);f.unmount()
 console.log('Passed: independent first load, visible data during sync, no overlapping polling, bounded reads and unmount cancellation')
+
+// Failed queries retry independently, with the same reentry and stop guards.
+time+=30000
+f=fixture({failSync:true});await f.initialize()
+let start=f.calls.length
+await f.retryFailedRefresh()
+assert.equal(f.balanceFailures.value.length,1,'failed retry must remain visible')
+assert.deepEqual(f.calls.slice(start).filter(c=>c.options.method).map(c=>c.url),['/api/ejh/sync'])
+f.setFailSync(false);start=f.calls.length;await f.retryFailedRefresh()
+assert.equal(f.balanceFailures.value.length,0)
+assert.deepEqual(f.calls.slice(start).filter(c=>c.options.method).map(c=>c.url),['/api/ejh/sync'])
+f.unmount()
+time+=30000
+const failURLs=new Set(['/api/ejh/cards/b/action'])
+f=fixture({savedCards:['a','b','c'].map(id=>({id,remote:{orderNo:id,status:'1'},local:{}})),failURLs})
+await f.initialize();assert.equal(f.balanceFailures.value.length,1)
+failURLs.clear();start=f.calls.length;await f.retryFailedRefresh()
+assert.deepEqual(f.calls.slice(start).filter(c=>c.options.method).map(c=>c.url),['/api/ejh/cards/b/action'])
+assert.equal(f.balanceFailures.value.length,0);f.unmount()
+time+=30000
+f=fixture({failSync:true,failURLs:new Set(['/api/ejh/balance'])});await f.initialize()
+f.setFailSync(false);f.calls.length=0
+const retry=f.retryFailedRefresh();f.progress.value.stopRequested=true;await f.retryFailedRefresh();await retry
+assert.equal(f.calls.filter(c=>c.options.method).length,1,'overlap or stop dispatched more queries')
+assert.equal(f.balanceFailures.value.length,1,'unattempted item must remain')
+assert.equal(f.balanceFailures.value[0].kind,'account_balance')
+f.unmount();start=f.calls.length;await f.retryFailedRefresh();assert.equal(f.calls.length,start)
+f=fixture();f.data.value.cards=[{id:'pending',normal_pending:true,remote:{status:'1'},local:{}}]
+f.cardStatusFilter.value='normal_pending';assert.equal(f.lifecycleFilter.value,'normal_pending');assert.equal(f.filtered.value[0].id,'pending');f.unmount()
+const overview=readFileSync(new URL('../src/components/EJHBalanceOverview.vue',import.meta.url),'utf8')
+assert.ok(overview.indexOf('@click="emit(\'retry-failed\')"')<overview.indexOf('@click="emit(\'refresh\')"'))
+assert.ok(code.includes('async function retryFailedRefresh'))
+console.log('Passed: targeted failure retry, retained failures, stop/unmount/reentry guards and pending filter')

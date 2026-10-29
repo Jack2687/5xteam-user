@@ -17,6 +17,7 @@ import (
 )
 
 type fallbackMock struct {
+	before           func(*http.Request)
 	mu               sync.Mutex
 	on               map[int64]bool
 	group            map[int64]int64
@@ -40,6 +41,9 @@ func newFallbackMock(t *testing.T) *fallbackMock {
 	m := &fallbackMock{on: map[int64]bool{1: false, 2: false, 3: true}, group: map[int64]int64{1: 7, 2: 7, 3: 7}, writes: map[int64]int{}, fail: map[int64]bool{}, ambiguous: map[int64]bool{}}
 	m.memberships = map[int64][]int64{}
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if m.before != nil {
+			m.before(r)
+		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")

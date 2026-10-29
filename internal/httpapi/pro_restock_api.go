@@ -182,18 +182,14 @@ func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	s.proRestock.tick.Lock()
 	defer s.proRestock.tick.Unlock()
-	if !s.proFallback.tick.TryLock() {
-		writeAPI(w, 409, nil, "兜底正在核验，请稍后保存补货配置")
-		return
-	}
-	defer s.proFallback.tick.Unlock()
+	s.proFallback.apply.Lock()
+	defer s.proFallback.apply.Unlock()
 	c, e := s.store.SaveProRestockConfig(c)
 	if e != nil {
 		writeAPI(w, 409, nil, e.Error())
 		return
 	}
 	_ = s.store.SaveProRestockDecision(restock.Decision{ID: randomRegistrationID(), At: time.Now(), Version: c.Version, Config: c, Reason: "配置已保存：" + c.Mode})
-	s.proFallback.next = time.Time{}
 	s.proRestock.next = time.Time{}
 	writeAPI(w, 200, c, "")
 }

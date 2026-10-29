@@ -15,17 +15,20 @@ import (
 )
 
 type proFallbackRuntime struct {
-	mu            sync.Mutex
-	lastCheck     time.Time
-	lastError     string
-	observation   restock.FallbackObservation
-	source        string
-	rules         []fallbackRuleState
-	tick          sync.Mutex
-	clients       map[string]*sub2.Client
-	next          time.Time
-	configVersion int
-	now           func() time.Time
+	mu          sync.Mutex
+	lastCheck   time.Time
+	lastError   string
+	observation restock.FallbackObservation
+	source      string
+	rules       []fallbackRuleState
+	tick        sync.Mutex
+	// Config saves only coordinate with reconciliation, not slow monitoring reads.
+	apply           sync.RWMutex
+	clients         map[string]*sub2.Client
+	next            time.Time
+	configVersion   int
+	fallbackVersion int
+	now             func() time.Time
 }
 
 func (s *Server) fallbackNow() time.Time {
@@ -83,10 +86,15 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 	if err != nil {
 		return err
 	}
-	if !force && now.Before(s.proFallback.next) && c.Version == s.proFallback.configVersion {
+	f, targetID, err := s.store.ProFallbackConfig()
+	if err != nil {
+		return err
+	}
+	if !force && now.Before(s.proFallback.next) && c.Version == s.proFallback.configVersion && f.Version == s.proFallback.fallbackVersion {
 		return nil
 	}
 	s.proFallback.configVersion = c.Version
+	s.proFallback.fallbackVersion = f.Version
 	defer func() {
 		s.proFallback.mu.Lock()
 		defer s.proFallback.mu.Unlock()
@@ -96,10 +104,6 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 			s.proFallback.lastError = "兜底核验未完成，请检查逐账号状态、连接认证或本地存储；后台将继续重试"
 		}
 	}()
-	f, targetID, err := s.store.ProFallbackConfig()
-	if err != nil {
-		return err
-	}
 	defer func() {
 		s.proFallback.next = now.Add(time.Duration(f.CheckSeconds) * time.Second)
 		if result != nil {
@@ -138,15 +142,26 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 			existing[b.AccountID] = true
 		}
 	}
-	// Record every selected account before any remote side effect.
-	for _, id := range f.AccountIDs {
-		if managed && !existing[id] {
-			b := store.FallbackBinding{ConnectionID: targetID, GroupID: f.GroupID, AccountID: id}
-			if err = s.store.SaveProFallbackBinding(b); err != nil {
-				return err
-			}
-			bindings = append(bindings, b)
+	// Record ownership only while this round's configuration is still current.
+	err = func() error {
+		s.proFallback.apply.RLock()
+		defer s.proFallback.apply.RUnlock()
+		if e := s.fallbackConfigCurrent(c.Version, f.Version, targetID); e != nil {
+			return e
 		}
+		for _, id := range f.AccountIDs {
+			if managed && !existing[id] {
+				b := store.FallbackBinding{ConnectionID: targetID, GroupID: f.GroupID, AccountID: id}
+				if err = s.store.SaveProFallbackBinding(b); err != nil {
+					return err
+				}
+				bindings = append(bindings, b)
+			}
+		}
+		return nil
+	}()
+	if err != nil {
+		return err
 	}
 	// Reconcile current selections before draining old connections.
 	sort.SliceStable(bindings, func(i, j int) bool {
@@ -157,6 +172,13 @@ func (s *Server) tickProFallback(parent context.Context, force bool) (result err
 	ctx, cancel := context.WithTimeout(parent, time.Duration(min(40, max(10, f.CheckSeconds*2)))*time.Second)
 	defer cancel()
 	reconcile := func(b store.FallbackBinding) error {
+		// Writers wait only for the bounded account operation, never a whole round.
+		// Pending writers also prevent subsequent accounts from using an old config.
+		s.proFallback.apply.RLock()
+		defer s.proFallback.apply.RUnlock()
+		if e := s.fallbackConfigCurrent(c.Version, f.Version, targetID); e != nil {
+			return e
+		}
 		var err error
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -319,6 +341,22 @@ dispatch:
 		return ctx.Err()
 	}
 	return firstErr
+}
+
+// Called under apply so API saves cannot race remote scheduling changes.
+func (s *Server) fallbackConfigCurrent(restockVersion, fallbackVersion int, targetID string) error {
+	c, err := s.store.ProRestockConfig()
+	if err != nil {
+		return err
+	}
+	f, target, err := s.store.ProFallbackConfig()
+	if err != nil {
+		return err
+	}
+	if c.Version != restockVersion || f.Version != fallbackVersion || target != targetID {
+		return errors.New("配置已变化，等待下轮兜底核验")
+	}
+	return nil
 }
 
 func fallbackSourceKey(c restock.Config, p model.ProSettings, password string) string {

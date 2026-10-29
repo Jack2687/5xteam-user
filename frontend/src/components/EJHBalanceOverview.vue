@@ -14,7 +14,7 @@ import EJHExternalTransfer from './EJHExternalTransfer.vue'
 
 const props = defineProps({ data: { type: Object, required: true }, busy: Boolean, ready: Boolean, enabled: Boolean, progress: { type: Object, default: null }, failures: { type: Array, default: () => [] } })
 const display = value => props.enabled ? value : '---'
-const emit = defineEmits(['refresh', 'ledger-updated', 'refund-fee-saved'])
+const emit = defineEmits(['refresh', 'retry-failed', 'ledger-updated', 'refund-fee-saved'])
 const balances = computed(() => summarizeCardBalances(props.data.cards))
 const usd = computed(() => summarizeCardBalancesUSD(props.data.cards, props.data.operations))
 const inFlight = computed(() => summarizeInFlightPayments(props.data.cases, props.data.cards, props.data.operations, props.data.trades))
@@ -39,7 +39,7 @@ async function saveLedger() {
 
 <template>
  <section class="ejh-balance-overview" aria-label="余额总览">
-  <header class="overview-header"><div><Wallet :size="18"/><h2>余额总览</h2></div><div class="overview-actions"><EJHRefundFees :trades="data.trades||[]" :cards="data.cards||[]" :records="data.refund_fees||[]" :disabled="busy||!ready" @saved="emit('refund-fee-saved',$event)"/><button class="btn primary" type="button" :disabled="busy||saving||!ready" @click="emit('refresh')"><RefreshCw :size="14" :class="{spin:progress}"/>{{progress?'刷新中 '+progress.done+' / '+progress.total:'刷新数据'}}</button></div></header>
+  <header class="overview-header"><div><Wallet :size="18"/><h2>余额总览</h2></div><div class="overview-actions"><EJHRefundFees :trades="data.trades||[]" :cards="data.cards||[]" :records="data.refund_fees||[]" :disabled="busy||!ready" @saved="emit('refund-fee-saved',$event)"/><button v-if="failures.length" class="btn ghost" type="button" :disabled="busy||saving||!ready" @click="emit('retry-failed')"><RefreshCw :size="14"/>重试失败项（{{failures.length}}）</button><button class="btn primary" type="button" :disabled="busy||saving||!ready" @click="emit('refresh')"><RefreshCw :size="14" :class="{spin:progress}"/>{{progress?'刷新中 '+progress.done+' / '+progress.total:'刷新数据'}}</button></div></header>
   <p v-if="!enabled" class="overview-disabled">卡台已关闭，可手动查询和操作。</p>
   <EJHReconciliationBar :data="data" :masked="!enabled"/>
   <div class="overview-grid">
