@@ -6,7 +6,8 @@ import (
 )
 
 type ProAutoState struct {
-	PaymentReviewRequired bool `json:"payment_review_required,omitempty"`
+	Replacement           *ProRechargeReplacement `json:"replacement,omitempty"`
+	PaymentReviewRequired bool                    `json:"payment_review_required,omitempty"`
 	// Base connection and effective groups are separate so extra memberships
 	// do not change the restock pool's identity or hide in-flight work.
 	Sub2PushGroupIDs     []int64              `json:"sub2_push_group_ids,omitempty"`
@@ -99,6 +100,7 @@ type ProSettings struct {
 	TargetAdminID                string                      `json:"target_admin_id,omitempty"`
 	TargetSeatType               string                      `json:"target_seat_type"`
 	RetryCount                   int                         `json:"retry_count"`
+	RechargeReplacementCount     int                         `json:"recharge_replacement_count"`
 	RetryIntervalSeconds         int                         `json:"retry_interval_seconds"`
 	Concurrency                  int                         `json:"concurrency"`
 	MergeConcurrency             int                         `json:"merge_concurrency"`
@@ -117,7 +119,7 @@ func DefaultProSettings() ProSettings {
 		Provider: "sub2", Sub2: DefaultSub2Settings(), CPA: DefaultCPASettings(), VM2API: DefaultVM2APISettings(),
 		QuotaUsedThreshold: 100, QuotaCheckIntervalSeconds: 120, TargetSeatType: "default",
 		DeletionCheckIntervalSeconds: 300,
-		RetryCount:                   2, RetryIntervalSeconds: 3, Concurrency: 2, MergeConcurrency: 2,
+		RetryCount:                   2, RechargeReplacementCount: 2, RetryIntervalSeconds: 3, Concurrency: 2, MergeConcurrency: 2,
 	}
 }
 

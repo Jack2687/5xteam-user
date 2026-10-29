@@ -25,6 +25,13 @@ func (s *Server) stopProRestockTask(w http.ResponseWriter, r *http.Request) {
 	s.proAutoMu.Lock()
 	task, changed, err := s.store.StopProRestockTask(r.PathValue("id"))
 	if err == nil && changed {
+		var members []string
+		members, err = s.store.StopProRechargeReplacementChain(task.Email)
+		for _, email := range members {
+			if cancel := s.proAutoJobs[email]; cancel != nil {
+				cancel()
+			}
+		}
 		if cancel := s.proRestockStartJobs[task.ID]; cancel != nil {
 			cancel()
 		}

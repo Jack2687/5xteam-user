@@ -63,6 +63,33 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		if profile.ProAuto.ID != "" {
 			t.OrderID = profile.ProAuto.OrderID
 		}
+		if replacement := profile.ProAuto.Replacement; replacement != nil {
+			if replacement.Queued && t.Status == "reserved" {
+				continue
+			}
+			if profile.ProAuto.Stage == "recharge" && profile.ProAuto.Status == "failed" && !s.proAutomationRunning(t.Email) {
+				order, _, lookupErr := s.store.GPTPayOrder(firstNonEmpty(t.OrderID, profile.ProAuto.PaymentOrderID()))
+				if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+					return nil, 0, lookupErr
+				}
+				if lookupErr != nil || order.Status != "success" {
+					t.Status, t.Stage, t.ETA, t.UpdatedAt = "failed", "recharge", nil, now
+					t.Message = firstNonEmpty(replacement.Message, profile.ProAuto.Error)
+					if lookupErr == nil {
+						t.OrderID = order.ID
+						if order.Active() || order.PaymentReviewBlocksRestock() {
+							t.Status = "unknown"
+						}
+					} else {
+						t.Cost = 0
+					}
+					if err = s.store.SaveProRestockObservation(t); err != nil {
+						return nil, 0, err
+					}
+					continue
+				}
+			}
+		}
 		if finished, err := s.finishUnsubmittedRestockPreparation(t, profile); err != nil {
 			return nil, 0, err
 		} else if finished {
@@ -309,7 +336,7 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 		// Historical completed manual failures must not become new blocking
 		// tasks on upgrade. Only a workflow stopped for review holds admission.
 		review := profile.ProAuto.PaymentReviewRequired && orderErr == nil && order.PaymentReviewRequired()
-		if !running && review && !order.PaymentReviewBlocksRestock() && profile.ProAuto.RestockBinding == snap.Binding {
+		if !running && review && !order.PaymentReviewBlocksRestock() && profile.ProAuto.RestockBinding == snap.Binding && profile.ProAuto.Replacement == nil {
 			// A current manual/scheduled full-auto failure gets the same durable
 			// one-time replacement policy, without claiming historical failures.
 			id := "external-risk:" + order.ID
@@ -334,6 +361,9 @@ func (s *Server) restockTasks(snap restock.Snapshot, p model.ProSettings, c rest
 				}
 			}
 			continue
+		}
+		if !running && profile.ProAuto.Replacement != nil && orderErr == nil && order.Status == "failed" && !order.PaymentReviewBlocksRestock() {
+			continue // the shared step-two chain owns replacement, not the legacy risk policy
 		}
 		if !running && !review && (orderErr != nil || order.Status == "failed") && profile.ProAuto.OrderID == "" && profile.ProAuto.Steps["recharge"] != "completed" && profile.ProAuto.Steps["oauth"] != "completed" && profile.PushStatus != "completed" {
 			continue

@@ -94,18 +94,28 @@ func (s *Server) reconcileProSchedule(run *model.ProScheduleRun) bool {
 			continue
 		}
 		p, _, err := s.store.MailAccountCredential(t.Email)
+		for followed := 0; err == nil && p.ProAuto.Replacement != nil && p.ProAuto.Replacement.NextEmail != "" && followed < 10; followed++ {
+			t.Email = p.ProAuto.Replacement.NextEmail
+			p, _, err = s.store.MailAccountCredential(t.Email)
+		}
 		if err != nil {
 			t.Status, t.Error = "failed", "账号已不存在"
 			failed++
 			continue
 		}
 		t.Stage, t.Steps, t.Error = p.ProAuto.Stage, p.ProAuto.Steps, p.ProAuto.Error
+		t.CardID = p.ProAuto.CardID
+		if replacement := p.ProAuto.Replacement; replacement != nil && (replacement.Pending || replacement.Queued) && !p.ProAuto.StopRequested {
+			t.Status, t.Error = "running", replacement.Message
+			pending++
+			continue
+		}
 		if p.ProAuto.ProvisionedAt != nil {
 			t.Status = "completed"
 			t.Error = ""
 			continue
 		}
-		if p.ProAuto.PaymentReviewRequired {
+		if p.ProAuto.PaymentReviewRequired && p.ProAuto.Replacement == nil {
 			t.Status, t.Error = "attention", gptpay.PaymentReviewMessage
 			pending++
 			continue

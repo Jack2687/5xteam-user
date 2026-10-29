@@ -12,6 +12,7 @@ const proScheduleCandidateSQL = `SELECT m.email FROM mail_accounts m WHERE json_
 	AND coalesce(json_extract(m.profile,'$.space_merged_once'),0)=0 AND coalesce(json_extract(m.profile,'$.pro_workflow_running'),0)=0
 	AND coalesce(json_extract(m.profile,'$.pro_restock_task_id'),'')='' AND coalesce(json_extract(m.profile,'$.pro_auto.id'),'')='' AND json_type(m.profile,'$.pro_migration') IS NULL
 	AND coalesce(json_extract(m.profile,'$.pro_auto.stop_requested'),0)=0
+ AND coalesce(json_extract(m.profile,'$.pro_auto.replacement.queued'),0)=0
  AND json_extract(m.profile,'$.pro_deactivation') IS NULL
  AND json_extract(m.profile,'$.pro_merge_v2') IS NULL
  AND json_extract(m.profile,'$.pro_merchant') IS NULL

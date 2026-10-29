@@ -19,15 +19,16 @@ const displayDisposition=computed(()=>accountDisposition({...openedAccount.value
 const visibleError=computed(()=>busy.value?'':error.value||(state.value.error?(state.value.restock_retry_available?'上次开卡结果：':'')+state.value.error:''))
 const autoCardEnabled=computed(()=>settings.value.card_provider==='nexovcc'?settings.value.nexovcc_auto_open:settings.value.ejh_auto_open)
 const autoCardLabel=computed(()=>settings.value.card_provider==='nexovcc'?'环球':'EJH')
-const active=computed(()=>state.value.pro_workflow_running===true||['running','waiting_quota','awaiting_deletion','awaiting_merchant'].includes(state.value.status))
+const active=computed(()=>state.value.replacement?.pending||state.value.replacement?.queued||!!state.value.replacement?.next_email||state.value.pro_workflow_running===true||['running','waiting_quota','awaiting_deletion','awaiting_merchant'].includes(state.value.status))
 const manualRunning=computed(()=>Object.values(state.value.stage_progress?.steps||{}).includes('running'))
 const quotaResumeAvailable=computed(()=>state.value.quota_resume_available===true)
 const deletionSubmitted=computed(()=>!!state.value.pro_deactivation?.submitted_at)
 const resumable=computed(()=>!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&state.value.steps?.oauth==='completed'&&!active.value&&state.value.status!=='completed')
-const retryCurrent=computed(()=>!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&!!(state.value.id||state.value.order_id||state.value.restock_retry_available)&&!active.value&&!resumable.value&&state.value.status!=='completed')
+const replacementFailed=computed(()=>!!state.value.replacement&&state.value.stage==='recharge'&&state.value.status==='failed')
+const retryCurrent=computed(()=>!replacementFailed.value&&!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&!!(state.value.id||state.value.order_id||state.value.restock_retry_available)&&!active.value&&!resumable.value&&state.value.status!=='completed')
 const termsMissing=computed(()=>['cmsnav','xupay'].includes(settings.value.provider)&&!settings.value.terms_accepted)
 const restartable=computed(()=>retryCurrent.value&&(!state.value.order_id||state.value.payment_status==='failed'))
-const canStart=computed(()=>!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&!active.value&&!resumable.value&&!retryCurrent.value&&state.value.status!=='completed'&&!state.value.order_id)
+const canStart=computed(()=>!replacementFailed.value&&!state.value.pro_merge_v2&&!state.value.pro_merchant&&!deletionSubmitted.value&&!quotaResumeAvailable.value&&!active.value&&!resumable.value&&!retryCurrent.value&&state.value.status!=='completed'&&!state.value.order_id)
 const blockedCards=ref([]),checkingOccupancy=ref(false),occupancyMessage=ref('')
 async function loadBlockedCards(){
  const found=[]
@@ -53,7 +54,7 @@ async function loadCards(){const data=await api(`/api/gptpay/cards?page=${page.v
 async function open(account){if(busy.value)return;openedAccount.value=account;clearTimeout(timer);generation++;blockedCards.value=[];occupancyMessage.value='';email.value=account.email;state.value=account.pro_auto||{};error.value='';opened.value=true;busy.value=true;page.value=1;pageSize.value=props.defaultPageSize || 10;try{const [config,current,pro]=await Promise.all([api('/api/gptpay/settings'),api(path()),api('/api/pro-settings')]);settings.value={...config,auto_delete_enabled:pro.auto_delete_enabled,auto_merchant_enabled:pro.auto_merchant_enabled,auto_merge_v2_enabled:pro.auto_merge_v2_enabled,quota_used_threshold:pro.quota_used_threshold,ejh_auto_open:pro.ejh_auto_open,nexovcc_auto_open:pro.nexovcc_auto_open,card_provider:pro.card_provider};await loadCards();state.value=current||{}}catch(e){error.value=e.message}finally{preparingCard.value=false;busy.value=false;schedule()}}
 function close(){if(busy.value)return;opened.value=false;generation++;clearTimeout(timer)}
 function schedule(){clearTimeout(timer);if(opened.value&&(active.value||manualRunning.value))timer=setTimeout(refresh,state.value.status==='running'||manualRunning.value?1500:5000)}
-async function refresh(){const gen=generation;try{const value=await api(path());if(gen!==generation)return;state.value=value;emit('updated')}catch(e){if(gen===generation)error.value=e.message}finally{if(gen===generation)schedule()}}
+async function refresh(){const gen=generation;try{let currentEmail=email.value;let value=await api(path());for(let i=0;i<10&&value.replacement?.next_email;i++){currentEmail=value.replacement.next_email;value=await api(`/api/pro-accounts/${encodeURIComponent(currentEmail)}/auto-pro`)}if(gen!==generation)return;email.value=currentEmail;state.value=value;emit('updated')}catch(e){if(gen===generation)error.value=e.message}finally{if(gen===generation)schedule()}}
 async function start(){if(busy.value)return;busy.value=true;preparingCard.value=canStart.value;error.value='';try{const p=await api(path(),{method:'POST',body:{provider:settings.value.provider,card_provider:settings.value.card_provider,card_id:cardID.value,plan_code:settings.value.plan_code,country:settings.value.country,credit_quantity:settings.value.credit_quantity||0}});state.value=p.pro_auto;emit('updated')}catch(e){error.value=e.message}finally{preparingCard.value=false;busy.value=false;schedule()}}
 async function retryStep(){if(busy.value)return;if(state.value.payment_review_required&&!window.confirm('确认已核实原付款订单及风控原因，继续处理这个账号？'))return;busy.value=true;preparingCard.value=restartable.value;error.value='';try{const p=await api(path(),{method:'POST',body:{retry_current:true,provider:settings.value.provider,card_provider:settings.value.card_provider,card_id:cardID.value,plan_code:settings.value.plan_code,country:settings.value.country,credit_quantity:settings.value.credit_quantity||0}});state.value=p.pro_auto;emit('updated')}catch(e){error.value=e.message;await refresh()}finally{preparingCard.value=false;busy.value=false;schedule()}}
 async function resumeMergeV2(){if(busy.value)return;busy.value=true;error.value='';try{await api(`/api/pro-accounts/${encodeURIComponent(email.value)}/merge-v2`,{method:'POST'});await refresh()}catch(e){error.value=e.message}finally{busy.value=false;schedule()}}
@@ -71,6 +72,8 @@ defineExpose({open})
 <div class="modal-heading"><h2>全自动开通 Pro</h2><button class="icon-button" title="关闭全自动窗口" :disabled="busy" @click="close"><X :size="17" /></button></div>
 <p>{{ email }}</p><ProAutoStages :state="state.stage_progress || state" :disposition="displayDisposition" />
 <p v-if="preparingCard&&autoCardEnabled" role="status">正在准备银行卡；新卡资料同步完成后会继续全自动，请稍候。</p>
+<p v-if="state.replacement?.attempts" role="status">第二步失败换号：{{ state.replacement.attempts }} / {{ state.replacement.limit }} 次 · 原账号 {{ state.replacement.previous_email }}</p>
+<p v-if="state.replacement?.message" role="status">{{ state.replacement.message }}</p>
 <p v-if="state.retry_attempts" role="status">原账号重试：第 {{ state.retry_attempts }} 次</p>
 <p v-if="state.proxy_retry_attempts" role="status">代理连接重试：第 {{ state.proxy_retry_attempts }} 次 / 最多 3 次（保留原账号和原卡）</p>
 <p v-if="state.status==='running'&&state.retry_at" role="status">正在等待重试 · 下次执行：{{ formatTime(state.retry_at) }}</p>
@@ -91,8 +94,8 @@ defineExpose({open})
 <label class="field"><span>开通银行卡</span><select v-model="cardID" :disabled="busy"><option value="">{{autoCardEnabled?`自动选卡（无可用卡时从 ${autoCardLabel} 补卡）`:'请选择银行卡'}}</option><option v-for="card in cards" :key="card.id" :value="card.id">{{ card.name }} · 尾号 {{ card.last4 }} · 已开通 {{ card.opened_accounts ?? 0 }} · 剩余 {{ card.remaining_accounts ?? 0 }}</option></select></label>
 <Pagination v-if="total>10" :page="page" :page-size="pageSize" :total="total" @update:page="changePage" @update:page-size="changeSize" />
 <p class="muted">首次登录后保留会话等待开通，成功后沿用该会话取得新 RT/AT，再推送配置的下游。关闭窗口不影响后台流程。</p></template>
-<p v-if="state.payment_review_required" role="status" class="payment-review">付款待核实：自动重试已停止，原账号及订单保留。核实付款拦截原因后，可手动继续处理。</p>
-<p v-if="!deletionSubmitted&&state.order_id&&!active&&!resumable&&!quotaResumeAvailable&&state.status!=='completed'">开通失败：从登录开始重跑；开通成功：继续后续流程；结果待确认：先核查原订单。</p>
+<p v-if="state.payment_review_required&&!state.replacement" role="status" class="payment-review">付款待核实：自动重试已停止，原账号及订单保留。核实付款拦截原因后，可手动继续处理。</p>
+<p v-if="!replacementFailed&&!deletionSubmitted&&state.order_id&&!active&&!resumable&&!quotaResumeAvailable&&state.status!=='completed'">开通失败：从登录开始重跑；开通成功：继续后续流程；结果待确认：先核查原订单。</p>
 <button v-if="deletionSubmitted&&!manualRunning&&state.status!=='completed'" class="btn primary" :disabled="busy" @click="resumeDeletion">续跑删除核验及后续处理</button>
 <div class="panel-actions"><button v-if="active" class="btn ghost danger-text" :disabled="busy" @click="stop">停止全自动</button><button v-if="quotaResumeAvailable" class="btn primary" :disabled="busy" @click="resumeQuota">{{busy?'正在恢复…':'恢复额度监控'}}</button><button v-if="retryCurrent" class="btn primary" :disabled="busy||state.payment_retry_blocked||(restartable&&termsMissing)" @click="retryStep">{{busy?'正在处理…':'重试并继续'}}</button><button v-if="resumable" class="btn primary" :disabled="busy" @click="start">继续后续流程</button><button v-if="canStart" class="btn primary" :disabled="busy||(!cardID&&!autoCardEnabled)||!settings.key_present||termsMissing" @click="start">确认全自动开通 {{ proPlanName(settings.plan_code) }}</button><button class="btn ghost" :disabled="busy" @click="close">关闭</button></div>
 </section></div></Teleport></template>

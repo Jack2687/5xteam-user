@@ -172,6 +172,19 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, errProAccountDead.Error())
 		return
 	}
+	if replacement := p.ProAuto.Replacement; replacement != nil {
+		if replacement.NextEmail != "" || replacement.Pending || (p.ProAuto.Stage == "recharge" && p.ProAuto.Status == "failed") {
+			writeAPI(w, 409, nil, firstNonEmpty(replacement.Message, "第二步失败后仅换号，不再重试原账号"))
+			return
+		}
+		if replacement.Queued {
+			root, _, e := s.store.MailAccountCredential(replacement.RootEmail)
+			if e != nil || root.ProAuto.StopRequested {
+				writeAPI(w, 409, nil, "换号流程已停止")
+				return
+			}
+		}
+	}
 	if p.MergeV2Started() {
 		writeAPI(w, 409, nil, "该账号已进入合并空间2.0，请从该流程续跑")
 		return
@@ -216,6 +229,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	restartFailed := false
 	recoveryOrderID := p.ProAuto.OrderID
 	recoveryFlowID := p.ProAuto.ID
+	replacementOwner := proReplacementOwner(p)
 	stopVersion := p.ProAuto.StopVersion
 	wasStopped := p.ProAuto.StopRequested
 	if automatic && p.ProAuto.StopRequested {
@@ -379,7 +393,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		closed := s.proAutoClosed
 		s.proAutoMu.Unlock()
 		latest, _, checkErr := s.store.MailAccountCredential(email)
-		if closed || checkErr != nil || latest.ProAuto.ID != recoveryFlowID || latest.ProAuto.StopVersion != stopVersion || (latest.ProAuto.StopRequested && (automatic || !wasStopped)) || latest.ProWorkflowRunning || latest.ProAuto.OrderID != recoveryOrderID || latest.SpaceMergedOnce || s.proAutomationRunning(email) || s.proLoginAlreadyRunning(email) {
+		if closed || checkErr != nil || latest.ProAuto.ID != recoveryFlowID || proReplacementOwner(latest) != replacementOwner || latest.ProAuto.StopVersion != stopVersion || (latest.ProAuto.StopRequested && (automatic || !wasStopped)) || latest.ProWorkflowRunning || latest.ProAuto.OrderID != recoveryOrderID || latest.SpaceMergedOnce || s.proAutomationRunning(email) || s.proLoginAlreadyRunning(email) {
 			lock.Unlock()
 			writeAPI(w, 409, nil, "账号已有任务或已开通，未购买新卡")
 			return
@@ -433,7 +447,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			if latest.ProAuto.StopVersion != stopVersion || (latest.ProAuto.StopRequested && (automatic || !wasStopped)) {
+			if proReplacementOwner(latest) != replacementOwner || latest.ProAuto.StopVersion != stopVersion || (latest.ProAuto.StopRequested && (automatic || !wasStopped)) {
 				return errors.New("用户已停止该账号流程，未购买新卡")
 			}
 			return nil
@@ -473,6 +487,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil && p.ProAuto.ID != recoveryFlowID {
 		err = errors.New("账号流程已变化，请刷新后重试")
+	}
+	if err == nil && proReplacementOwner(p) != replacementOwner {
+		err = errors.New("账号已由另一条换号流程领取，请刷新后重试")
 	}
 	if err == nil && !resume && !paidRecovery && p.ProAuto.OrderID != recoveryOrderID {
 		err = errors.New("已存在开通订单，请查询原订单")
@@ -516,7 +533,12 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 					p.ProManualStages = nil
 					p.ProStageOverrides = nil
 				}
-				p.ProAuto = model.ProAutoState{ID: randomRegistrationID(), PlanCode: cfg.PlanCode, CardID: card.ID, QuotaUsedThreshold: pro.QuotaUsedThreshold, QuotaIntervalSeconds: pro.QuotaCheckIntervalSeconds, StartedAt: time.Now(), Steps: map[string]string{}}
+				replacement := p.ProAuto.Replacement
+				if replacement == nil {
+					replacement = &model.ProRechargeReplacement{RootEmail: email, Limit: pro.RechargeReplacementCount, Scheduled: r.Context().Value(proScheduledContextKey{}) == true, CardProvider: pro.AutoCardProvider(), PurchaseRoute: pro.PurchaseRoute}
+				}
+				replacement.Queued = false
+				p.ProAuto = model.ProAutoState{Replacement: replacement, ID: randomRegistrationID(), PlanCode: cfg.PlanCode, CardID: card.ID, QuotaUsedThreshold: pro.QuotaUsedThreshold, QuotaIntervalSeconds: pro.QuotaCheckIntervalSeconds, StartedAt: time.Now(), Steps: map[string]string{}}
 				p.ProAuto.StopVersion = stopVersion
 				p.ProAuto.QuotaPlan = restockPlan(cfg.Provider, cfg.PlanCode, cfg.Country, cfg.CreditQuantity)
 				p.ProAuto.RestockBinding = restockBinding(pro)
@@ -624,6 +646,11 @@ func (s *Server) runProAutomation(ctx context.Context, email string, unlock, can
 			stage = "push"
 		}
 		_ = s.autoProUpdate(email, stage, status, err.Error())
+		if status == "failed" && stage == "recharge" {
+			if e := s.store.QueueProRechargeReplacement(email, p.ProAuto.ID); e != nil {
+				s.auditProEvent(p, "recharge", "failed", "pro_auto", "记录换号任务失败："+e.Error(), nil)
+			}
+		}
 	}
 }
 
@@ -1148,6 +1175,7 @@ func (s *Server) startProAutomationMonitor() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				s.queueProRechargeReplacements(ctx)
 				s.tickProDeactivations(ctx)
 				s.tickProMerchants(ctx)
 				s.tickProPausedMergeV2(ctx)
@@ -1218,6 +1246,18 @@ func (s *Server) stopProAutomation(w http.ResponseWriter, r *http.Request) {
 	defer s.proMergeMu.Unlock()
 	s.proOAIMu.Lock()
 	defer s.proOAIMu.Unlock()
+	chain, chainErr := s.store.StopProRechargeReplacementChain(email)
+	if chainErr != nil {
+		writeAPI(w, 500, nil, chainErr.Error())
+		return
+	}
+	for _, member := range chain {
+		for _, cancel := range []context.CancelFunc{s.proAutoJobs[member], s.proMergeJobs[member]} {
+			if cancel != nil {
+				cancel()
+			}
+		}
+	}
 	p, err := s.store.UpdateProAccount(email, func(p *model.MailAccountProfile) {
 		p.ProAuto.StopVersion++
 		p.ProAuto.StopRequested = true

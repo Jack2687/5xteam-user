@@ -165,7 +165,7 @@ func restockLimits(q proCapacityQuery, now time.Time) (restock.Limits, error) {
 		return l, err
 	}
 	// Consecutive failures since the last ready task or explicit breaker reset.
-	err = q.QueryRow(`SELECT count(*) FROM pro_restock_tasks WHERE coalesce(json_extract(payload,'$.stage'),'')<>'dead' AND NOT EXISTS(SELECT 1 FROM pro_restock_payment_risk WHERE task_id=pro_restock_tasks.id) AND (status IN ('failed','attention','unknown') OR json_extract(payload,'$.stopped_failure')=1) AND created_at>coalesce((SELECT max(created_at) FROM pro_restock_tasks WHERE status='ready'),'') AND created_at>coalesce((SELECT reset_at FROM pro_restock_clock WHERE id=1),'')`).Scan(&l.Failures)
+	err = q.QueryRow(`SELECT count(*) FROM pro_restock_tasks WHERE coalesce(json_extract(payload,'$.stage'),'')<>'dead' AND NOT EXISTS(SELECT 1 FROM pro_restock_payment_risk WHERE task_id=pro_restock_tasks.id) AND NOT EXISTS(SELECT 1 FROM mail_accounts m WHERE m.email=pro_restock_tasks.email AND (json_extract(m.profile,'$.pro_auto.replacement.pending')=1 OR coalesce(json_extract(m.profile,'$.pro_auto.replacement.next_email'),'')<>'')) AND (status IN ('failed','attention','unknown') OR json_extract(payload,'$.stopped_failure')=1) AND created_at>coalesce((SELECT max(created_at) FROM pro_restock_tasks WHERE status='ready'),'') AND created_at>coalesce((SELECT reset_at FROM pro_restock_clock WHERE id=1),'')`).Scan(&l.Failures)
 	if err != nil {
 		return l, err
 	}
@@ -214,6 +214,13 @@ func (s *Store) ReserveProRestock(d restock.Decision, target string, existingInf
 	}
 	if !c.Enabled || c.Mode != "auto" || c.Version != d.Version {
 		return nil, errors.New("配置版本或运行模式已变化")
+	}
+	var replacing int
+	if err = tx.QueryRow(`SELECT count(*) FROM mail_accounts WHERE json_extract(profile,'$.pro_auto.replacement.pending')=1 AND coalesce(json_extract(profile,'$.pro_auto.stop_requested'),0)=0`).Scan(&replacing); err != nil {
+		return nil, err
+	}
+	if replacing > 0 {
+		return nil, errors.New("第二步失败换号尚在领取新账号，等待原批次续跑")
 	}
 	// Live evaluations can wait for the store/admission lock. Recheck their
 	// real sample time at the reservation boundary, without renewing its age.
@@ -401,6 +408,11 @@ func (s *Store) CancelProRestock(t restock.Task, reason string) error {
 	t.Cost = 0
 	t.Message = reason
 	t.UpdatedAt = time.Now()
+	// A cancelled successor must not become a manual queued start after its
+	// restock claim is detached by the legacy cancellation cleanup below.
+	if _, e = tx.Exec(`UPDATE mail_accounts SET profile=json_set(profile,'$.pro_auto.replacement.queued',json('false'),'$.pro_auto.replacement.message',?,'$.pro_auto.stop_requested',json('true'),'$.pro_auto.stop_version',coalesce(json_extract(profile,'$.pro_auto.stop_version'),0)+1,'$.pro_auto.status','stopped') WHERE email=? AND json_extract(profile,'$.pro_auto.replacement.queued')=1`, reason, t.Email); e != nil {
+		return e
+	}
 	if _, e = tx.Exec(`UPDATE pro_restock_tasks SET status='cancelled',cost=0,payload=? WHERE id=?`, mustJSON(t), t.ID); e != nil {
 		return e
 	}

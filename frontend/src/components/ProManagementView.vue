@@ -164,7 +164,7 @@ const accountsRequest = createLatestRequest(value => { accountsLoading.value = v
 const defaults = () => ({
   post_merge_group_ids: [], post_merge_group_names: [],
   provider: 'sub2', quota_enabled: false, quota_used_threshold: 100, quota_check_interval_seconds: 120,
-  auto_merge_enabled: false, auto_delete_enabled: false, auto_merchant_enabled:false, auto_merge_v2_enabled:false, auto_delete_paused: false, target_admin_id: '', target_seat_type: 'default', retry_count: 2, retry_interval_seconds: 3, concurrency: 2,
+  auto_merge_enabled: false, auto_delete_enabled: false, auto_merchant_enabled:false, auto_merge_v2_enabled:false, auto_delete_paused: false, target_admin_id: '', target_seat_type: 'default', retry_count: 2,recharge_replacement_count: 2, retry_interval_seconds: 3, concurrency: 2,
   next_quota_sweep_at: null,
   sub2: { auth_mode: '', bind_proxy: false, proxy_ids: [], url: '', email: '', password_present: false, group_ids: [], group_names: [], models: [], account_concurrency: 10, priority: 1, cpa_ws: false },
   cpa: { url: '', key_present: false, websockets: false, group_ids: [], group_names: [] },

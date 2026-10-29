@@ -5,7 +5,7 @@ import { computed, ref } from 'vue'
 const source=readFileSync(new URL('../src/components/ProAutoDialog.vue',import.meta.url),'utf8')
 const code=source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'')
 function fixture(){
- const calls=[], timers=new Map()
+ const calls=[], timers=new Map(), replies=new Map()
  let fail=false,resolve,hold=false
  const ctx=vm.createContext({computed,ref,defineProps:()=>({defaultPageSize:10}),defineEmits:()=>()=>{},defineExpose(){},onBeforeUnmount(){},clearTimeout:id=>timers.delete(id),setTimeout:fn=>{timers.set(1,fn);return 1},window:{confirm:()=>true},async api(path,options){
   calls.push({path,options})
@@ -14,10 +14,11 @@ function fixture(){
    if(fail)throw Error('订单待确认')
    return {pro_auto:{id:'new-flow',status:'running',stage:'login',steps:{login:'pending'}}}
   }
+  if(replies.has(path))return replies.get(path)
   return {id:'old-flow',order_id:'original',payment_status:'failed',status:'failed'}
  }})
- vm.runInContext(code+';globalThis.f={retryStep,start,canStart,retryCurrent,restartable,resumable,state,settings,cardID,email,busy,error};',ctx)
- return {...ctx.f,calls,fail:()=>{fail=true},hold:()=>{hold=true},release:()=>resolve()}
+ vm.runInContext(code+';globalThis.f={refresh,active,retryStep,start,canStart,retryCurrent,restartable,resumable,state,settings,cardID,email,busy,error};',ctx)
+ return {...ctx.f,calls,replies,fail:()=>{fail=true},hold:()=>{hold=true},release:()=>resolve()}
 }
 for(const state of [{id:'old',status:'failed',steps:{login:'failed'}},{id:'old',status:'failed',order_id:'order',payment_status:'failed'},{id:'old',status:'stopped',order_id:'order',payment_status:'failed'}]){
  const f=fixture();f.state.value=state
@@ -44,3 +45,12 @@ assert.equal(resumed.resumable.value,true);assert.equal(resumed.retryCurrent.val
 const fresh=fixture();assert.equal(fresh.canStart.value,true);assert.equal(fresh.retryCurrent.value,false)
 const failed=fixture();failed.fail();await failed.retryStep();assert.match(failed.error.value,/待确认/);assert.equal(failed.state.value.payment_status,'failed');assert.equal(failed.busy.value,false)
 console.log('Passed: failed/pre-order retries from login, current settings/card payload, success recovery, ambiguous status, duplicate clicks, resume-only and failure refresh')
+
+const replaced=fixture();replaced.email.value='old@example.com';replaced.state.value={id:'old',stage:'recharge',status:'failed',replacement:{pending:true,limit:2,attempts:0}}
+assert.equal(replaced.active.value,true);assert.equal(replaced.retryCurrent.value,false)
+replaced.replies.set('/api/pro-accounts/old%40example.com/auto-pro',{status:'failed',replacement:{next_email:'new@example.com'}})
+replaced.replies.set('/api/pro-accounts/new%40example.com/auto-pro',{id:'new',stage:'login',status:'running',replacement:{attempts:1,limit:2}})
+await replaced.refresh();assert.equal(replaced.email.value,'new@example.com');assert.equal(replaced.state.value.id,'new')
+const exhausted=fixture();exhausted.state.value={id:'old',stage:'recharge',status:'failed',replacement:{limit:0,attempts:0}}
+assert.equal(exhausted.retryCurrent.value,false);assert.equal(exhausted.canStart.value,false)
+console.log('Passed: replacement progress follows successor and exhausted step two cannot restart the original account')

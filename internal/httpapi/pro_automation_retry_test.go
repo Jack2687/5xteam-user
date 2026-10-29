@@ -23,7 +23,7 @@ func TestProAutoSameAccountRetries(t *testing.T) {
 		push                    bool
 	}{
 		{"login_then_success", 2, 2, 1, true},
-		{"payment_then_success", 2, 2, 2, true},
+		{"payment_then_success", 2, 1, 1, false},
 		{"payment_risk", 2, 1, 1, false},
 		{"exhausted", 2, 3, 0, false},
 		{"disabled", 0, 1, 0, false},
@@ -128,12 +128,12 @@ func TestProAutoSameAccountRetries(t *testing.T) {
 					t.Fatal("review was silently replaced or counted as capacity", tasks, err)
 				}
 				run := model.ProScheduleRun{ID: "risk-run", Status: "running", StartedAt: time.Now(), Tasks: []model.ProScheduleTask{{Email: email, Status: "running"}}}
-				if s.reconcileProSchedule(&run) || run.Tasks[0].Status != "attention" {
-					t.Fatal("schedule advanced past review", run)
+				if !s.reconcileProSchedule(&run) || run.Tasks[0].Status != "failed" {
+					t.Fatal("disabled replacement should finish the failed chain", run)
 				}
 			}
 			orders, total, _ := st.GPTPayOrders(10, 0, email)
-			if total != tc.orders || tc.name == "payment_then_success" && orders[1].Status != "failed" {
+			if total != tc.orders || tc.name == "payment_then_success" && orders[0].Status != "failed" {
 				t.Fatal("original failed order was lost", orders)
 			}
 		})

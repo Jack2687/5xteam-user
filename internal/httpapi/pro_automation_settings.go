@@ -25,6 +25,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	// Older clients omit the new field; retain its saved value. Explicit zero
 	// still fails validation after decoding.
 	input.Automation.BalanceFallbackEnabled = current.BalanceFallbackEnabled
+	input.Automation.RechargeReplacementCount = current.RechargeReplacementCount
 	input.Automation.MergeConcurrency = current.MergeConcurrency
 	input.Automation.AutoDeleteEnabled = current.AutoDeleteEnabled
 	input.Automation.AutoMerchantEnabled = current.AutoMerchantEnabled
@@ -41,6 +42,10 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	v := input.Automation
+	if v.RechargeReplacementCount < 0 || v.RechargeReplacementCount > 10 {
+		writeAPI(w, 400, nil, "第二步失败换号次数须为 0～10")
+		return
+	}
 	if v.OAIConfirmationConcurrency < 1 || v.OAIConfirmationConcurrency > 100 {
 		writeAPI(w, 400, nil, "OAI 确认并发数须为 1～100")
 		return

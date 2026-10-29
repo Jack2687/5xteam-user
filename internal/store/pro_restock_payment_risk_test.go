@@ -53,7 +53,8 @@ func TestPaymentRiskReplacementOnceAcrossRestartAndSecondRiskPause(t *testing.T)
 			if paused, err := risk(root, true); err != nil || paused {
 				t.Fatal(paused, err)
 			}
-			limits, err := s.ProRestockLimits(time.Now())
+			// Count in the fixture task's day, including runs just after midnight.
+			limits, err := s.ProRestockLimits(root.CreatedAt.Add(time.Second))
 			if err != nil || limits.Failures != 0 || limits.DayCount != 1 {
 				t.Fatal(limits, err)
 			}

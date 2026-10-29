@@ -64,6 +64,10 @@ func (s *Server) runProProvisioning(ctx context.Context, email string, cfg gptpa
 				return fmt.Errorf("%s：%w", gptpay.PaymentReviewMessage, err)
 			}
 		}
+		// Step two never retries this account; the outer worker queues a successor.
+		if p.ProAuto.Stage == "recharge" {
+			return err
+		}
 		// Read the current policy when scheduling each retry, not just when the
 		// workflow starts. A wait already scheduled keeps its published deadline.
 		settings, _, _, readErr := s.store.ProSettings()
