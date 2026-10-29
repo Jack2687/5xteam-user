@@ -21,6 +21,19 @@ type mergeV2LoginOptions struct {
 	Call   func(string, map[string]any) (any, error)
 }
 
+// Queue waits and child login can outlive the mother's AT. Read the current
+// credential at each mother request, while keeping the original team pinned.
+func (s *Server) mergeV2AdminAccessToken(ctx context.Context, adminID, teamID string) (string, error) {
+	admin, creds, err := s.currentAdminCredential(ctx, adminID)
+	if err != nil {
+		return "", err
+	}
+	if admin.TeamAccountID != teamID {
+		return "", errors.New("原流程团队与母号当前团队不一致")
+	}
+	return creds.AccessToken, nil
+}
+
 func (s *Server) mergeV2ProAccount(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(r.PathValue("email")))
 	value, _ := s.proLocks.LoadOrStore("account:"+email, &sync.Mutex{})
@@ -226,7 +239,7 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 		settings.TargetAdminID = p.ProMergeV2.AdminID
 		settings.TargetSeatType = p.ProMergeV2.SeatType
 	}
-	admin, creds, err := s.currentAdminCredential(ctx, settings.TargetAdminID)
+	admin, _, err := s.currentAdminCredential(ctx, settings.TargetAdminID)
 	if err != nil {
 		return p, err
 	}
@@ -325,7 +338,11 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 			if e := check(); e != nil {
 				return e
 			}
-			_, e := client.Invite(ctx, creds.AccessToken, admin.TeamAccountID, email, settings.TargetSeatType)
+			token, e := s.mergeV2AdminAccessToken(ctx, admin.ID, admin.TeamAccountID)
+			if e != nil {
+				return e
+			}
+			_, e = client.Invite(ctx, token, admin.TeamAccountID, email, settings.TargetSeatType)
 			return e
 		})
 		if err != nil {
@@ -387,7 +404,11 @@ func (s *Server) performProMergeV2(ctx context.Context, email string) (out model
 			if e := check(); e != nil {
 				return e
 			}
-			_, e := client.Kick(ctx, creds.AccessToken, admin.TeamAccountID, p.ProMergeV2.UserID)
+			token, e := s.mergeV2AdminAccessToken(ctx, admin.ID, admin.TeamAccountID)
+			if e != nil {
+				return e
+			}
+			_, e = client.Kick(ctx, token, admin.TeamAccountID, p.ProMergeV2.UserID)
 			return e
 		})
 		unlockRemove()
