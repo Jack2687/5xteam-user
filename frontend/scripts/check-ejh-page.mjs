@@ -8,6 +8,7 @@ import vm from 'node:vm'
 import { ref, reactive, computed, watch } from 'vue'
 import * as ejh from '../src/ejh.js'
 import { createEJHRefreshGate } from '../src/ejhRefresh.js'
+import { refreshEJHSync } from '../src/ejhSync.js'
 import { createLatestRequest } from '../src/latestRequest.js'
 import { activationPlan } from '../src/proActivationPlan.js'
 
@@ -28,7 +29,7 @@ function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,
  const calls=[],mounts=[],unmounts=[],confirmations=[]
  let release,savedPercent=6,failSave=false
  const blocked=new Promise(resolve=>{release=resolve})
- const context=vm.createContext({createLatestRequest,applyPaymentPolicies,applyRefundFeeOverrides,sortCardsByReturnState,cardOrigin,...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
+ const context=vm.createContext({refreshEJHSync,createLatestRequest,applyPaymentPolicies,applyRefundFeeOverrides,sortCardsByReturnState,cardOrigin,...ejh,ref,reactive,computed,watch(){},nextTick:tick,onMounted:fn=>mounts.push(fn),onBeforeUnmount:fn=>unmounts.push(fn),defineProps:()=>({defaultPageSize}),defineEmits:()=>()=>{},window:{localStorage:storage,addEventListener(){},removeEventListener(){},confirm:text=>{confirmations.push(text);return confirmDelete}},ejhRefreshGate:gate,setInterval:()=>0,clearInterval(){},CreditCard:{},CircleDashed:{},Clock3:{},CheckCircle2:{},isClosedCard:()=>false,
  async api(url,options={}){
   calls.push({url,options});if(failURLs.has(url))throw Error("query failed")
   if(url==='/api/ejh/settings'){
@@ -38,7 +39,7 @@ function fixture({enabled=true,defaultPageSize=10,failSync=false,holdSync=false,
   }
   if(url==='/api/ejh/dashboard'){if(holdDashboard)await blocked;if(failDashboard)throw Error('read timed out');return {cards:savedCards,cases:savedCases,trades:[],operations:[],audit:[],sync:{},reversal_fee_percent:savedPercent}}
   if(options.method==='DELETE')return deleteResult
-  if(url==='/api/ejh/sync'){if(holdSync)await blocked;if(failSync)throw Error('sync failed')}
+  if(url==='/api/ejh/sync'){if(holdSync)await blocked;if(failSync)throw Error('sync failed');return {synced:true}}
   return {}
  }})
  context.watch=watch

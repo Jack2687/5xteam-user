@@ -96,7 +96,7 @@ func TestEJHAuthorizationRedactionAndCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := s.Handler()
-	routes := [][2]string{{"GET", "settings"}, {"PUT", "settings"}, {"GET", "dashboard"}, {"POST", "open"}, {"POST", "test"}, {"POST", "balance"}, {"POST", "sync"}, {"POST", "cards/x/action"}, {"POST", "cards/x/private"}, {"POST", "cards/x/trades"}, {"POST", "operations/x/resolve"}, {"PUT", "trades/x/match"}, {"POST", "trades/x/unmatch"}}
+	routes := [][2]string{{"GET", "settings"}, {"PUT", "settings"}, {"GET", "dashboard"}, {"POST", "open"}, {"POST", "test"}, {"POST", "balance"}, {"POST", "sync"}, {"GET", "sync/task"}, {"POST", "cards/x/action"}, {"POST", "cards/x/private"}, {"POST", "cards/x/trades"}, {"POST", "operations/x/resolve"}, {"PUT", "trades/x/match"}, {"POST", "trades/x/unmatch"}}
 	for _, route := range routes {
 		r := httptest.NewRequest(route[0], "/api/ejh/"+route[1], strings.NewReader(`{}`))
 		w := httptest.NewRecorder()

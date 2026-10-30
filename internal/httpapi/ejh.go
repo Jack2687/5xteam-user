@@ -27,6 +27,10 @@ type ejhRuntime struct {
 	client       *ejh.Client
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
+	syncMu       sync.Mutex
+	syncJobs     map[string]*ejhSyncTask
+	ctx          context.Context
+	syncClosed   bool // guarded by lifecycle; prevents Add racing shutdown Wait
 }
 
 func (s *Server) ejhClientLocked() *ejh.Client {
@@ -66,6 +70,7 @@ func (s *Server) ejhRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/ejh/dashboard", s.ejhDashboard)
 	m.HandleFunc("GET /api/ejh/finance", s.ejhFinance)
 	m.HandleFunc("POST /api/ejh/sync", s.syncEJH)
+	m.HandleFunc("GET /api/ejh/sync/{id}", s.getEJHSyncTask)
 	m.HandleFunc("POST /api/ejh/open", s.openEJH)
 	m.HandleFunc("POST /api/ejh/cards/{id}/action", s.ejhCardAction)
 	m.HandleFunc("POST /api/ejh/cards/{id}/private", s.ejhCardPrivate)

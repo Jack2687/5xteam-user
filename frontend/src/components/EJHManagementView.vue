@@ -18,6 +18,7 @@ import { computed, watch, nextTick, onMounted, onBeforeUnmount, reactive, ref } 
 import { api } from '../api'
 import { createLatestRequest } from '../latestRequest'
 import { ejhRefreshGate } from '../ejhRefresh'
+import { refreshEJHSync } from '../ejhSync'
 import { CreditCard, Plus, Settings2, ArrowUpRight, CheckCircle2, Clock3, CircleDashed, X, ChevronDown, SlidersHorizontal, Search, ShieldCheck, Users, LayoutGrid, List } from 'lucide-vue-next'
 import { formatTime } from '../utils'
 import { returnStates, returnLabel, tradeKinds, returnTypes, operationStates, caseSummary, cardHasCase, cardMatchesSearch, cardStates, cardState, cardMatchesFilters, readCardView, saveCardView } from '../ejh'
@@ -169,6 +170,11 @@ async function action(fn,label='正在处理，请稍候'){
 function load({background=false}={}){return dataRequest.run(signal=>api('/api/ejh/dashboard',{signal,timeoutMs:15000}),result=>{if(!disposed){data.value=applyRefundFeeOverrides(applyPaymentPolicies(result));if(detail.value?.cardID&&detail.value?.cases){const card=data.value.cards.find(c=>c.id===detail.value.cardID);if(card)detail.value.cases=cardCases(card)}selectedCards.value=selectedCards.value.filter(id=>result.cards.some(c=>c.id===id&&!cancelReason(c)));if(progress.value?.cancellation){refreshCancellationProgress(progress.value,result.operations);show(progress.value.phase,progress.value.failed?'error':progress.value.processing||progress.value.unknown?'info':'success')}if(openUncertain.value&&result.operations?.some(o=>o.id===openForm.request_id&&['completed','resolved','failed'].includes(o.status))){openForm.request_id='';openUncertain.value=false}}},{background})}
 async function save(){await action(async()=>{const result=await api('/api/ejh/settings',{method:'PUT',body:settings});Object.assign(settings,result,{app_secret:''});savedEnabled.value=result.enabled===true;savedRefreshSeconds.value=result.page_refresh_seconds||30;await load();show('EJH 配置已保存')})}
 async function test(){await action(async()=>{await api('/api/ejh/test',{method:'POST',body:{}});await load();show('连接成功，余额已更新（使用已保存配置）')})}
+async function refreshCardsAndTrades(){
+ const result=await refreshEJHSync({api,stopped:()=>disposed||progress.value.stopRequested,onProgress:text=>{if(!disposed)progress.value.phase=text}})
+ if(result.stopped){progress.value.stopped=true;progress.value.phase='后续查询已停止，已提交的同步任务在后台完成'}
+ return result
+}
 async function refreshAllBalances(includeSync = false, automatic = false) {
  if(busy.value || disposed || (automatic && !savedEnabled.value))return
  const lease=ejhRefreshGate.begin(automatic,savedRefreshSeconds.value)
@@ -184,14 +190,16 @@ async function refreshAllBalances(includeSync = false, automatic = false) {
  await action(async () => {
   balanceFailures.value=[];progress.value.phase=includeSync===true?'正在读取卡片与交易并自动对账':'正在读取卡片列表'
   if(includeSync === true) {
-   try { await api('/api/ejh/sync',{method:'POST',body:{}}) }
-   catch(e) { balanceFailures.value.push({kind:'sync',label:'卡片与交易更新',error:e.message}) }
+   progress.value.total=1
+   try { const result=await refreshCardsAndTrades();if(result.stopped)return;progress.value.success++ }
+   catch(e) { progress.value.failed++;balanceFailures.value.push({kind:'sync',label:'卡片与交易更新',error:e.message}) }
+   progress.value.done++
   }
   if(disposed||progress.value.stopRequested){progress.value.stopped=true;progress.value.phase='后续查询已停止';return}
   await load()
   if(disposed||progress.value.stopRequested){progress.value.stopped=true;progress.value.phase='后续查询已停止';return}
   const cards=data.value.cards.filter(card=>card.issuer_linked!==false&&!card.normal_pending&&!historicalBalance(card))
-  balanceProgress.value={done:0,total:cards.length+1};progress.value.total=cards.length+1;progress.value.phase='正在查询账户余额'
+  balanceProgress.value={done:0,total:cards.length+1};progress.value.total=cards.length+1+(includeSync===true?1:0);progress.value.phase='正在查询账户余额'
   try {
    try { await api('/api/ejh/balance',{method:'POST',body:{}});progress.value.success++ }
    catch(e) { progress.value.failed++;balanceFailures.value.push({kind:'account_balance',label:'账户余额',error:e.message}) }
@@ -224,7 +232,7 @@ async function retryFailedRefresh() {
     if(disposed||progress.value.stopRequested){progress.value.stopped=true;break}
     progress.value.phase='正在重试：'+item.label
     try {
-     if(item.kind==='sync')await api('/api/ejh/sync',{method:'POST',body:{}})
+     if(item.kind==='sync'){const result=await refreshCardsAndTrades();if(result.stopped)break}
      else if(item.kind==='account_balance')await api('/api/ejh/balance',{method:'POST',body:{}})
      else if(item.kind==='card_balance'&&item.cardID)await api('/api/ejh/cards/'+encodeURIComponent(item.cardID)+'/action',{method:'POST',body:{action:'balance'}})
      else throw new Error('无法识别失败项目，请手动刷新数据。')

@@ -16,6 +16,7 @@ func (s *Server) syncEJH(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
+		Async bool   `json:"async"`
 	}
 	if decodeJSON(w, r, &in, 4096) != nil {
 		return
@@ -43,14 +44,28 @@ func (s *Server) syncEJH(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, "查询范围须为 1～366 天，后台按 90 天分段")
 		return
 	}
-	if !s.ejh.mu.TryLock() {
-		writeAPI(w, 409, nil, "卡台正在同步或执行操作，请稍后查看记录")
+	key := start.Format(time.RFC3339Nano) + "/" + end.Format(time.RFC3339Nano)
+	if in.Start == "" && in.End == "" {
+		key = ejhRecentSyncKey(end)
+	}
+	task, e := s.requestEJHSync(key, start, end)
+	if e != nil {
+		writeAPI(w, 503, nil, e.Error())
 		return
 	}
-	defer s.ejh.mu.Unlock()
-	e = s.syncEJHLocked(r.Context(), start, end)
-	if e != nil {
-		writeAPI(w, 502, nil, e.Error())
+	if in.Async {
+		writeAPI(w, 202, s.ejhSyncSnapshot(task), "")
+		return
+	}
+	// Older clients can still wait for completion. Disconnecting a browser does
+	// not cancel the shared, bounded read-only task used by other clients.
+	select {
+	case <-r.Context().Done():
+		return
+	case <-task.done:
+	}
+	if result := s.ejhSyncSnapshot(task); result.Status != "completed" {
+		writeAPI(w, 502, nil, result.Error)
 		return
 	}
 	writeAPI(w, 200, map[string]bool{"synced": true}, "")
@@ -240,6 +255,7 @@ func (s *Server) startEJH(parent context.Context) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	s.ejh.cancel = cancel
+	s.ejh.ctx = ctx
 	s.ejh.wg.Add(4)
 	s.ejh.lifecycle.Unlock()
 	go func() {
@@ -304,13 +320,17 @@ func (s *Server) startEJH(parent context.Context) {
 					next = time.Now().Add(time.Minute)
 					continue
 				}
-				if !s.ejh.mu.TryLock() {
+				now := time.Now()
+				task, err := s.requestEJHSync(ejhRecentSyncKey(now), now.AddDate(0, 0, -90), now)
+				if err != nil {
+					next = now.Add(5 * time.Second)
 					continue
 				}
-				job, done := context.WithTimeout(ctx, 90*time.Second)
-				_ = s.syncEJHLocked(job, time.Now().AddDate(0, 0, -90), time.Now())
-				done()
-				s.ejh.mu.Unlock()
+				select {
+				case <-ctx.Done():
+					return
+				case <-task.done:
+				}
 				next = time.Now().Add(time.Duration(cfg.SyncIntervalSeconds) * time.Second)
 			}
 		}
@@ -318,9 +338,15 @@ func (s *Server) startEJH(parent context.Context) {
 }
 func (s *Server) stopEJH() {
 	s.ejh.lifecycle.Lock()
+	s.ejh.syncClosed = true
 	if s.ejh.cancel != nil {
 		s.ejh.cancel()
 	}
+	s.ejh.syncMu.Lock()
+	for _, task := range s.ejh.syncJobs {
+		task.cancel()
+	}
+	s.ejh.syncMu.Unlock()
 	s.ejh.lifecycle.Unlock()
 	s.ejh.wg.Wait()
 }
