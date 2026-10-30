@@ -100,6 +100,11 @@ func allocationFixture(t *testing.T) (*Server, *atomic.Int32, *atomic.Int32, str
 	if rec := payCall(t, s.saveGPTPayCard, "id", "test-card", map[string]any{"card_type": "ejh", "max_accounts": 4}); rec.Code != 200 {
 		t.Fatal(rec.Body.String())
 	}
+	// Reuse fixtures must carry opening-template evidence, just like real
+	// issuer cards; a manually labelled card cannot bypass template admission.
+	if err := st.EJHPut("operation", "resident-card-open", ejh.Operation{ID: "resident-card-open", Method: "open", TemplateID: "allocation", CardID: "test-card", Status: "completed", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	allocationAccount(t, s, "resident@example.com")
 	_, secret, _ := st.GPTPayCard("test-card")
 	if err := st.CreateGPTPayOrder(gptpay.Order{ID: "resident-order", Email: "resident@example.com", CardID: "test-card", Status: "success", CreatedAt: time.Now()}, gptpay.Snapshot{Input: gptpay.CreateInput{CardSecret: secret}}); err != nil {

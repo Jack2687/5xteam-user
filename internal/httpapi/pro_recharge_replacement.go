@@ -92,6 +92,13 @@ func (s *Server) dispatchProRechargeReplacements(ctx context.Context) {
 				s.rechargeReplacementWait(p, e.Error())
 				continue
 			}
+			cfg, _, e = s.restockCardSettings(workCtx, cfg)
+		} else {
+			workCtx, cfg, e = s.manualProPurchase(workCtx, cfg, pay, r.CardProvider, r.PurchaseRoute)
+		}
+		if e != nil {
+			s.rechargeReplacementWait(p, e.Error())
+			continue
 		}
 		var cardID string
 		if !cfg.AutoCardEnabled() {

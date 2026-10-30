@@ -119,6 +119,14 @@ func (s *Server) listGPTPayCards(w http.ResponseWriter, r *http.Request) {
 			if provider != "configured" {
 				cfg.CardProvider = provider
 			}
+			pay, _, e := s.store.GPTPaySettings()
+			if e == nil {
+				_, cfg, e = s.manualProPurchase(r.Context(), cfg, pay, cfg.AutoCardProvider(), nil)
+			}
+			if e != nil {
+				writeAPI(w, 409, nil, e.Error())
+				return
+			}
 			// Filter before pagination so an earlier EJH/Other card cannot
 			// become the default when full automation is configured for Nexovcc.
 			items, err = s.automaticProCards(cfg)
@@ -411,6 +419,12 @@ func (s *Server) createGPTPayOrder(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "账号正在执行登录或自动任务，未购买新卡")
 		return
 	}
+	ctx, pro, err := s.manualProPurchase(r.Context(), pro, v, pro.AutoCardProvider(), nil)
+	if err != nil {
+		writeAPI(w, 409, nil, err.Error())
+		return
+	}
+	r = r.WithContext(ctx)
 	card, secret, err := s.reserveProStartCard(r.Context(), email, input.CardID, pro.AutoCardEnabled(), false)
 	if err != nil {
 		writeAPI(w, 409, nil, err.Error())

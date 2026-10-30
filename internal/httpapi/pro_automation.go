@@ -387,6 +387,19 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 			writeAPI(w, 400, nil, "请选择银行卡，或启用自动补卡")
 			return
 		}
+		if !automatic {
+			var pinned *model.ProPurchaseRoute
+			if p.ProAuto.Replacement != nil {
+				pinned = p.ProAuto.Replacement.PurchaseRoute
+			}
+			ctx, selected, e := s.manualProPurchase(r.Context(), pro, cfg, pro.AutoCardProvider(), pinned)
+			if e != nil {
+				lock.Unlock()
+				writeAPI(w, 409, nil, e.Error())
+				return
+			}
+			pro, r = selected, r.WithContext(ctx)
+		}
 	}
 	if !resume && !paidRecovery {
 		s.proAutoMu.Lock()
@@ -536,6 +549,9 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 				replacement := p.ProAuto.Replacement
 				if replacement == nil {
 					replacement = &model.ProRechargeReplacement{RootEmail: email, Limit: pro.RechargeReplacementCount, Scheduled: r.Context().Value(proScheduledContextKey{}) == true, CardProvider: pro.AutoCardProvider(), PurchaseRoute: pro.PurchaseRoute}
+				}
+				if replacement.PurchaseRoute == nil {
+					replacement.PurchaseRoute = pro.PurchaseRoute
 				}
 				replacement.Queued = false
 				p.ProAuto = model.ProAutoState{Replacement: replacement, ID: randomRegistrationID(), PlanCode: cfg.PlanCode, CardID: card.ID, QuotaUsedThreshold: pro.QuotaUsedThreshold, QuotaIntervalSeconds: pro.QuotaCheckIntervalSeconds, StartedAt: time.Now(), Steps: map[string]string{}}

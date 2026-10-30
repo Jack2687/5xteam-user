@@ -13,6 +13,42 @@ import (
 
 type proPurchaseContextKey struct{}
 
+// Manual purchases use the payment plan shown in the dialog, not the scheduled
+// plan. They still need the same issuer/template boundary as scheduled work.
+// A replacement keeps the original intent; configuration edits must not turn
+// a queued successor into a different purchase.
+func (s *Server) manualProPurchase(ctx context.Context, p model.ProSettings, pay gptpay.Settings, provider string, pinned *model.ProPurchaseRoute) (context.Context, model.ProSettings, error) {
+	if provider != "" {
+		p.CardProvider = provider
+	}
+	if pinned != nil {
+		if pinned.CardProvider != p.AutoCardProvider() || pinned.PlanCode != pay.PlanCode || pinned.PaymentProvider != pay.Provider || pinned.Country != pay.Country || pinned.CreditQuantity != pay.CreditQuantity {
+			return ctx, p, fmt.Errorf("换号流程的套餐、卡台或供应商配置已变化，请先核对原流程")
+		}
+		if err := s.validatePurchaseTemplate(pinned); err != nil {
+			return ctx, p, err
+		}
+		p = p.WithPurchaseRoute(pinned)
+	} else {
+		// Only 5x / 20x have issuer-template mappings. Other products retain
+		// their existing manual-card path.
+		if pay.PlanCode != "pro5" && pay.PlanCode != "pro20" {
+			return ctx, p, nil
+		}
+		manual := p
+		manual.PurchaseScheduleEnabled = false
+		resolved, _, err := s.resolveProPurchase(manual, pay, restock.Config{}, time.Now())
+		if err != nil {
+			return ctx, p, err
+		}
+		p = p.WithPurchaseRoute(resolved.PurchaseRoute)
+	}
+	if p.PurchaseRoute != nil {
+		ctx = context.WithValue(ctx, proPurchaseContextKey{}, p.PurchaseRoute)
+	}
+	return ctx, p, nil
+}
+
 func (s *Server) validatePurchaseGroups(ctx context.Context, p model.ProSettings, password string) error {
 	if !p.PurchaseScheduleEnabled {
 		return nil
