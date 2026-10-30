@@ -200,7 +200,7 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
  <p v-if="error||collectionError" role="alert" class="notice danger">{{error||collectionError}}</p><p v-if="notice" role="status" class="notice">{{notice}}</p>
  <p v-if="!state" class="empty">{{error?'补货状态暂未读取成功':'正在读取补货状态…'}} <button v-if="error" @click="refresh(true)">重新读取</button></p>
  <p v-if="recordsError" class="notice warn">历史记录读取失败：{{recordsError}} <button @click="readRecords">重试记录</button></p>
- <template v-else>
+ <template v-if="state">
  <ProTakeoverPanel :data="state.takeover" :push-settings="state.inherited?.sub2" :monitor-group="state.config?.group_id" compact/>
  <div class="runbar"><span><b>{{!state.config.enabled?'新增已手动暂停':noRestockActive?'每日禁补时段 · 暂停新增':monitorUnavailable?monitorStatus.title+' · 暂停新增':monitorStatus.running?'后台监控更新中':'后台监控已启用'}}</b> · {{state.config.mode==='auto'?'自动执行':'观察模式'}} · 配置 v{{state.config.version}}</span><span>监控组 #{{state.config.group_id||'未选择'}} · 快照 {{fmt(snap.at)}}<template v-if="monitorStatus.age!==null"> · {{Math.floor(monitorStatus.age)}} 秒前</template></span></div>
  <ProRestockTimetable :tasks="tasks" :timetable="state.purchase_timetable" :config="state.config" :demand="state.no_restock_demand" :purchase="state.current_purchase" :decision="state.decision" :now="clock+clockOffset"/>
