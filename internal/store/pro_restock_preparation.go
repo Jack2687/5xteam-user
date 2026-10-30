@@ -13,6 +13,17 @@ import (
 // Caller excludes live preparation and account workers. Recheck the durable
 // intent and all possible issuance/payment evidence under the admission lock.
 func (s *Store) FinishUnsubmittedRestockPreparation(expected *restock.Task) (bool, error) {
+	return s.settleUnsubmittedRestockPreparation(expected, nil)
+}
+
+// A resource wait retains the account, batch and budget, and does not create
+// another failure or consume another replacement. The same evidence checks as
+// failed preparation apply before returning the task to the dispatch queue.
+func (s *Store) WaitUnsubmittedRestockPreparation(expected *restock.Task, next time.Time) (bool, error) {
+	return s.settleUnsubmittedRestockPreparation(expected, &next)
+}
+
+func (s *Store) settleUnsubmittedRestockPreparation(expected *restock.Task, next *time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
@@ -23,11 +34,16 @@ func (s *Store) FinishUnsubmittedRestockPreparation(expected *restock.Task) (boo
 	if err = lockProCardAdmission(tx); err != nil {
 		return false, err
 	}
-	current, err := restockDispatchTask(tx, expected.ID)
+	var current restock.Task
+	var raw string
+	err = tx.QueryRow(`SELECT payload FROM pro_restock_tasks WHERE id=?`, expected.ID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
+		return false, err
+	}
+	if err = json.Unmarshal([]byte(raw), &current); err != nil {
 		return false, err
 	}
 	if current.UpdatedAt != expected.UpdatedAt && !current.UpdatedAt.Equal(expected.UpdatedAt) {
@@ -36,7 +52,6 @@ func (s *Store) FinishUnsubmittedRestockPreparation(expected *restock.Task) (boo
 	if !current.Active() || current.Status == "reserved" || current.StoppedAt != nil || (current.CardProvider != "nexovcc" && current.CardProvider != "ejh") || current.OrderID != "" || current.CardID != "" {
 		return false, nil
 	}
-	var raw string
 	if err = tx.QueryRow(`SELECT profile FROM mail_accounts WHERE email=?`, current.Email).Scan(&raw); err != nil {
 		return false, err
 	}
@@ -48,6 +63,16 @@ func (s *Store) FinishUnsubmittedRestockPreparation(expected *restock.Task) (boo
 		return false, nil
 	}
 	var unsafe bool
+	if next != nil {
+		// Only brand-new preparation may be queued again. A pre-existing order,
+		// even one edited locally to failed, must keep its own recovery path.
+		if p.ProAuto.StopRequested {
+			return false, nil
+		}
+		if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM gptpay_orders WHERE email=?)`, current.Email).Scan(&unsafe); err != nil || unsafe {
+			return false, err
+		}
+	}
 	err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM gptpay_orders WHERE email=? AND (json_extract(profile,'$.status')<>'failed' OR json_extract(profile,'$.succeeded_at') IS NOT NULL)) OR EXISTS(SELECT 1 FROM nexovcc_operations WHERE json_extract(profile,'$.restock_task_id')=? AND (status<>'failed' OR coalesce(json_extract(profile,'$.serial_no'),'')<>'' OR coalesce(json_extract(profile,'$.card_id'),'')<>'')) OR EXISTS(SELECT 1 FROM pro_card_reservations WHERE email=?)`, current.Email, current.ID, current.Email).Scan(&unsafe)
 	if err != nil || unsafe {
 		return false, err
@@ -90,9 +115,28 @@ func (s *Store) FinishUnsubmittedRestockPreparation(expected *restock.Task) (boo
 	if err != nil || unsafe {
 		return false, err
 	}
-	current.Status, current.Stage, current.ETA, current.Cost = "failed", "card", nil, 0
-	current.UpdatedAt = time.Now()
-	current.Message = "开卡准备失败，已核实无开卡或付款提交，释放本次在途：" + current.Message
+	current.Stage, current.ETA, current.UpdatedAt = "card", nil, time.Now()
+	if next != nil {
+		current.Status, current.SubmittedAt, current.NextCardCheckAt = "reserved", nil, next
+		current.Message = expected.Message
+		if current.Stages == nil {
+			current.Stages = map[string]time.Time{}
+		}
+		if _, recorded := current.Stages["card:waiting"]; !recorded {
+			current.Stages["card:waiting"] = current.UpdatedAt
+		}
+	} else {
+		current.Status, current.Cost = "failed", 0
+		current.Message = "开卡准备失败，已核实无开卡或付款提交，释放本次在途：" + current.Message
+		if r := p.ProAuto.Replacement; r != nil && r.Queued {
+			r.Queued, r.Message = false, current.Message
+			p.ProAuto.Status, p.ProAuto.Stage, p.ProAuto.Error = "failed", "card", current.Message
+			p.ProAuto.RetryAt = nil
+			if err = saveReplacementProfile(tx, p); err != nil {
+				return false, err
+			}
+		}
+	}
 	if _, err = tx.Exec(`UPDATE pro_restock_tasks SET status=?,cost=?,payload=? WHERE id=?`, current.Status, current.Cost, mustJSON(current), current.ID); err != nil {
 		return false, err
 	}

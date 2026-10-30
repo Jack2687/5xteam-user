@@ -89,7 +89,17 @@ func (s *Server) startClaimedProRestock(ctx context.Context, t restock.Task, pay
 	if json.Unmarshal(w.Body.Bytes(), &reply) == nil && reply.Error != "" {
 		t.Message = reply.Error
 	}
-	if w.Header().Get("X-Pro-Card-Wait") == "nexovcc" {
+	if w.Header().Get("X-Pro-Card-Wait") == "preparation" {
+		cfg, _, _, err := s.store.ProSettings()
+		if err == nil {
+			next := time.Now().Add(time.Duration(max(1, cfg.RetryIntervalSeconds)) * time.Second)
+			if waiting, err := s.store.WaitUnsubmittedRestockPreparation(&t, next); err == nil && waiting {
+				return
+			}
+		}
+		// Own issuance/payment evidence means this is not a safe pre-submit
+		// wait. Keep attention and the original financial evidence instead.
+	} else if w.Header().Get("X-Pro-Card-Wait") == "nexovcc" {
 		t.Status, t.SubmittedAt = "reserved", nil
 	} else if p, _, err := s.store.MailAccountCredential(t.Email); err == nil {
 		_, _ = s.trackRestockCardImport(&t, p)

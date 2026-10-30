@@ -70,11 +70,17 @@ func (s *Store) QueueProRechargeReplacement(email, flowID string) error {
 		return err
 	}
 	a.PaymentReviewRequired = order.PaymentReviewRequired()
-	if r.Attempts >= r.Limit {
-		r.Message = fmt.Sprintf("第二步失败换号次数已用尽（%d/%d），原账号不再重试", r.Attempts, r.Limit)
+	if !r.CanContinue() {
+		r.Message = "第二步失败，主供应商换号次数已用尽，未启用备用尝试或未配置备用供应商"
+		if r.ProviderSwitched {
+			r.Message = fmt.Sprintf("切换供应商后账号尝试次数已用尽（%d/%d），整条任务结束", r.Attempts-r.Limit, r.FailoverLimit)
+		}
 	} else {
 		r.Pending = true
 		r.Message = fmt.Sprintf("第二步失败，等待领取新账号从登录开始（下次 %d/%d）", r.Attempts+1, r.Limit)
+		if r.Attempts >= r.Limit {
+			r.Message = fmt.Sprintf("主供应商本轮次数已用尽，等待切换或继续备用供应商账号（%d/%d）", r.Attempts-r.Limit+1, r.FailoverLimit)
+		}
 	}
 	if err = saveReplacementProfile(tx, p); err != nil {
 		return err
@@ -107,7 +113,7 @@ func (s *Store) ClaimProRechargeReplacement(email string) (next model.MailAccoun
 	if err != nil {
 		return next, err
 	}
-	if !r.Pending || r.Attempts >= r.Limit || p.ProAuto.StopRequested || root.ProAuto.StopRequested {
+	if !r.Pending || !r.CanContinue() || p.ProAuto.StopRequested || root.ProAuto.StopRequested {
 		return next, errors.New("换号任务已停止或次数已用尽")
 	}
 	if _, err = replacementPayment(tx, p); err != nil {
@@ -159,9 +165,17 @@ func (s *Store) ClaimProRechargeReplacement(email string) (next model.MailAccoun
 		return next, err
 	}
 	nr := *r
+	if nr.Attempts >= nr.Limit && !nr.ProviderSwitched {
+		if err = s.switchRechargeProvider(tx, &nr); err != nil {
+			return next, err
+		}
+	}
 	nr.PreviousEmail, nr.NextEmail, nr.Pending, nr.Queued = email, "", false, true
 	nr.Attempts++
 	nr.Message = fmt.Sprintf("第二步失败换号 %d/%d：从登录开始", nr.Attempts, nr.Limit)
+	if nr.ProviderSwitched {
+		nr.Message = fmt.Sprintf("已切换至 %s，账号尝试 %d/%d：从登录开始", nr.Payment.Provider, nr.Attempts-nr.Limit, nr.FailoverLimit)
+	}
 	now := time.Now()
 	next.ProAuto = model.ProAutoState{Status: "replacement_queued", Stage: "login", StartedAt: now, UpdatedAt: now, Steps: map[string]string{"login": "pending"}, Replacement: &nr, RestockBinding: p.ProAuto.RestockBinding, Sub2PushGroupIDs: append([]int64(nil), p.ProAuto.Sub2PushGroupIDs...)}
 	next.ProRestockTargetID = p.ProRestockTargetID
@@ -169,6 +183,10 @@ func (s *Store) ClaimProRechargeReplacement(email string) (next model.MailAccoun
 	if task != nil {
 		oldID := task.ID
 		t := restock.Task{ID: "recharge:" + p.ProAuto.ID, DecisionID: task.DecisionID, Email: next.Email, Version: task.Version, GroupID: task.GroupID, Binding: task.Binding, Plan: task.Plan, Status: "reserved", Stage: "queued", Cost: task.Cost, CreatedAt: now, UpdatedAt: now, Stages: map[string]time.Time{"reserved": now}, CardProvider: task.CardProvider, StrictCardProvider: task.StrictCardProvider, PurchaseRoute: task.PurchaseRoute, TakeoverToken: task.TakeoverToken, Capacity: task.Capacity, ForceMergeTracked: task.ForceMergeTracked, ForceMergeAssigned: task.ForceMergeAssigned, ForceMergeSource: task.ForceMergeSource, EmptyGroupStartup: task.EmptyGroupStartup, Message: nr.Message}
+		if nr.Payment != nil {
+			t.Plan = fmt.Sprintf("%s:%s:%s:%d", nr.Payment.Provider, nr.Payment.PlanCode, nr.Payment.Country, nr.Payment.CreditQuantity)
+			t.PurchaseRoute = nr.PurchaseRoute
+		}
 		next.ProRestockTaskID = t.ID
 		if _, err = tx.Exec(`INSERT INTO pro_restock_tasks VALUES(?,?,?,?,?,?)`, t.ID, t.Email, t.Status, formatTime(t.CreatedAt), t.Cost, mustJSON(t)); err != nil {
 			return next, err
@@ -178,7 +196,7 @@ func (s *Store) ClaimProRechargeReplacement(email string) (next model.MailAccoun
 		}
 	}
 	r.NextEmail, r.Pending = next.Email, false
-	r.Message = fmt.Sprintf("第二步失败，已换号至 %s（%d/%d）", next.Email, nr.Attempts, nr.Limit)
+	r.Message = fmt.Sprintf("已衔接至 %s：%s", next.Email, nr.Message)
 	if err = saveReplacementProfile(tx, p); err != nil {
 		return next, err
 	}
@@ -191,7 +209,7 @@ func (s *Store) ClaimProRechargeReplacement(email string) (next model.MailAccoun
 func (s *Store) ProRechargeReplacementWork() ([]model.MailAccountProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE coalesce(json_extract(profile,'$.pro_auto.stop_requested'),0)=0 AND (json_extract(profile,'$.pro_auto.replacement.pending')=1 OR json_extract(profile,'$.pro_auto.replacement.queued')=1 OR (json_type(profile,'$.pro_auto.replacement')='object' AND json_extract(profile,'$.pro_auto.status')='failed' AND json_extract(profile,'$.pro_auto.stage')='recharge' AND coalesce(json_extract(profile,'$.pro_auto.replacement.next_email'),'')='' AND json_extract(profile,'$.pro_auto.replacement.attempts')<json_extract(profile,'$.pro_auto.replacement.limit'))) ORDER BY updated_at,email`)
+	rows, err := s.db.Query(`SELECT profile FROM mail_accounts WHERE coalesce(json_extract(profile,'$.pro_auto.stop_requested'),0)=0 AND (json_extract(profile,'$.pro_auto.replacement.pending')=1 OR json_extract(profile,'$.pro_auto.replacement.queued')=1 OR (json_type(profile,'$.pro_auto.replacement')='object' AND json_extract(profile,'$.pro_auto.status')='failed' AND json_extract(profile,'$.pro_auto.stage')='recharge' AND coalesce(json_extract(profile,'$.pro_auto.replacement.next_email'),'')='' AND (json_extract(profile,'$.pro_auto.replacement.attempts')<json_extract(profile,'$.pro_auto.replacement.limit') OR (json_type(profile,'$.pro_auto.replacement.payment')='object' AND coalesce(json_extract(profile,'$.pro_auto.replacement.backup_provider'),'')<>'' AND json_extract(profile,'$.pro_auto.replacement.attempts')<json_extract(profile,'$.pro_auto.replacement.limit')+coalesce(json_extract(profile,'$.pro_auto.replacement.failover_limit'),0))))) ORDER BY updated_at,email`)
 	if err != nil {
 		return nil, err
 	}

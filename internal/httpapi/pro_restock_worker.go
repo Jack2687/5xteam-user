@@ -634,6 +634,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 	}
 	d.CardProvider, d.CardSchedule = purchasePro.AutoCardProvider(), c.CardSchedule(now)
 	d.ID = randomRegistrationID()
+	replacementDispatchReady := false
 	for i, t := range tasks {
 		if t.Status == "reserved" && (d.NoRestockActive || takeoverBlock != "" || t.TakeoverToken != snap.TakeoverToken) {
 			if err := s.store.CancelProRestock(t, "进入每日禁补时段，撤销未启动预留；结束后按新快照重新评估"); err != nil {
@@ -642,11 +643,25 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 			tasks[i].Status, tasks[i].ETA = "cancelled", nil
 			continue
 		}
-		if t.Status == "reserved" && (!c.Enabled || c.Mode != "auto" || t.Version != c.Version || t.Binding != snap.Binding || t.GroupID != snap.GroupID || (snap.Valid && t.Plan != snap.NewPlan) || !store.SameProPurchase(t.PurchaseRoute, purchasePro.PurchaseRoute) || (t.ForceMergeSource != "" && !c.ForceMergeEnabled)) {
+		pinnedReplacement := false
+		purchaseChanged := (snap.Valid && t.Plan != snap.NewPlan) || !store.SameProPurchase(t.PurchaseRoute, purchasePro.PurchaseRoute)
+		if t.Status == "reserved" {
+			_, _, pinned, pinErr := s.store.ProRestockReplacementPurchase(t, c, time.Now())
+			if pinErr != nil && !pinned {
+				return pinErr
+			}
+			if pinned {
+				purchaseChanged = pinErr != nil
+				pinnedReplacement = pinErr == nil
+			}
+		}
+		if t.Status == "reserved" && (!c.Enabled || c.Mode != "auto" || t.Version != c.Version || t.Binding != snap.Binding || t.GroupID != snap.GroupID || purchaseChanged || (t.ForceMergeSource != "" && !c.ForceMergeEnabled)) {
 			if err := s.store.CancelProRestock(t, "配置变化或暂停，撤销未启动预留"); err != nil {
 				return err
 			}
 			tasks[i].Status, tasks[i].ETA = "cancelled", nil
+		} else if t.Status == "reserved" && pinnedReplacement {
+			replacementDispatchReady = true
 		}
 	}
 	if purchaseErr == nil {
@@ -659,13 +674,17 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 		target, e := s.store.SaveDownstreamTarget(model.DownstreamTarget{Scope: "pro-restock", Provider: "sub2", Sub2: p.Sub2, Secret: password})
 		if e == nil {
 			var reserved []restock.Task
-			s.proCardAdmissionMu.Lock()
-			if reason := s.proSIWCBlock(); reason != "" {
+			locked := s.proCardAdmissionMu.TryLock()
+			if !locked {
+				e = errors.New("已有银行卡准备正在执行，监控继续更新，等待下轮领取")
+			} else if reason := s.proSIWCBlock(); reason != "" {
 				e = errors.New(reason)
 			} else {
 				reserved, e = s.store.ReserveProRestock(d, target, d.Inflight)
 			}
-			s.proCardAdmissionMu.Unlock()
+			if locked {
+				s.proCardAdmissionMu.Unlock()
+			}
 			d.Started = len(reserved)
 			tasks = append(tasks, reserved...)
 			if d.Started > 0 {
@@ -682,7 +701,7 @@ func (s *Server) tickProRestock(ctx context.Context, force bool) (resultErr erro
 	}
 	// Every reserved member belongs to an already committed batch. Continue
 	// that batch independently of fluctuating demand or missing money samples.
-	dispatch := purchaseErr == nil && takeoverBlock == "" && c.Enabled && c.Mode == "auto" && !d.NoRestockActive && d.DemandKnown && limits.Failures < c.FailureLimit && ctx.Err() == nil
+	dispatch := (purchaseErr == nil || replacementDispatchReady) && takeoverBlock == "" && c.Enabled && c.Mode == "auto" && !d.NoRestockActive && d.DemandKnown && limits.Failures < c.FailureLimit && ctx.Err() == nil
 	s.proRestock.mu.Lock()
 	s.proRestock.lastSnapshot = snap
 	s.proRestock.liveSnapshot = snap
@@ -716,11 +735,25 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		return
 	}
 	for _, t := range tasks {
-		taskPay, routeErr := applyPurchasePay(pay, t.PurchaseRoute)
+		if t.Status != "reserved" {
+			continue
+		}
+		_, pinnedPay, pinned, pinErr := s.store.ProRestockReplacementPurchase(t, c, time.Now())
+		if pinErr != nil {
+			continue
+		}
+		basePay := pay
+		if pinned {
+			basePay = pinnedPay
+		}
+		taskPay, routeErr := applyPurchasePay(basePay, t.PurchaseRoute)
 		if routeErr != nil {
 			continue
 		}
 		if t.Status != "reserved" || t.Version != c.Version || t.Binding != snap.Binding || t.GroupID != snap.GroupID || t.Plan != restockPlan(taskPay.Provider, taskPay.PlanCode, taskPay.Country, taskPay.CreditQuantity) {
+			continue
+		}
+		if t.NextCardCheckAt != nil && t.NextCardCheckAt.After(time.Now()) {
 			continue
 		}
 		profile, _, readErr := s.store.MailAccountCredential(t.Email)
@@ -752,9 +785,9 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 		if policy.Blocked {
 			return
 		}
-		current, _, e = s.resolveProPurchase(current, pay, c, time.Now())
+		current, _, e = s.resolveProPurchase(current, basePay, c, time.Now())
 		if e != nil {
-			return
+			continue
 		}
 		if !store.SameProPurchase(t.PurchaseRoute, current.PurchaseRoute) {
 			_ = s.store.CancelProRestock(t, "分时套餐或模板变化，重新评估")
@@ -779,9 +812,12 @@ func (s *Server) dispatchProRestock(ctx context.Context, c restock.Config, p mod
 			return
 		}
 		t.Status, t.Stage = "submitting", "card"
+		t.NextCardCheckAt = nil
 		t.SubmittedAt = &now
 		t.UpdatedAt = now
-		s.proCardAdmissionMu.Lock()
+		if !s.proCardAdmissionMu.TryLock() {
+			return
+		}
 		if reason := s.proSIWCBlock(); reason != "" {
 			s.proCardAdmissionMu.Unlock()
 			return

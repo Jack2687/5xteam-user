@@ -19,6 +19,7 @@ func (s *Store) initializeProRestock() error {
  CREATE TABLE IF NOT EXISTS pro_restock_replacements(source TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE);
  CREATE TABLE IF NOT EXISTS pro_restock_payment_risk(task_id TEXT PRIMARY KEY,replacement_id TEXT UNIQUE,paused INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS pro_restock_decisions(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,payload TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS pro_restock_decisions_recent ON pro_restock_decisions(created_at DESC,id DESC);
  CREATE TABLE IF NOT EXISTS pro_restock_snapshot(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_daily_ejh_merge_runs(day TEXT PRIMARY KEY,payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS pro_restock_clock(id INTEGER PRIMARY KEY CHECK(id=1),last_batch TEXT,reset_at TEXT);
@@ -129,13 +130,25 @@ func (s *Store) ClaimProRestockDispatch(t restock.Task) error {
 	if reason := c.NoRestockReason(now); reason != "" {
 		return errors.New(reason)
 	}
-	provider, strict, err := restockCardProvider(tx, c, now)
+	replacementPro, _, pinned, err := readRestockReplacementPurchase(tx, t, c, now)
 	if err != nil {
 		return err
 	}
-	route, err := readProPurchase(tx, c, now)
-	if err != nil {
-		return err
+	var provider string
+	var strict bool
+	var route *model.ProPurchaseRoute
+	if pinned {
+		route = replacementPro.PurchaseRoute
+		provider, strict = replacementPro.CardProvider, route != nil || c.CardSchedule(now).Provider != ""
+	} else {
+		provider, strict, err = restockCardProvider(tx, c, now)
+		if err != nil {
+			return err
+		}
+		route, err = readProPurchase(tx, c, now)
+		if err != nil {
+			return err
+		}
 	}
 	if !SameProPurchase(route, t.PurchaseRoute) {
 		return errors.New("分时套餐或模板已变化，等待重新评估")

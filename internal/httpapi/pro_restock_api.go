@@ -3,6 +3,7 @@ package httpapi
 import (
 	"chatgpt-space-merge/internal/model"
 	"chatgpt-space-merge/internal/restock"
+	"chatgpt-space-merge/internal/store"
 	"context"
 	"errors"
 	"net/http"
@@ -13,12 +14,18 @@ func (s *Server) registerProRestock(mux *http.ServeMux) {
 	s.registerProFallback(mux)
 	s.registerProTakeover(mux)
 	mux.HandleFunc("GET /api/pro-restock/records/{id}/tasks", func(w http.ResponseWriter, r *http.Request) {
-		items, err := s.store.ProRestockDecisionTasks(r.PathValue("id"))
+		reader, err := s.store.ProListReader(r.Context())
 		if err != nil {
 			writeAPI(w, 500, nil, err.Error())
 			return
 		}
-		writeAPI(w, 200, items, "")
+		defer reader.Close()
+		items, err := reader.ProRestockDecisionTasks(r.PathValue("id"))
+		if err != nil {
+			writeAPI(w, 500, nil, err.Error())
+			return
+		}
+		writeProAccountList(w, r, items)
 	})
 	mux.HandleFunc("GET /api/pro-restock", s.getProRestock)
 	mux.HandleFunc("POST /api/pro-restock/tasks/{id}/stop", s.stopProRestockTask)
@@ -48,41 +55,53 @@ func (s *Server) registerProRestock(mux *http.ServeMux) {
 		s.getProRestock(w, r)
 	})
 	mux.HandleFunc("GET /api/pro-restock/records", func(w http.ResponseWriter, r *http.Request) {
+		reader, e := s.store.ProListReader(r.Context())
+		if e != nil {
+			writeAPI(w, 500, nil, e.Error())
+			return
+		}
+		defer reader.Close()
 		page := s.parsePagination(r)
-		v, e := s.store.ProRestockDecisions(page.Limit, page.Offset)
+		v, e := reader.ProRestockDecisions(page.Limit, page.Offset)
 		if e != nil {
 			writeAPI(w, 500, nil, e.Error())
 			return
 		}
 		if !r.URL.Query().Has("page_size") {
-			writeAPI(w, 200, v, "")
+			writeProAccountList(w, r, v)
 			return
 		}
-		total, e := s.store.ProRestockDecisionCount()
+		total, e := reader.ProRestockDecisionCount()
 		if e != nil {
 			writeAPI(w, 500, nil, e.Error())
 			return
 		}
-		writeAPI(w, 200, paginatedData(v, total, page, nil), "")
+		writeProAccountList(w, r, paginatedData(v, total, page, nil))
 	})
 }
 func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
-	c, e := s.store.ProRestockConfig()
+	reader, e := s.store.ProListReader(r.Context())
 	if e != nil {
 		writeAPI(w, 500, nil, e.Error())
 		return
 	}
-	p, _, _, e := s.store.ProSettings()
+	defer reader.Close()
+	c, e := reader.ProRestockConfig()
 	if e != nil {
 		writeAPI(w, 500, nil, e.Error())
 		return
 	}
-	tasks, e := s.store.ProRestockTasks()
+	p, _, _, e := reader.ProSettings()
 	if e != nil {
 		writeAPI(w, 500, nil, e.Error())
 		return
 	}
-	limits, e := s.store.ProRestockLimits(time.Now())
+	tasks, e := reader.ProRestockTasks()
+	if e != nil {
+		writeAPI(w, 500, nil, e.Error())
+		return
+	}
+	limits, e := reader.ProRestockLimits(time.Now())
 	if e != nil {
 		writeAPI(w, 500, nil, e.Error())
 		return
@@ -100,31 +119,34 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 	}
 	s.proRestock.mu.Unlock()
 	if snap.ID == "" {
-		snap, _ = s.store.ProRestockSnapshot()
+		snap, _ = reader.ProRestockSnapshot()
 	}
 	if d.ID == "" {
-		records, _ := s.store.ProRestockDecisions(1, 0)
+		records, _ := reader.ProRestockDecisions(1, 0)
 		if len(records) > 0 {
 			d = records[0]
 		}
 	}
 	now := time.Now()
 	noRestockReason := c.NoRestockReason(now)
-	dailyRun, err := s.store.LatestDailyEJHMerge()
+	dailyRun, err := reader.LatestDailyEJHMerge()
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	tc, _, _ := s.store.ProTakeoverConfig()
-	ts, _ := s.store.ProTakeoverState()
-	pay, _, err := s.store.GPTPaySettings()
+	tc, _, _ := reader.ProTakeoverConfig()
+	ts, _ := reader.ProTakeoverState()
+	pay, _, err := reader.GPTPaySettings()
 	if err != nil {
 		writeAPI(w, 500, nil, "读取开通套餐配置失败")
 		return
 	}
 	timetable := proRestockDailyTimetable(p, pay, c, now)
 	demand := c.DemandStatus(now)
-	selected, payment, routeErr := s.resolveProPurchase(p, pay, c, now)
+	selected, payment, routeErr := store.ResolveProPurchase(p, pay, c, now)
+	if routeErr == nil {
+		routeErr = validatePurchaseTemplate(reader, selected.PurchaseRoute)
+	}
 	purchase := map[string]any{"card_provider": selected.AutoCardProvider(), "plan_code": payment.PlanCode, "template_id": ""}
 	backupEnabled, backup, backupTemplate := selected.BalanceFallback()
 	if backupTemplate == "" {
@@ -141,7 +163,7 @@ func (s *Server) getProRestock(w http.ResponseWriter, r *http.Request) {
 	if provider == "" {
 		provider = c.EffectiveCardProvider(now, p.AutoCardProvider())
 	}
-	writeAPI(w, 200, map[string]any{"takeover": map[string]any{"config": tc, "state": ts}, "config": c, "inherited": p, "snapshot": snap, "monitor": monitor, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": provider, "purchase_timetable": timetable, "no_restock_demand": demand, "current_purchase": purchase, "daily_ejh_merge_run": dailyRun}, "")
+	writeProAccountList(w, r, map[string]any{"takeover": map[string]any{"config": tc, "state": ts}, "config": c, "inherited": p, "snapshot": snap, "monitor": monitor, "decision": d, "tasks": tasks, "limits": limits, "server_time": now, "no_restock_active": noRestockReason != "", "no_restock_reason": noRestockReason, "card_schedule": c.CardSchedule(now), "card_provider": provider, "purchase_timetable": timetable, "no_restock_demand": demand, "current_purchase": purchase, "daily_ejh_merge_run": dailyRun})
 }
 func (s *Server) saveProRestockConfig(w http.ResponseWriter, r *http.Request) {
 	c := restock.DefaultConfig()

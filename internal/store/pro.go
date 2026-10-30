@@ -14,6 +14,7 @@ import (
 )
 
 func normalizeProSettings(v *model.ProSettings) {
+	v.RechargeFailoverCount = max(0, min(10, v.RechargeFailoverCount))
 	v.RechargeReplacementCount = max(0, min(10, v.RechargeReplacementCount))
 	v.OAIInquiry = v.OAIInquiry.Normalized()
 	if v.OAIConfirmationConcurrency < 1 {

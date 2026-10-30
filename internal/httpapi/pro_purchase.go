@@ -91,11 +91,15 @@ func applyPurchasePay(pay gptpay.Settings, r *model.ProPurchaseRoute) (gptpay.Se
 	return pay, nil
 }
 func (s *Server) validatePurchaseTemplate(r *model.ProPurchaseRoute) error {
+	return validatePurchaseTemplate(s.store, r)
+}
+
+func validatePurchaseTemplate(reader *store.Store, r *model.ProPurchaseRoute) error {
 	if r == nil {
 		return nil
 	}
 	if r.CardProvider == "nexovcc" {
-		cfg, _, err := s.store.NexovccSettings()
+		cfg, _, err := reader.NexovccSettings()
 		if err != nil {
 			return err
 		}
@@ -105,7 +109,7 @@ func (s *Server) validatePurchaseTemplate(r *model.ProPurchaseRoute) error {
 			}
 		}
 	} else {
-		cfg, _, err := s.store.EJHSettings()
+		cfg, _, err := reader.EJHSettings()
 		if err != nil {
 			return err
 		}

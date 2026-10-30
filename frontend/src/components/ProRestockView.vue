@@ -22,7 +22,8 @@ const windowDraft=ref(3),windowEdited=ref(false),savingWindow=ref(false)
 let clockTimer
 let timer,disposed=false,returnFocus,stateRevision=0
 const stateRequest=createLatestRequest(),recordsRequest=createLatestRequest()
-const collectionError=ref('')
+const collectionError=ref(''),recordsError=ref('')
+let recordsLoadedAt=0
 const detailLoading=ref(false),detailError=ref('')
 let detailRequest,detailRevision=0
 const d=computed(()=>state.value?.decision||{}),snap=computed(()=>state.value?.snapshot||{}),inherited=computed(()=>state.value?.inherited||{}),tasks=computed(()=>state.value?.tasks||[])
@@ -39,7 +40,7 @@ async function stopTask(t){
   stateRevision++
   state.value={...state.value,tasks:tasks.value.map(v=>v.id===stopped.id?stopped:v)}
   notice.value=stopped.message
-  await refresh()
+  void refresh()
  }catch(e){if(!disposed)error.value=e.message}
  finally{stoppingTask.value=''}
 }
@@ -88,20 +89,24 @@ const advanced=[
 async function refresh(initial=false,background=false){
  if(disposed||(background&&busy.value))return
  const revision=stateRevision
- try{await stateRequest.run(signal=>api('/api/pro-restock',{signal}),async data=>{
+ try{await stateRequest.run(signal=>api('/api/pro-restock',{signal,timeoutMs:15000}),async data=>{
   if(disposed||revision!==stateRevision)return
+  const initialize=initial||!state.value
   acceptState(data)
+  error.value=''
   if(!monitorUnavailable.value)collectionError.value=''
-  if(initial)applyConfig(data.config)
-  await loadRecords(true)
+  if(initialize)applyConfig(data.config)
+  // History never delays status rendering or keeps a saved action busy.
+  if(!background||Date.now()-recordsLoadedAt>=30000)void loadRecords(true).catch(e=>{if(!disposed)recordsError.value=e.message})
  },{background})}catch(e){if(!disposed&&revision===stateRevision)error.value=e.message}
 }
 async function loadRecords(background=false){
  const requestedPage=page.value
- await recordsRequest.run(signal=>api('/api/pro-restock/records?page='+requestedPage+'&page_size='+pageSize.value,{signal}),async data=>{records.value=data.items||[];recordTotal.value=data.total||0;const lastPage=Math.max(1,Math.ceil(recordTotal.value/pageSize.value));if(page.value>lastPage){page.value=lastPage;await loadRecords()}},{background})
+ await recordsRequest.run(signal=>api('/api/pro-restock/records?page='+requestedPage+'&page_size='+pageSize.value,{signal,timeoutMs:15000}),async data=>{recordsLoadedAt=Date.now();recordsError.value='';records.value=data.items||[];recordTotal.value=data.total||0;const lastPage=Math.max(1,Math.ceil(recordTotal.value/pageSize.value));if(page.value>lastPage){page.value=lastPage;await loadRecords()}},{background})
 }
-function setRecordPage(value){if(busy.value)return;page.value=value;action(loadRecords)}
-function setRecordPageSize(value){if(busy.value)return;pageSize.value=value;setRecordPage(1)}
+function readRecords(){return loadRecords().catch(e=>{if(!disposed)recordsError.value=e.message})}
+function setRecordPage(value){page.value=value;void readRecords()}
+function setRecordPageSize(value){pageSize.value=value;setRecordPage(1)}
 async function action(fn){if(busy.value||disposed)return;busy.value=true;stateRevision++;error.value='';collectionError.value='';notice.value='';try{await fn()}catch(e){if(!disposed)error.value=e.message}finally{busy.value=false}}
 function validateWindow(value){if(!Number.isInteger(value)||value<1||value>60)throw new Error('消耗计算窗口应为 1～60 分钟的整数。')}
 async function saveWindow(){await action(async()=>{
@@ -114,7 +119,7 @@ async function saveWindow(){await action(async()=>{
   state.value={...state.value,config:c};windowEdited.value=false;windowDraft.value=c.money_window_minutes??3
   // A dashboard-only save must not overwrite unrelated unsaved settings.
   if(!dirty.value)applyConfig(c)
-  await refresh()
+  void refresh()
   notice.value=`计算窗口已保存为 ${c.money_window_minutes} 分钟；样本不足时显示采样中。`
  }finally{savingWindow.value=false}
 })}
@@ -133,7 +138,7 @@ async function evaluate(){await action(async()=>{
  }else{
   notice.value='采集成功，已恢复观察评估；观察模式不会启动全自动 Pro。'
  }
- await loadRecords()
+ void readRecords()
 })}
 async function save(){await action(async()=>{
  if(form.daily_ejh_merge_enabled&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.daily_ejh_merge_time||''))throw new Error('每日 EJH 定点合并时间必须为 HH:mm（00:00～23:59）。')
@@ -155,12 +160,12 @@ async function save(){await action(async()=>{
  }
  if(!Number.isInteger(form.capacity_percent??60)||(form.capacity_percent??60)<1||(form.capacity_percent??60)>100)throw new Error('总并发容量使用比例应为 1～100% 的整数。')
  validateWindow(form.money_window_minutes??3)
- const c=await api('/api/pro-restock/config',{method:'PUT',body:{...form,no_restock_windows:windows,no_restock_start:windows[0]?.start??'',no_restock_end:windows[0]?.end??''}});if(disposed)return;state.value={...state.value,config:c};applyConfig(c);dirty.value=false;windowEdited.value=false;windowDraft.value=c.money_window_minutes??3;await refresh();notice.value='配置 v'+c.version+' 已保存。'
+ const c=await api('/api/pro-restock/config',{method:'PUT',body:{...form,no_restock_windows:windows,no_restock_start:windows[0]?.start??'',no_restock_end:windows[0]?.end??''}});if(disposed)return;state.value={...state.value,config:c};applyConfig(c);dirty.value=false;windowEdited.value=false;windowDraft.value=c.money_window_minutes??3;void refresh();notice.value='配置 v'+c.version+' 已保存。'
 })}
-async function pause(){await action(async()=>{const c=await api('/api/pro-restock/config',{method:'PUT',body:{...state.value.config,enabled:!state.value.config.enabled}});if(disposed)return;state.value={...state.value,config:c};applyConfig(c);dirty.value=false;await refresh(true);notice.value=c.enabled?'后台监控已启用':'新增已暂停，已提交任务继续跟踪。'})}
+async function pause(){await action(async()=>{const c=await api('/api/pro-restock/config',{method:'PUT',body:{...state.value.config,enabled:!state.value.config.enabled}});if(disposed)return;state.value={...state.value,config:c};applyConfig(c);dirty.value=false;void refresh(true);notice.value=c.enabled?'后台监控已启用':'新增已暂停，已提交任务继续跟踪。'})}
 async function loadGroups(){await action(async()=>{groups.value=await api('/api/pro-restock/groups');notice.value='已读取 Pro 推送连接的 Sub2 分组。'})}
 async function resetBreaker(){await action(async()=>{const data=await api('/api/pro-restock/reset-breaker',{method:'POST'});if(disposed)return;acceptState(data);notice.value='熔断已重置，原订单和在途保留。'})}
-async function changeTab(value){tab.value=value;if(value==='records')await action(loadRecords)}
+async function changeTab(value){tab.value=value;if(value==='records')await readRecords()}
 async function showDetail(item){
  if(disposed)return
  detailRequest?.dispose()
@@ -179,13 +184,13 @@ async function loadDetailTasks(){
  const item=detail.value,revision=detailRevision,request=detailRequest
  if(disposed||!item?.snapshot||!item.id||!request)return
  detailError.value=''
- try{await request.run(signal=>api('/api/pro-restock/records/'+encodeURIComponent(item.id)+'/tasks',{signal}),data=>{
+ try{await request.run(signal=>api('/api/pro-restock/records/'+encodeURIComponent(item.id)+'/tasks',{signal,timeoutMs:15000}),data=>{
   if(!disposed&&revision===detailRevision)detail.value.related_tasks=data
  })}catch(e){if(!disposed&&revision===detailRevision)detailError.value=e.message}
 }
 function closeDetail(){detailRevision++;detailRequest?.dispose();dialog.value?.close();detail.value=null;detailError.value='';returnFocus?.focus()}
 const chart=computed(()=>{const points=[...records.value].reverse().slice(-30);const top=Math.max(1,...points.map(r=>Math.max(r.capacity,r.used+r.waiting)));function path(key){let value='',connected=false;points.forEach((r,i)=>{if(!r.snapshot?.valid||!r.snapshot?.load_valid){connected=false;return}const n=key==='capacity'?r.capacity:r.used+r.waiting;value+=(connected?' L':' M')+(20+i*560/Math.max(1,points.length-1))+','+(155-n*125/top);connected=true});return value}return {empty:!points.some(r=>r.snapshot?.valid&&r.snapshot?.load_valid),demand:path('demand'),capacity:path('capacity')}})
-onMounted(async()=>{clockTimer=setInterval(()=>{clock.value=Date.now()},1000);await refresh(true);if(!disposed)timer=setInterval(()=>refresh(false,true),5000)})
+onMounted(async()=>{clockTimer=setInterval(()=>{clock.value=Date.now()},1000);await refresh(true);if(!disposed)timer=setInterval(()=>{if(!document.hidden)void refresh(false,true)},5000)})
 onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterval(clockTimer);stateRequest.dispose();recordsRequest.dispose();detailRevision++;detailRequest?.dispose()})
 </script>
 <template>
@@ -193,7 +198,8 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
  <header class="page-head"><div><p class="eyebrow">SPACE / PRO</p><h1>Pro 自动补货</h1><p>按供给时间与并发压力判断，分批启动现有全自动 Pro 流程。</p></div><div class="actions"><button :disabled="busy||!state" @click="evaluate">{{monitorUnavailable?'立即重试':'立即评估'}}</button><button class="primary" :disabled="busy||!state" @click="pause">{{state?.config?.enabled?'暂停新增':'启用监控'}}</button></div></header>
  <nav class="tabs" aria-label="Pro 自动补货页面"><button v-for="(name,key) in {dashboard:'监控大屏',settings:'补货配置',fallback:'兜底配置',records:'决策与记录'}" :key="key" :class="{selected:tab===key}" :aria-current="tab===key?'page':undefined" @click="changeTab(key)">{{name}}</button></nav>
  <p v-if="error||collectionError" role="alert" class="notice danger">{{error||collectionError}}</p><p v-if="notice" role="status" class="notice">{{notice}}</p>
- <p v-if="!state" class="empty">正在读取补货状态…</p>
+ <p v-if="!state" class="empty">{{error?'补货状态暂未读取成功':'正在读取补货状态…'}} <button v-if="error" @click="refresh(true)">重新读取</button></p>
+ <p v-if="recordsError" class="notice warn">历史记录读取失败：{{recordsError}} <button @click="readRecords">重试记录</button></p>
  <template v-else>
  <ProTakeoverPanel :data="state.takeover" :push-settings="state.inherited?.sub2" :monitor-group="state.config?.group_id" compact/>
  <div class="runbar"><span><b>{{!state.config.enabled?'新增已手动暂停':noRestockActive?'每日禁补时段 · 暂停新增':monitorUnavailable?monitorStatus.title+' · 暂停新增':monitorStatus.running?'后台监控更新中':'后台监控已启用'}}</b> · {{state.config.mode==='auto'?'自动执行':'观察模式'}} · 配置 v{{state.config.version}}</span><span>监控组 #{{state.config.group_id||'未选择'}} · 快照 {{fmt(snap.at)}}<template v-if="monitorStatus.age!==null"> · {{Math.floor(monitorStatus.age)}} 秒前</template></span></div>
@@ -215,7 +221,7 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
   <article class="panel task-panel"><div class="panel-head"><h2>逐账号执行进度</h2><span class="muted">{{active.length}} 个在途 · {{tasks.length}} 条近期记录</span></div>
    <div class="task-toolbar"><div class="task-filters" aria-label="任务状态筛选"><button v-for="(name,key) in {all:'全部',active:'在途',ready:'成功',ended:'失败 / 取消'}" :key="key" :class="{selected:taskFilter===key}" :aria-pressed="taskFilter===key" @click="taskFilter=key">{{name}}</button></div><input v-model="taskSearch" type="search" aria-label="搜索执行账号或订单" placeholder="搜索账号 / 订单"/></div>
    <p class="muted task-hint">在途优先，其余按任务创建时间从新到旧。成功时间为推送后监控核验完成时间；均为北京时间。</p>
-   <div class="tablewrap"><table class="task-table"><thead><tr><th>账号 / 订单</th><th>补货状态</th><th>执行时间</th><th>成功时间</th><th>说明</th><th>明细</th></tr></thead><tbody><tr v-for="t in visibleTasks" :key="t.id"><td class="task-account">{{t.email}}<small v-if="t.card_provider">{{cardProviderName(t.card_provider)}}</small><small class="task-order" :title="t.order_id">{{t.order_id||'尚未生成订单'}}</small></td><td><span class="task-status" :class="t.status">{{t.progress.status}}</span><small>{{t.progress.stage}}</small></td><td class="task-time">{{t.progress.started?fmt(t.progress.started):t.progress.startNote}}<small v-if="!t.progress.started&&t.progress.submitted">提交 {{fmt(t.progress.submitted)}}</small><small>创建 {{fmt(t.created_at)}}</small></td><td class="task-time">{{t.progress.success?fmt(t.progress.success):t.progress.successNote}}<small v-if="t.progress.eta">预计 {{fmt(t.progress.eta)}}</small><small v-else-if="!t.progress.success&&t.progress.pushed">推送 {{fmt(t.progress.pushed)}}</small></td><td class="task-message">{{t.progress.message}}</td><td><div class="task-actions"><button @click="showDetail(t)">查看</button><button v-if="canStopTask(t)" :disabled="!!stoppingTask" @click="stopTask(t)">{{stoppingTask===t.id?'停止中…':'停止本次'}}</button></div></td></tr><tr v-if="!visibleTasks.length"><td colspan="6" class="empty">{{taskFilter==='active'?'当前没有在途任务':'暂无匹配的补货任务'}}</td></tr></tbody></table></div>
+   <div class="tablewrap"><table class="task-table"><thead><tr><th>账号 / 订单</th><th>补货状态</th><th>执行时间</th><th>成功时间</th><th>说明</th><th>明细</th></tr></thead><tbody><tr v-for="t in visibleTasks" :key="t.id"><td class="task-account">{{t.email}}<small v-if="t.card_provider">{{cardProviderName(t.card_provider)}}</small><small class="task-order" :title="t.order_id">{{t.order_id||'尚未生成订单'}}</small></td><td><span class="task-status" :class="t.status">{{t.progress.status}}</span><small>{{t.progress.stage}}</small></td><td class="task-time">{{t.progress.started?fmt(t.progress.started):t.progress.startNote}}<small v-if="!t.progress.started&&t.progress.submitted">提交 {{fmt(t.progress.submitted)}}</small><small>创建 {{fmt(t.created_at)}}</small></td><td class="task-time">{{t.progress.success?fmt(t.progress.success):t.progress.successNote}}<small v-if="t.progress.eta">预计 {{fmt(t.progress.eta)}}</small><small v-else-if="!t.progress.success&&t.progress.pushed">推送 {{fmt(t.progress.pushed)}}</small></td><td class="task-message">{{t.progress.message}}<small v-if="t.next_card_check_at">下次检查：{{fmt(t.next_card_check_at)}}</small></td><td><div class="task-actions"><button @click="showDetail(t)">查看</button><button v-if="canStopTask(t)" :disabled="!!stoppingTask" @click="stopTask(t)">{{stoppingTask===t.id?'停止中…':'停止本次'}}</button></div></td></tr><tr v-if="!visibleTasks.length"><td colspan="6" class="empty">{{taskFilter==='active'?'当前没有在途任务':'暂无匹配的补货任务'}}</td></tr></tbody></table></div>
    <Pagination :page="taskPage" :page-size="taskPageSize" :total="taskRows.length" @update:page="taskPage=$event" @update:page-size="taskPageSize=$event"/>
   </article>
  </section>
@@ -234,7 +240,7 @@ onUnmounted(()=>{disposed=true;stateRevision++;clearInterval(timer);clearInterva
  </div><article class="panel"><h2>死号后的补货策略</h2><label><input v-model="form.dead_account_pause" type="checkbox">检测到明确死号后暂停自动补货</label><p class="muted">默认关闭：移出供给后按正常规则补货。开启：发现新死号时关闭自动补货，须手动恢复；代理错误、普通 401 不算死号。</p></article><details class="panel advanced"><summary>高级配置 · 成本、数据与到货保护</summary><div class="two-grid"><article v-for="section in advanced" :key="section.title"><h3>{{section.title}}</h3><p class="muted">{{section.text}}</p><div class="fields"><label v-for="field in section.fields" :key="field[0]">{{field[1]}}<input v-model.number="form[field[0]]" type="number" :min="field[2]" :max="field[3]" step="1" required></label></div></article></div><button type="button" :disabled="busy" @click="resetBreaker">处理故障后重置熔断</button></details><div class="savebar"><span>{{dirty?'有未保存修改':'参数由后台持久化保存'}}</span><button class="primary" :disabled="busy" type="submit">{{busy?'检查并保存…':'保存配置'}}</button></div></form><ProTakeoverPanel :data="state.takeover" :push-settings="state.inherited?.sub2" :monitor-group="state.config?.group_id" @saved="refresh"/></section>
  <section v-if="tab==='records'"><article class="panel"><div class="panel-head"><h2>补货决策与执行记录</h2><span class="badge">持久化记录 · 第 {{page}} 页</span></div><p class="muted">点击“查看”打开本轮详情，查看当时为什么触发、为什么补这个数量，以及关联任务的执行进度。记录按配置保留 {{state.config.retention_days||7}} 天。</p><div class="tablewrap"><table><thead><tr><th>时间 / 配置</th><th>事件</th><th>结果</th><th>在途</th><th>原因</th><th>明细</th></tr></thead><tbody><tr v-for="r in records" :key="r.id"><td>{{fmt(r.at)}}<small>v{{r.version}}</small></td><td>{{r.snapshot?.id||r.trace?'补货决策':'配置 / 操作'}}</td><td>{{r.started?'已预留 '+r.started+' 个':r.snapshot?.id||r.trace?'建议 '+(r.suggested||0)+' 个':'未执行'}}</td><td>{{r.inflight??'—'}}</td><td>{{r.reason}}<small v-if="r.card_provider">{{cardProviderName(r.card_provider)}}<template v-if="r.card_schedule?.active"> · {{r.card_schedule.summary}}</template></small></td><td><button @click="showDetail(r)">查看</button></td></tr><tr v-if="!records.length"><td colspan="6" class="empty">暂无记录，启用观察或立即评估后显示</td></tr></tbody></table></div><Pagination :page="page" :page-size="pageSize" :total="recordTotal" :disabled="busy" @update:page="setRecordPage" @update:page-size="setRecordPageSize"/></article></section>
  </template>
- <dialog ref="dialog" class="detail-modal" aria-labelledby="restock-detail-title" @cancel.prevent="closeDetail" @click="$event.target===dialog&&closeDetail()"><div v-if="detail"><header><div><p class="eyebrow">PRO / {{detail.email?'TASK':'DECISION'}}</p><h2 id="restock-detail-title">{{detail.email?'账号执行详情':'补货决策详情'}}</h2></div><button aria-label="关闭详情" @click="closeDetail">✕</button></header><div class="detail-body"><ProRestockDecisionDetails v-if="detail.snapshot" :decision="detail" :loading="detailLoading" :error="detailError" :statuses="statuses" :stages="stages" @retry="loadDetailTasks"/><template v-else><p><b>{{taskDetail.message}}</b></p><div class="line"><span>时间 / 配置</span><b>{{fmt(detail.created_at)}} · v{{detail.version}}</b></div><div class="line"><span>账号 / 状态</span><b>{{detail.email}} · {{taskDetail.status}}</b></div><div class="line"><span>卡台 / 原订单 / 卡片</span><b>{{cardProviderName(detail.card_provider)}} / {{detail.order_id||'—'}} / {{detail.card_id||'—'}}</b></div><div class="line"><span>执行时间</span><b>{{taskDetail.started?fmt(taskDetail.started):taskDetail.startNote}}</b></div><div v-if="taskDetail.submitted" class="line"><span>提交时间</span><b>{{fmt(taskDetail.submitted)}}</b></div><div class="line"><span>成功时间（核验完成）</span><b>{{taskDetail.success?fmt(taskDetail.success):taskDetail.successNote}}</b></div><div v-if="taskDetail.pushed" class="line"><span>推送完成时间</span><b>{{fmt(taskDetail.pushed)}}</b></div><div class="line"><span>Sub2 ID</span><b>{{detail.account_id||'—'}}</b></div><div v-for="event in restockTaskTimeline(detail)" :key="event.key" class="line"><span>{{event.label}}</span><b>{{fmt(event.at)}}</b></div></template><details><summary>完整脱敏快照与配置</summary><pre>{{JSON.stringify(detail,null,2)}}</pre></details></div><footer><button v-if="canStopTask(detail)" :disabled="!!stoppingTask" @click="stopTask(detail)">{{stoppingTask===detail.id?'停止中…':'停止本次'}}</button><button class="primary" @click="closeDetail">关闭详情</button></footer></div></dialog>
+ <dialog ref="dialog" class="detail-modal" aria-labelledby="restock-detail-title" @cancel.prevent="closeDetail" @click="$event.target===dialog&&closeDetail()"><div v-if="detail"><header><div><p class="eyebrow">PRO / {{detail.email?'TASK':'DECISION'}}</p><h2 id="restock-detail-title">{{detail.email?'账号执行详情':'补货决策详情'}}</h2></div><button aria-label="关闭详情" @click="closeDetail">✕</button></header><div class="detail-body"><ProRestockDecisionDetails v-if="detail.snapshot" :decision="detail" :loading="detailLoading" :error="detailError" :statuses="statuses" :stages="stages" @retry="loadDetailTasks"/><template v-else><p><b>{{taskDetail.message}}</b></p><div class="line"><span>时间 / 配置</span><b>{{fmt(detail.created_at)}} · v{{detail.version}}</b></div><div v-if="detail.next_card_check_at" class="line"><span>下次卡片检查（后台调度时执行）</span><b>{{fmt(detail.next_card_check_at)}}</b></div><div class="line"><span>账号 / 状态</span><b>{{detail.email}} · {{taskDetail.status}}</b></div><div class="line"><span>卡台 / 原订单 / 卡片</span><b>{{cardProviderName(detail.card_provider)}} / {{detail.order_id||'—'}} / {{detail.card_id||'—'}}</b></div><div class="line"><span>执行时间</span><b>{{taskDetail.started?fmt(taskDetail.started):taskDetail.startNote}}</b></div><div v-if="taskDetail.submitted" class="line"><span>提交时间</span><b>{{fmt(taskDetail.submitted)}}</b></div><div class="line"><span>成功时间（核验完成）</span><b>{{taskDetail.success?fmt(taskDetail.success):taskDetail.successNote}}</b></div><div v-if="taskDetail.pushed" class="line"><span>推送完成时间</span><b>{{fmt(taskDetail.pushed)}}</b></div><div class="line"><span>Sub2 ID</span><b>{{detail.account_id||'—'}}</b></div><div v-for="event in restockTaskTimeline(detail)" :key="event.key" class="line"><span>{{event.label}}</span><b>{{fmt(event.at)}}</b></div></template><details><summary>完整脱敏快照与配置</summary><pre>{{JSON.stringify(detail,null,2)}}</pre></details></div><footer><button v-if="canStopTask(detail)" :disabled="!!stoppingTask" @click="stopTask(detail)">{{stoppingTask===detail.id?'停止中…':'停止本次'}}</button><button class="primary" @click="closeDetail">关闭详情</button></footer></div></dialog>
 </div>
 </template>
 <style scoped>

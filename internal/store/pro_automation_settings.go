@@ -103,6 +103,7 @@ func (s *Store) saveProAutomationSettings(input model.ProSettings, pay gptpay.Se
 	v.TargetAdminID, v.TargetSeatType = strings.TrimSpace(input.TargetAdminID), input.TargetSeatType
 	v.RetryCount, v.RetryIntervalSeconds, v.Concurrency = input.RetryCount, input.RetryIntervalSeconds, input.Concurrency
 	v.RechargeReplacementCount = input.RechargeReplacementCount
+	v.RechargeFailoverCount = input.RechargeFailoverCount
 	v.MergeConcurrency = input.MergeConcurrency
 	normalizeProSettings(&v)
 	if err = syncProPushTimeoutTx(tx, v); err != nil {

@@ -94,7 +94,7 @@ func (s *Server) reconcileProSchedule(run *model.ProScheduleRun) bool {
 			continue
 		}
 		p, _, err := s.store.MailAccountCredential(t.Email)
-		for followed := 0; err == nil && p.ProAuto.Replacement != nil && p.ProAuto.Replacement.NextEmail != "" && followed < 10; followed++ {
+		for followed := 0; err == nil && p.ProAuto.Replacement != nil && p.ProAuto.Replacement.NextEmail != "" && followed < model.ProRechargeChainMaxLinks; followed++ {
 			t.Email = p.ProAuto.Replacement.NextEmail
 			p, _, err = s.store.MailAccountCredential(t.Email)
 		}

@@ -785,7 +785,7 @@ func (s *Server) resolveEJHOperation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 400, nil, "请选择实际处理结果")
 		return
 	}
-	op.Note, op.Error, op.UpdatedAt = in.Evidence, "", time.Now()
+	op.Note, op.Error, op.UpdatedAt, op.Resolution = in.Evidence, "", time.Now(), in.Outcome
 	if e := s.store.EJHPut("operation", op.ID, op); e != nil {
 		writeAPI(w, 500, nil, e.Error())
 		return
@@ -836,7 +836,9 @@ func (s *Server) validateEJHAutomation(v model.ProSettings) error {
 	return nil
 }
 func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() error) (gptpay.Card, error) {
-	s.ejh.mu.Lock()
+	if err := lockProCardPreparation(ctx, &s.ejh.mu, "EJH 正在同步或处理卡片，本次尚未提交；等待卡台空闲后继续"); err != nil {
+		return gptpay.Card{}, err
+	}
 	defer s.ejh.mu.Unlock()
 	pro, _, _, e := s.store.ProSettings()
 	if e != nil {
@@ -871,7 +873,7 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 				if occupant.Deleted {
 					reason = "账号已删除，但原订单占用尚未解除"
 				}
-				return gptpay.Card{}, fmt.Errorf("EJH 卡尾号 %s 的账号 %s：%s（订单 %s）；请在开通订单中核实原订单及移出情况，暂停自动补卡", card.Last4, occupant.Email, reason, occupant.OrderID)
+				return gptpay.Card{}, cardPreparationWait("EJH 卡尾号 %s 的账号 %s：%s（订单 %s）；请在开通订单中核实原订单及移出情况，暂停自动补卡；本次未开卡、未付款，原任务等待核实后继续", card.Last4, occupant.Email, reason, occupant.OrderID)
 			}
 		}
 	}
@@ -910,8 +912,8 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 		if o.Method != "open" {
 			continue
 		}
-		if o.Automatic && o.Status == "failed" && o.ErrorCode != "100004" && o.ErrorCode != "800003" && time.Since(o.UpdatedAt) < 5*time.Minute {
-			return gptpay.Card{}, fmt.Errorf("自动开卡失败后冷却 5 分钟，请先核对失败原因")
+		if o.Automatic && o.Status == "failed" && o.Resolution != "not_executed" && o.ErrorCode != "100004" && o.ErrorCode != "800003" && time.Since(o.UpdatedAt) < 5*time.Minute {
+			return gptpay.Card{}, cardPreparationWait("自动开卡失败后冷却至 %s，本次未开卡，原任务等待后继续", o.UpdatedAt.Add(5*time.Minute).Format("15:04:05"))
 		}
 		if o.Automatic && o.Status == "completed" && o.CardID != "" {
 			if err := s.store.ReconcileEJHRejectedIncrease(o.CardID); err != nil {
@@ -933,7 +935,7 @@ func (s *Server) ensureEJHCard(ctx context.Context, admissionChecks ...func() er
 			}
 		}
 		if o.Method == "open" && (o.Status == "submitting" || o.Status == "unknown" || o.Status == "import_pending") {
-			return gptpay.Card{}, fmt.Errorf("存在未核实开卡，先在 EJH 操作记录核对，禁止重复扣款")
+			return gptpay.Card{}, cardPreparationWait("存在未核实开卡（%s），先在 EJH 操作记录核对，原任务等待，禁止重复扣款", o.ID)
 		}
 		if o.Automatic && o.CreatedAt.In(zone).Format("2006-01-02") == today && o.Status != "failed" {
 			count++

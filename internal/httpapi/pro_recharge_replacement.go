@@ -69,7 +69,7 @@ func (s *Server) dispatchProRechargeReplacements(ctx context.Context) {
 				s.rechargeReplacementWait(p, e.Error())
 				continue
 			}
-			s.auditProEvent(p, "recharge", "failed", "pro_auto", "第二步失败，换新账号从登录执行", map[string]any{"next_email": next.Email, "replacement_attempt": next.ProAuto.Replacement.Attempts, "replacement_limit": r.Limit})
+			s.auditProEvent(p, "recharge", "failed", "pro_auto", next.ProAuto.Replacement.Message, map[string]any{"next_email": next.Email, "root_email": r.RootEmail, "replacement_attempt": next.ProAuto.Replacement.Attempts, "replacement_limit": r.Limit, "failover_limit": r.FailoverLimit, "provider_switched": next.ProAuto.Replacement.ProviderSwitched})
 			p, r = next, next.ProAuto.Replacement
 		}
 		if !r.Queued || p.ProRestockTaskID != "" {
@@ -80,13 +80,16 @@ func (s *Server) dispatchProRechargeReplacements(ctx context.Context) {
 			continue
 		}
 		cfg.CardProvider = r.CardProvider
-		pay, _, e := s.store.GPTPaySettings()
+		pay, _, e := s.store.ProRechargePay(r)
 		if e != nil {
 			continue
 		}
 		workCtx := ctx
 		if r.Scheduled {
 			workCtx = context.WithValue(workCtx, proScheduledContextKey{}, true)
+			if r.PurchaseRoute != nil {
+				workCtx = context.WithValue(workCtx, proPurchaseContextKey{}, r.PurchaseRoute)
+			}
 			workCtx, pay, e = s.purchaseContext(workCtx, cfg, pay)
 			if e != nil {
 				s.rechargeReplacementWait(p, e.Error())
@@ -129,13 +132,17 @@ func (s *Server) dispatchProRechargeReplacements(ctx context.Context) {
 }
 
 func (s *Server) rechargeReplacementWait(p model.MailAccountProfile, message string) {
+	cfg, _, _, err := s.store.ProSettings()
+	if err != nil {
+		return
+	}
 	_, _ = s.store.UpdateProAccount(p.Email, func(current *model.MailAccountProfile) {
 		if current.ProAuto.ID != p.ProAuto.ID || current.ProAuto.StopRequested || current.ProAuto.Replacement == nil {
 			return
 		}
 		if r := current.ProAuto.Replacement; r.Pending || r.Queued {
 			r.Message = message
-			next := time.Now().Add(10 * time.Second)
+			next := time.Now().Add(time.Duration(max(1, cfg.RetryIntervalSeconds)) * time.Second)
 			current.ProAuto.RetryAt = &next
 		}
 	})

@@ -100,6 +100,7 @@ type ProSettings struct {
 	TargetAdminID                string                      `json:"target_admin_id,omitempty"`
 	TargetSeatType               string                      `json:"target_seat_type"`
 	RetryCount                   int                         `json:"retry_count"`
+	RechargeFailoverCount        int                         `json:"recharge_failover_count"`
 	RechargeReplacementCount     int                         `json:"recharge_replacement_count"`
 	RetryIntervalSeconds         int                         `json:"retry_interval_seconds"`
 	Concurrency                  int                         `json:"concurrency"`

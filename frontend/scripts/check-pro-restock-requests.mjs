@@ -29,7 +29,7 @@ function fixture() {
       return promise
     },
   })
-  vm.runInContext(code + '\nglobalThis.exposed = {state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog, applyConfig, addNoRestockWindow, removeNoRestockWindow, scheduleSummary, taskFilter, taskSearch, taskPage, taskPageSize, taskRows, visibleTasks, taskDetail, stopTask, stoppingTask, canStopTask};', context)
+  vm.runInContext(code + '\nglobalThis.exposed = {busy, recordsError, state, form, records, page, refresh, pause, save, evaluate, resetBreaker, loadRecords, error, collectionError, notice, monitorUnavailable, noRestockActive, saveWindow, windowDraft, windowEdited, savingWindow, dirty, forecastReport, concurrencyReport, showDetail, closeDetail, loadDetailTasks, detail, detailLoading, detailError, dialog, applyConfig, addNoRestockWindow, removeNoRestockWindow, scheduleSummary, taskFilter, taskSearch, taskPage, taskPageSize, taskRows, visibleTasks, taskDetail, stopTask, stoppingTask, canStopTask};', context)
   return { requests, timers, mounted: () => mounted(), unmounted: () => unmounted(), ...context.exposed }
 }
 
@@ -444,3 +444,38 @@ console.log('Passed: high-demand visual settings validation and save/load')
  assert.equal(f.canStopTask({status:'running'}),false)
  f.unmounted()
 }
+
+// Slow history must never hold the first screen or a completed save hostage.
+{
+ const f=fixture(),config={enabled:false,version:1,capacity_percent:60,money_window_minutes:3}
+ const first=f.refresh(true);await tick()
+ assert.equal(f.requests[0].options.timeoutMs,15000)
+ f.requests[0].resolve({config});await first;await tick()
+ const history=f.requests.find(r=>r.url.includes('/records?'));assert.ok(history)
+ assert.equal(f.state.value.config.version,1)
+ Object.assign(f.form,config)
+ const saving=f.save();await tick()
+ f.requests.find(r=>r.options.method==='PUT').resolve({...config,version:2})
+ await saving;assert.equal(f.busy.value,false,'save remains busy behind refresh/history')
+ assert.equal(f.state.value.config.version,2)
+ history.reject(new Error('slow records'));await tick()
+ assert.match(f.recordsError.value,/slow records/);assert.equal(f.error.value,'')
+ f.unmounted()
+}
+// A successful poll does not refetch unchanged history every five seconds.
+{
+ const f=fixture()
+ const first=f.refresh(true);await tick();f.requests[0].resolve({config:{version:1}});await first;await tick()
+ f.requests[1].resolve([]);await tick()
+ const poll=f.refresh(false,true);await tick();f.requests[2].resolve({config:{version:1}});await poll;await tick()
+ assert.equal(f.requests.filter(r=>r.url.includes('/records?')).length,1)
+ f.unmounted()
+}
+// First-load failure followed by polling still initializes the settings draft.
+{
+ const f=fixture(),first=f.refresh(true);await tick();f.requests[0].reject(new Error('temporary'));await first
+ const retry=f.refresh(false,true);await tick();f.requests[1].resolve({config:{version:7}});await retry;await tick()
+ assert.equal(f.form.version,7);assert.equal(f.error.value,'')
+ f.unmounted()
+}
+console.log('Passed: independent history, nonblocking save, polling throttle and initial-load recovery')

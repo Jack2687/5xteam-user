@@ -29,7 +29,7 @@ func (s *Server) queueRestockPreparation(parent context.Context, c restock.Confi
 	}
 	pending := false
 	for _, task := range tasks {
-		if dispatch && task.Status == "reserved" && task.Version == c.Version {
+		if dispatch && task.Status == "reserved" && task.Version == c.Version && (task.NextCardCheckAt == nil || !task.NextCardCheckAt.After(time.Now())) {
 			pending = true
 			break
 		}

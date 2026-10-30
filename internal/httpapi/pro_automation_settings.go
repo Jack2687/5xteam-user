@@ -26,6 +26,7 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 	// still fails validation after decoding.
 	input.Automation.BalanceFallbackEnabled = current.BalanceFallbackEnabled
 	input.Automation.RechargeReplacementCount = current.RechargeReplacementCount
+	input.Automation.RechargeFailoverCount = current.RechargeFailoverCount
 	input.Automation.MergeConcurrency = current.MergeConcurrency
 	input.Automation.AutoDeleteEnabled = current.AutoDeleteEnabled
 	input.Automation.AutoMerchantEnabled = current.AutoMerchantEnabled
@@ -42,6 +43,10 @@ func (s *Server) saveProAutomationSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	v := input.Automation
+	if v.RechargeFailoverCount < 0 || v.RechargeFailoverCount > 10 {
+		writeAPI(w, 400, nil, "切换供应商后账号尝试次数须为 0～10")
+		return
+	}
 	if v.RechargeReplacementCount < 0 || v.RechargeReplacementCount > 10 {
 		writeAPI(w, 400, nil, "第二步失败换号次数须为 0～10")
 		return

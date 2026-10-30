@@ -33,7 +33,7 @@ const cardStatus=computed(()=>{
 async function refresh(initial=false,background=false){
  if(disposed||(background&&busy.value))return
  const version=revision
- try{await request.run(signal=>api('/api/pro-restock/fallback',{signal}),data=>{if(disposed||version!==revision)return;state.value=data;fetchError.value='';clock.value=Date.now();const at=Date.parse(data.server_time);if(Number.isFinite(at))clockOffset.value=at-clock.value;if(initial){setDraft(data.config,data.monitor);dirty.value=false;password.value=''}},{background})}catch(e){if(!disposed&&version===revision)fetchError.value=e.message}
+ try{await request.run(signal=>api('/api/pro-restock/fallback',{signal,timeoutMs:15000}),data=>{if(disposed||version!==revision)return;state.value=data;fetchError.value='';clock.value=Date.now();const at=Date.parse(data.server_time);if(Number.isFinite(at))clockOffset.value=at-clock.value;if(initial){setDraft(data.config,data.monitor);dirty.value=false;password.value=''}},{background})}catch(e){if(!disposed&&version===revision)fetchError.value=e.message}
 }
 async function action(fn){if(busy.value||disposed)return;busy.value=true;revision++;error.value='';notice.value='';try{await fn()}catch(e){if(!disposed)error.value=e.message}finally{busy.value=false}}
 function input(preview=false,row=null){return {version:form.version,enabled:preview?false:form.enabled,url:form.url,email:form.email,check_seconds:form.check_seconds,password:password.value,group_id:row?.group_ids[0]||0,group_ids:row?[...row.group_ids]:[],account_ids:row?[...row.account_ids]:[],rules:preview?null:form.rules.map(r=>({enabled:r.enabled,monitor_group_id:Number(r.monitor_group_id)||0,group_ids:[...r.group_ids],account_ids:[...r.account_ids]}))}}
@@ -80,7 +80,7 @@ async function save(){await action(async()=>{
 async function retry(){await action(async()=>{try{const data=await api('/api/pro-restock/fallback/retry',{method:'POST'});if(!disposed){state.value=data;notice.value='核验完成。'}}finally{await refresh()}})}
 async function reload(){await action(async()=>{await refresh(true)});if(!disposed&&props.settings)await loadOptions(true)}
 watch(()=>props.settings,visible=>{if(visible&&state.value)loadOptions(true)})
-onMounted(async()=>{await refresh(true);if(disposed)return;if(props.settings)loadOptions();timer=setInterval(()=>{clock.value=Date.now();refresh(false,true)},5000)})
+onMounted(async()=>{await refresh(true);if(disposed)return;if(props.settings)loadOptions();timer=setInterval(()=>{clock.value=Date.now();if(!document.hidden)void refresh(false,true)},5000)})
 onUnmounted(()=>{disposed=true;revision++;for(const r of form.rules)cancelAccounts(r);clearInterval(timer);request.dispose();groupRequest.dispose();monitorRequest.dispose()})
 </script>
 <template>

@@ -252,15 +252,18 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, 409, nil, "该账号已合并过空间，不可再次自动开通")
 		return
 	}
-	cfg, key, err := s.store.GPTPaySettings()
+	cfg, key, err := s.store.ProRechargePay(p.ProAuto.Replacement)
 	if err != nil {
 		writeAPI(w, 500, nil, "读取开通配置失败")
 		return
 	}
 	pro, subPassword, _, err := s.proAccountPushSettings(p)
 	if err == nil && automatic {
-		var ctx context.Context
-		ctx, cfg, err = s.purchaseContext(r.Context(), pro, cfg)
+		ctx := r.Context()
+		if replacement := p.ProAuto.Replacement; replacement != nil && replacement.PurchaseRoute != nil {
+			ctx = context.WithValue(ctx, proPurchaseContextKey{}, replacement.PurchaseRoute)
+		}
+		ctx, cfg, err = s.purchaseContext(ctx, pro, cfg)
 		if err == nil {
 			r = r.WithContext(ctx)
 		}
@@ -467,6 +470,13 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			lock.Unlock()
+			var preparationWait *proCardPreparationWait
+			if errors.As(err, &preparationWait) {
+				w.Header().Set("X-Pro-Card-Wait", "preparation")
+				s.auditProEvent(p, "card", "waiting", "pro_auto", err.Error(), nil)
+				writeAPI(w, 409, nil, err.Error())
+				return
+			}
 			var waiting *nexovccCapacityWaitError
 			if errors.As(err, &waiting) || strings.Contains(err.Error(), nexovcc.StoppedMessage) {
 				w.Header().Set("X-Pro-Card-Wait", "nexovcc")
@@ -548,7 +558,7 @@ func (s *Server) startProAutomation(w http.ResponseWriter, r *http.Request) {
 				}
 				replacement := p.ProAuto.Replacement
 				if replacement == nil {
-					replacement = &model.ProRechargeReplacement{RootEmail: email, Limit: pro.RechargeReplacementCount, Scheduled: r.Context().Value(proScheduledContextKey{}) == true, CardProvider: pro.AutoCardProvider(), PurchaseRoute: pro.PurchaseRoute}
+					replacement = &model.ProRechargeReplacement{RootEmail: email, Limit: pro.RechargeReplacementCount, FailoverLimit: pro.RechargeFailoverCount, PrimaryProvider: cfg.Provider, BackupProvider: cfg.BackupProvider, Payment: model.RechargePayment(cfg), Scheduled: r.Context().Value(proScheduledContextKey{}) == true, CardProvider: pro.AutoCardProvider(), PurchaseRoute: pro.PurchaseRoute}
 				}
 				if replacement.PurchaseRoute == nil {
 					replacement.PurchaseRoute = pro.PurchaseRoute

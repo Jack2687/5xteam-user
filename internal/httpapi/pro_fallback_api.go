@@ -32,17 +32,23 @@ func (s *Server) registerProFallback(mux *http.ServeMux) {
 	})
 }
 func (s *Server) getProFallback(w http.ResponseWriter, r *http.Request) {
-	f, target, err := s.store.ProFallbackConfig()
+	reader, err := s.store.ProListReader(r.Context())
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	c, err := s.store.ProRestockConfig()
+	defer reader.Close()
+	f, target, err := reader.ProFallbackConfig()
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
 	}
-	bindings, err := s.store.ProFallbackBindings()
+	c, err := reader.ProRestockConfig()
+	if err != nil {
+		writeAPI(w, 500, nil, err.Error())
+		return
+	}
+	bindings, err := reader.ProFallbackBindings()
 	if err != nil {
 		writeAPI(w, 500, nil, err.Error())
 		return
@@ -52,7 +58,7 @@ func (s *Server) getProFallback(w http.ResponseWriter, r *http.Request) {
 	checked, lastError := s.proFallback.lastCheck, s.proFallback.lastError
 	saved := append([]fallbackRuleState(nil), s.proFallback.rules...)
 	s.proFallback.mu.Unlock()
-	p, password, _, _ := s.store.ProSettings()
+	p, password, _, _ := reader.ProSettings()
 	rows := fallbackRowsForDisplay(f, c, p, password, saved, now)
 	accounts := []map[string]any{}
 	if f.AccountNames == nil {

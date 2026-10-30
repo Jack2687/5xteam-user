@@ -46,16 +46,21 @@ func (s *Server) restockCardSettings(ctx context.Context, cfg model.ProSettings)
 // chosen issuer even when buying new cards is disabled. Other manual cards
 // retain their historical compatibility with the default EJH selection.
 func (s *Server) automaticProCards(cfg model.ProSettings, strictProvider ...bool) ([]gptpay.Card, error) {
-	if err := s.validatePurchaseTemplate(cfg.PurchaseRoute); err != nil {
+	reader, err := s.store.ProListReader(context.Background())
+	if err != nil {
 		return nil, err
 	}
-	cards, _, err := s.store.GPTPayCards(int(^uint(0)>>1), 0, true)
+	defer reader.Close()
+	if err := validatePurchaseTemplate(reader, cfg.PurchaseRoute); err != nil {
+		return nil, err
+	}
+	cards, _, err := reader.GPTPayCards(int(^uint(0)>>1), 0, true)
 	if err != nil {
 		return nil, err
 	}
 	var matches map[string]bool
 	if cfg.PurchaseRoute != nil {
-		matches, err = s.store.ProTemplateCards(cfg.AutoCardProvider(), cfg.PurchaseRoute.TemplateID, cfg.PurchaseRoute.PlanCode)
+		matches, err = reader.ProTemplateCards(cfg.AutoCardProvider(), cfg.PurchaseRoute.TemplateID, cfg.PurchaseRoute.PlanCode)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +80,9 @@ func (s *Server) automaticProCards(cfg model.ProSettings, strictProvider ...bool
 // Serialize selection, optional issuance and reservation across manual, auto
 // and scheduled starts. The database still enforces physical-card occupancy.
 func (s *Server) reserveProStartCard(ctx context.Context, email, selected string, autoOpen, enforceMaximum bool, admissionChecks ...func() error) (gptpay.Card, gptpay.CardSecret, error) {
-	s.proCardAdmissionMu.Lock()
+	if err := lockProCardPreparation(ctx, &s.proCardAdmissionMu, "其他账号正在准备银行卡，本次尚未提交；等待卡片调度空闲后继续"); err != nil {
+		return gptpay.Card{}, gptpay.CardSecret{}, err
+	}
 	defer s.proCardAdmissionMu.Unlock()
 	var card gptpay.Card
 	var secret gptpay.CardSecret
